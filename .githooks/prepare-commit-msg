@@ -1,5 +1,0 @@
-#!/bin/sh
-set -eu
-# Authored work is committed before independent validation. Release admission
-# remains enforced by the pre-push hook and reviewed installation wrapper.
-exit 0
