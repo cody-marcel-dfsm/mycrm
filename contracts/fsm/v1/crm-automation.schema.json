@@ -1,0 +1,99 @@
+{
+  "$schema": "https://json-schema.org/draft/2020-12/schema",
+  "$id": "https://dfsm.ai/contracts/fsm/v1/crm-automation.schema.json",
+  "title": "My CRM automation graph",
+  "type": "object",
+  "additionalProperties": false,
+  "required": ["schemaVersion", "kind", "metadata", "spec"],
+  "properties": {
+    "schemaVersion": { "const": "bos.fsm/v1" },
+    "kind": { "const": "CrmAutomation" },
+    "metadata": {
+      "type": "object",
+      "additionalProperties": false,
+      "required": ["slug", "name", "description", "labels"],
+      "properties": {
+        "slug": { "$ref": "#/$defs/id" },
+        "name": { "type": "string", "minLength": 1 },
+        "description": { "type": "string" },
+        "labels": {
+          "type": "object",
+          "additionalProperties": { "type": "string" }
+        }
+      }
+    },
+    "spec": {
+      "type": "object",
+      "additionalProperties": false,
+      "required": ["goal", "capabilityContract", "inputs", "states", "transitions"],
+      "properties": {
+        "goal": { "type": "string", "minLength": 1 },
+        "capabilityContract": {
+          "type": "object",
+          "additionalProperties": false,
+          "required": ["digest", "discoveryEpoch"],
+          "properties": {
+            "digest": { "type": "string", "minLength": 8 },
+            "discoveryEpoch": { "type": "string", "minLength": 1 }
+          }
+        },
+        "inputs": { "type": "object" },
+        "states": {
+          "type": "array",
+          "minItems": 1,
+          "items": { "$ref": "#/$defs/state" }
+        },
+        "transitions": {
+          "type": "array",
+          "items": { "$ref": "#/$defs/transition" }
+        }
+      }
+    }
+  },
+  "$defs": {
+    "id": {
+      "type": "string",
+      "pattern": "^[a-z][a-z0-9]*(?:[._-][a-z0-9]+)*$"
+    },
+    "capability": {
+      "type": "string",
+      "pattern": "^[a-z][a-z0-9]*(?:\\.[a-z][a-z0-9_]*)+$"
+    },
+    "state": {
+      "type": "object",
+      "additionalProperties": false,
+      "required": ["id", "type"],
+      "properties": {
+        "id": { "$ref": "#/$defs/id" },
+        "type": { "enum": ["entry", "normal", "goal", "failure"] },
+        "description": { "type": "string" }
+      }
+    },
+    "effect": {
+      "type": "object",
+      "additionalProperties": false,
+      "required": ["capability", "parameters"],
+      "properties": {
+        "capability": { "$ref": "#/$defs/capability" },
+        "parameters": { "type": "object" },
+        "result": { "type": "string" }
+      }
+    },
+    "transition": {
+      "type": "object",
+      "additionalProperties": false,
+      "required": ["id", "from", "to", "effects"],
+      "properties": {
+        "id": { "$ref": "#/$defs/id" },
+        "from": { "$ref": "#/$defs/id" },
+        "to": { "$ref": "#/$defs/id" },
+        "when": { "type": "string" },
+        "effects": {
+          "type": "array",
+          "items": { "$ref": "#/$defs/effect" }
+        },
+        "onError": { "enum": ["stop", "continue", "compensate"] }
+      }
+    }
+  }
+}

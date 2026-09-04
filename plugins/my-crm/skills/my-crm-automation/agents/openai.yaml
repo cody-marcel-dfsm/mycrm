@@ -1,0 +1,4 @@
+interface:
+  display_name: "My CRM Automation"
+  short_description: "Design and run governed CRM state machines"
+  default_prompt: "Use $my-crm-automation to explain and design this CRM automation."

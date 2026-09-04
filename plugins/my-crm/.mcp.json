@@ -1,0 +1,12 @@
+{
+  "mcpServers": {
+    "my-crm": {
+      "type": "http",
+      "url": "https://dfsm.ai/mcp/apps/leaddirector/crm",
+      "oauth_resource": "https://dfsm.ai/mcp/apps/leaddirector/crm",
+      "required": true,
+      "startup_timeout_sec": 180,
+      "tool_timeout_sec": 180
+    }
+  }
+}

@@ -1,0 +1,89 @@
+{
+  "kind": "CrmAutomation",
+  "metadata": {
+    "description": "Illustrative provider-neutral lead qualification and follow-up flow.",
+    "labels": {
+      "example": "true"
+    },
+    "name": "Lead follow-up",
+    "slug": "lead-follow-up"
+  },
+  "schemaVersion": "bos.fsm/v1",
+  "spec": {
+    "capabilityContract": {
+      "digest": "example-contract-digest",
+      "discoveryEpoch": "example-epoch"
+    },
+    "goal": "Qualify a lead, record follow-up, and preserve the final outcome.",
+    "inputs": {
+      "leadQuery": {
+        "required": true,
+        "type": "string"
+      }
+    },
+    "states": [
+      {
+        "description": "The automation has received a lead query.",
+        "id": "new",
+        "type": "entry"
+      },
+      {
+        "description": "The lead is qualified for follow-up.",
+        "id": "qualified",
+        "type": "normal"
+      },
+      {
+        "description": "The follow-up activity has been recorded.",
+        "id": "scheduled",
+        "type": "goal"
+      },
+      {
+        "description": "The lead does not meet the qualification rule.",
+        "id": "unqualified",
+        "type": "goal"
+      }
+    ],
+    "transitions": [
+      {
+        "effects": [
+          {
+            "capability": "crm.records.search",
+            "parameters": {
+              "query": "${input.leadQuery}"
+            },
+            "result": "lead"
+          }
+        ],
+        "from": "new",
+        "id": "find-lead",
+        "onError": "stop",
+        "to": "qualified",
+        "when": "${lead.matchesQualification}"
+      },
+      {
+        "effects": [
+          {
+            "capability": "crm.activities.create",
+            "parameters": {
+              "record": "${lead.id}",
+              "type": "follow-up"
+            },
+            "result": "activity"
+          }
+        ],
+        "from": "qualified",
+        "id": "record-follow-up",
+        "onError": "compensate",
+        "to": "scheduled"
+      },
+      {
+        "effects": [],
+        "from": "new",
+        "id": "record-unqualified",
+        "onError": "stop",
+        "to": "unqualified",
+        "when": "${!lead.matchesQualification}"
+      }
+    ]
+  }
+}

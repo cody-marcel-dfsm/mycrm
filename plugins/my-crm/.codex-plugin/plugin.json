@@ -1,0 +1,39 @@
+{
+  "name": "my-crm",
+  "version": "0.2.0",
+  "description": "External extension and planned successor to basic Lead Director CRM skills, providing federated CRM operations and customer-specific automation design on BOS",
+  "author": {
+    "name": "Infinite State Machines LLC",
+    "url": "https://dfsm.ai"
+  },
+  "homepage": "https://dfsm.ai",
+  "license": "Apache-2.0",
+  "keywords": [
+    "bos",
+    "crm",
+    "automation",
+    "fsm"
+  ],
+  "skills": "./skills/",
+  "interface": {
+    "displayName": "My CRM",
+    "shortDescription": "Operate CRM data and build governed automations on BOS.",
+    "longDescription": "Use the My CRM product-owned BOS connection to discover the CRM capabilities enabled for the selected organization, work across those sources through one provider-neutral service, inspect customer journeys, and design declarative graph state machines through current advertised operations.",
+    "developerName": "Infinite State Machines LLC",
+    "category": "Productivity",
+    "capabilities": [
+      "Read",
+      "Write"
+    ],
+    "defaultPrompt": [
+      "Show me the latest leads across my connected CRM sources.",
+      "Explain how you would find and merge this customer across my CRM sources.",
+      "Compare this customer across sources and show conflicts without changing anything."
+    ],
+    "websiteURL": "https://dfsm.ai",
+    "brandColor": "#061638",
+    "composerIcon": "./assets/my-crm-logo.png",
+    "logo": "./assets/my-crm-logo.png"
+  },
+  "mcpServers": "./.mcp.json"
+}
