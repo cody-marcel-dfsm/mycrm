@@ -5,17 +5,29 @@ description: Extend the basic Lead Director sales-flow skills with provider-neut
 
 # My CRM
 
-Use the installed My CRM product's authenticated MCP connection for every CRM operation. Require the BOS product for platform identity and installed-app discovery. Treat the package resource URL as sealed configuration and derive organization, role, services, sources, operations, schemas, and grants from current authenticated discovery.
+Use the installed My CRM product's authenticated MCP connection for every CRM operation. Require the BOS product and its authentication skills to establish or recover OAuth for that connection. My CRM never initiates login, selects authority, registers an OAuth client, handles a token, refreshes credentials, or stores authentication state. Treat the package resource URL as sealed configuration and derive services, sources, operations, and schemas from current authenticated discovery.
 
 Treat My CRM as the independent external extension and planned successor to the basic Lead Director CRM skill set in BOS Operations Center. Lead Director covers basic sales-flow lead interactions during the transition. My CRM owns the complete CRM experience described here. The current `leaddirector/crm` MCP resource is routing metadata and creates no client dependency on Lead Director or any particular source system.
 
-## Establish context
+## Use the scoped connection
 
-1. Resolve `bos_get_context`, then select exactly one authorized organization: an explicit organization in the request, the validated local default label, or the sole available organization.
-2. Use only the selected role's opaque `context_id` where the live schema requests it. Never construct raw tenant, app, installation, provider, or source authority.
-3. Refresh the My CRM tool and resource catalog after authentication, context, permission, service, or schema changes. Tool presence declares an operation; the server reauthorizes every call.
-4. Use a cached discovery snapshot only while its context, digest, epoch, and client-configured freshness remain valid.
+1. Delegate authentication bootstrap and recovery to the installed BOS plugin and its BOS authentication skills.
+2. Treat the host-managed connection as one server-scoped OAuth grant for one organization, application, installation, and role. Never request, accept, construct, cache, or forward an authority selector.
+3. After BOS establishes the host-managed authenticated connection, refresh the My CRM tool and resource catalog. Refresh again after permission, service, or schema changes. Tool presence declares an operation; the server reauthorizes every call from the bearer grant.
+4. Use a cached discovery snapshot only while its connection, digest, epoch, and client-configured freshness remain valid.
 5. Select operations by current semantic contract and schema. Report an absent operation distinctly from denial, timeout, or provider authorization failure.
+
+## Continue through authentication recovery
+
+Treat a missing, expired, revoked, stale, or resource-mismatched product grant, an OAuth challenge, and a reauthentication-required host state as BOS continuation signals.
+
+1. Preserve the pending CRM request, semantic operation, sanitized arguments, mutation identity, approval state, and idempotency key.
+2. Immediately delegate recovery to the installed BOS plugin's authentication/context skills on the current request. Do not emit a My CRM failure, setup instructions, reconnect request, settings direction, or request for the user to resubmit.
+3. Let BOS and the host activate any native consent surface and replace or refresh the host-managed scoped grant. My CRM never receives authentication material or authority selectors.
+4. After BOS reports recovery, refresh the My CRM MCP session, tools, resources, schemas, and discovery digest.
+5. Resume the preserved CRM operation once. Reconcile an uncertain mutation before any replay.
+
+If BOS cannot complete bounded recovery, keep the CRM operation classified as pending authentication recovery and let BOS own the platform-level diagnostic and continuation. My CRM does not convert it into a domain failure or tell the user how to repair authentication.
 
 Read [CRM operations](references/crm-operations.md) for source selection, caching, streaming, mutations, and reconciliation rules.
 
@@ -35,10 +47,10 @@ Read [CRM operations](references/crm-operations.md) for source selection, cachin
 
 When the user says `explain` or asks for a plan, produce a read-only plan and stop before the data operation. Include:
 
-- organization and application scope;
+- server-reported organization and application scope;
 - discovery or cached-discovery decision;
 - semantic capabilities and skills selected;
-- one service invocation and server-deferred or explicit opaque source scope;
+- one service invocation and server-deferred or explicit source scope;
 - normalized query parameters without secrets;
 - cache and freshness policy;
 - merge, attribution, and error behavior;
@@ -65,7 +77,8 @@ Fail closed when graph operations are absent. Provide the local draft and the mi
 ## Safety boundary
 
 - Never access a provider API, database, credential store, or private BOS route directly.
+- Never perform OAuth discovery, login, client registration, token exchange, token refresh, credential storage, or authentication recovery. Delegate those operations to the required BOS plugin.
 - Never hard-code provider brands or assume all organizations have the same sources.
 - Never invent a capability identifier or silently substitute a similar operation.
 - Never claim cross-source atomicity or perform client-side per-source recovery.
-- Preserve organization, application, user, role, and request context across every MCP call.
+- Preserve the same host-managed scoped connection across every MCP call in the operation.

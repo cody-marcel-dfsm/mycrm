@@ -7,7 +7,7 @@ description: Show a CRM lead's application-owned current state, history, goals, 
 
 Use this skill whenever a lead is displayed and whenever the user asks where a customer is, how they arrived there, what comes next, or how to reach a goal.
 
-Inspect graph resources advertised on the authenticated My CRM connection first. Select resources by declared application, contract, and current opaque context metadata; never construct a URI. Use app discovery only for missing evidence. A listed connected graph can supply topology directly.
+Inspect graph resources advertised on the authenticated My CRM connection first. Select resources by their declared application and contract metadata; never construct a URI or supply an authority selector. Use current discovery only for missing evidence. A listed connected graph can supply topology directly.
 
 Keep four evidence classes separate:
 

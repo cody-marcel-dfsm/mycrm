@@ -8,14 +8,14 @@ Source identifiers are opaque values returned by BOS. Display names are presenta
 
 ## Read workflow
 
-1. Resolve application and organization context through the authenticated MCP session.
+1. Use the current host-managed MCP connection whose bearer grant is already scoped by the BOS service.
 2. Load current capability discovery from a fresh client cache or request it from BOS.
 3. Normalize the user's request into the schema of a discovered search or read capability.
 4. Invoke one provider-neutral MCP operation. Omit source selection for all eligible sources or pass only explicit opaque source handles returned by current discovery.
 5. Preserve result-level source attribution, retrieved time, source-updated time when supplied, cache status, pagination, and partial errors.
 6. Use only server-returned identity resolution and merged records. Preserve separate source records when the service does not provide correlation.
 
-All BOS-family plugins share one local document cache partitioned by a hash of current server-derived authority and source account. Cache keys include authority context, product and service contract digests, source scope, normalized parameters, pagination, coverage, and watermark. Refresh publishes a complete new result atomically. A failed or partial refresh retains the previous watermark and excludes stale records under the default policy. Sign-out, organization change, app change, role change, permission change, or provider-binding revision invalidates the applicable namespace.
+All BOS-family plugins share one local document cache partitioned by the current authenticated connection and source account. Cache keys include a non-secret connection partition, product and service contract digests, source scope, normalized parameters, pagination, coverage, and watermark. Refresh publishes a complete new result atomically. A failed or partial refresh retains the previous watermark and excludes stale records under the default policy. Sign-out, scoped-grant replacement, permission change, or provider-binding revision invalidates the applicable namespace.
 
 ## Mutation workflow
 

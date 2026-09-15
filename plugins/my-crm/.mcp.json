@@ -1,6 +1,6 @@
 {
   "mcpServers": {
-    "my-crm": {
+    "crm": {
       "type": "http",
       "url": "https://dfsm.ai/mcp/apps/leaddirector/crm",
       "oauth_resource": "https://dfsm.ai/mcp/apps/leaddirector/crm",

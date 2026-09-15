@@ -10,19 +10,37 @@ const root = path.resolve(new URL("..", import.meta.url).pathname);
 const json = async (relative) => JSON.parse(await readFile(path.join(root, relative), "utf8"));
 const run = promisify(execFile);
 
-test("plugin package owns one current product MCP connection and requires BOS", async () => {
+test("plugin declares one product MCP and delegates authentication to required BOS", async () => {
   const manifest = await json("plugins/my-crm/.codex-plugin/plugin.json");
   const mcp = await json("plugins/my-crm/.mcp.json");
   const product = await json("plugins/my-crm/.bos-product.json");
   assert.equal(manifest.name, "my-crm");
   assert.equal(manifest.license, "Apache-2.0");
   assert.equal(manifest.apps, undefined);
-  assert.deepEqual(Object.keys(mcp.mcpServers), ["my-crm"]);
-  assert.equal(mcp.mcpServers["my-crm"].url, "https://dfsm.ai/mcp/apps/leaddirector/crm");
-  assert.equal(mcp.mcpServers["my-crm"].oauth_resource, mcp.mcpServers["my-crm"].url);
-  assert.equal(mcp.mcpServers["my-crm"].startup_timeout_sec, 180);
-  assert.equal(mcp.mcpServers["my-crm"].tool_timeout_sec, 180);
+  assert.deepEqual(Object.keys(mcp.mcpServers), ["crm"]);
+  assert.equal(mcp.mcpServers.crm.url, "https://dfsm.ai/mcp/apps/leaddirector/crm");
+  assert.equal(mcp.mcpServers.crm.oauth_resource, mcp.mcpServers.crm.url);
+  assert.equal(mcp.mcpServers.crm.startup_timeout_sec, 180);
+  assert.equal(mcp.mcpServers.crm.tool_timeout_sec, 180);
   assert.equal(product.connection_owner, "my-crm");
+  assert.equal(product.authentication, "oauth_2_1");
+  assert.equal(product.authentication_handoff.contract_id, "bos.authentication-handoff");
+  assert.equal(product.authentication_handoff.contract_version, "1");
+  assert.equal(product.authentication_handoff.authentication_manager, "bos");
+  assert.equal(product.authentication_handoff.connection_owner, undefined);
+  assert.equal(product.authentication_handoff.credential_lifecycle_owner, "host");
+  assert.equal(product.authentication_handoff.authorization_enforcement_owner, "bos-service");
+  assert.equal(product.authentication_handoff.delegation_policy, "AUTOMATIC");
+  assert.deepEqual(product.authentication_handoff.recognized_condition_categories, [
+    "MISSING_GRANT", "EXPIRED_TOKEN", "REVOKED_GRANT", "INVALID_CLIENT",
+    "INVALID_GRANT", "RESOURCE_MISMATCH", "REAUTHENTICATION_REQUIRED",
+    "AUTHORIZATION_REQUIRED", "MCP_WWW_AUTHENTICATE", "MCP_SESSION_CLOSED",
+    "PROVIDER_AUTHORIZATION_REQUIRED"
+  ]);
+  assert.equal(product.authentication_handoff.readiness_result.representation, "AUTHENTICATION_READINESS_ONLY");
+  assert.equal(product.authentication_handoff.context_handoff, undefined);
+  assert.equal(product.authentication_handoff.continuation_policy, undefined);
+  assert.equal(product.oauth, undefined);
   assert.deepEqual(product.dependency_products, ["bos"]);
   await access(path.join(root, "plugins/my-crm/assets/my-crm-logo.png"));
 });

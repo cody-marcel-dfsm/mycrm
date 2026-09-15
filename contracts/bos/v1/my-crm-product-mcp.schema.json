@@ -4,19 +4,10 @@
   "title": "My CRM product MCP discovery contract",
   "type": "object",
   "additionalProperties": false,
-  "required": ["schemaVersion", "resource", "context", "contract", "operations"],
+  "required": ["schemaVersion", "resource", "contract", "operations"],
   "properties": {
     "schemaVersion": { "const": "bos.product-mcp/v1" },
     "resource": { "const": "https://dfsm.ai/mcp/apps/leaddirector/crm" },
-    "context": {
-      "type": "object",
-      "required": ["contextId", "organizationLabel", "roleLabel"],
-      "properties": {
-        "contextId": { "type": "string", "minLength": 1 },
-        "organizationLabel": { "type": "string", "minLength": 1 },
-        "roleLabel": { "type": "string", "minLength": 1 }
-      }
-    },
     "contract": {
       "type": "object",
       "required": ["digest", "discoveryEpoch", "observedAt"],

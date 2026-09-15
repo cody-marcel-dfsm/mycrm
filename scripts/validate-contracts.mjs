@@ -22,13 +22,26 @@ if (manifest.name !== "my-crm" || manifest.interface?.displayName !== "My CRM") 
 if (manifest.apps !== undefined) errors.push("My CRM packages must not declare .app.json compatibility mappings");
 
 const serverEntries = Object.entries(mcp.mcpServers ?? {});
-if (serverEntries.length !== 1 || serverEntries[0][0] !== "my-crm") errors.push("My CRM must declare exactly one product-owned MCP server");
+if (serverEntries.length !== 1 || serverEntries[0][0] !== product.mcp_group_name) errors.push("My CRM must declare exactly one product-owned MCP server using its MCP group name");
 const server = serverEntries[0]?.[1];
 if (server?.url !== resource || server?.oauth_resource !== resource) errors.push("My CRM MCP and OAuth resource must equal the sealed product URL");
 if (server?.type !== "http" || server?.required !== true || server?.startup_timeout_sec !== 180 || server?.tool_timeout_sec !== 180) {
   errors.push("My CRM MCP transport and 180-second host budgets are invalid");
 }
-if (product.connection_owner !== "my-crm" || product.resource_url !== resource) errors.push("My CRM must own its product connection");
+if (product.connection_owner !== "my-crm" || product.resource_url !== resource) errors.push("My CRM must declare and own its product MCP contract");
+if (product.authentication !== "oauth_2_1" || product.oauth !== undefined) errors.push("The host must own My CRM OAuth and My CRM must contain no OAuth endpoint configuration");
+const handoff = product.authentication_handoff;
+if (handoff?.contract_id !== "bos.authentication-handoff" || handoff?.contract_version !== "1") errors.push("My CRM must declare the BOS authentication handoff v1 contract");
+if (handoff?.authentication_manager !== "bos" || handoff?.connection_owner !== undefined || handoff?.credential_lifecycle_owner !== "host" || handoff?.authorization_enforcement_owner !== "bos-service") errors.push("My CRM authentication ownership is invalid");
+const expectedAuthenticationConditions = [
+  "MISSING_GRANT", "EXPIRED_TOKEN", "REVOKED_GRANT", "INVALID_CLIENT",
+  "INVALID_GRANT", "RESOURCE_MISMATCH", "REAUTHENTICATION_REQUIRED",
+  "AUTHORIZATION_REQUIRED", "MCP_WWW_AUTHENTICATE", "MCP_SESSION_CLOSED",
+  "PROVIDER_AUTHORIZATION_REQUIRED"
+];
+if (handoff?.delegation_policy !== "AUTOMATIC" || JSON.stringify(handoff?.recognized_condition_categories) !== JSON.stringify(expectedAuthenticationConditions)) errors.push("My CRM must delegate only authentication and MCP-session conditions to BOS");
+if (handoff?.readiness_result?.representation !== "AUTHENTICATION_READINESS_ONLY" || handoff?.readiness_result?.authority_data !== "EXCLUDED") errors.push("BOS handoff must return authentication readiness without authority data");
+if (handoff?.context_handoff !== undefined || handoff?.continuation_policy !== undefined) errors.push("My CRM authentication handoff must not transfer authority selection or CRM continuation ownership");
 if (JSON.stringify(product.dependency_products) !== JSON.stringify(["bos"])) errors.push("My CRM must depend on BOS only");
 if (product.application_name !== "leaddirector" || product.mcp_group_name !== "crm") errors.push("My CRM must bind the Lead Director application CRM group");
 
