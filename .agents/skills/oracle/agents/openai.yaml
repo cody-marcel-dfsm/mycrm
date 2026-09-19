@@ -1,0 +1,4 @@
+interface:
+  display_name: "My CRM Oracle"
+  short_description: "Review My CRM architecture and conformance"
+  default_prompt: "Review this My CRM change against its Constitution, architecture, public BOS contract boundary, and current evidence."
