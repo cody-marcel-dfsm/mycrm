@@ -1,0 +1,10 @@
+{
+  "goal": "Find current CRM evidence for the controlled attendee.",
+  "concepts": ["organization-described customer record"],
+  "constraints": ["preserve every source record"],
+  "requiredEvidence": ["current source observations"],
+  "approvals": [],
+  "guarantees": ["point-in-time read"],
+  "presentation": ["show provenance, freshness, conflicts, and uncertainty"],
+  "recovery": ["follow only a returned public instruction"]
+}

@@ -1,0 +1,26 @@
+{
+  "schema_version": "my-crm.release-dependencies/v1",
+  "status": "blocked_external",
+  "dependencies": [
+    {
+      "id": "shared-bos-connection-host-binding",
+      "owner": "bos-client-product",
+      "required_evidence": "A supported host binds this external plugin to the established BOS connection without a second authentication binding."
+    },
+    {
+      "id": "public-bos-client-cache-package",
+      "owner": "bos-client-product",
+      "required_evidence": "A supported versioned bos-mcp-client cache adapter supplies opaque authority partitions, reads, atomic publication, inspection, and invalidation."
+    },
+    {
+      "id": "published-lead-director-contracts",
+      "owner": "bos-service",
+      "required_evidence": "The Oracle-approved versioned public bundle is internally cross-conformant, and authenticated discovery, Describe, CRM operations, journey actions, and compatibility contacts are mounted and reachable."
+    },
+    {
+      "id": "authorized-live-acceptance",
+      "owner": "release-operator",
+      "required_evidence": "Native-host recovery and isolated multi-source staging fixtures pass, with separate authorization for destructive cases."
+    }
+  ]
+}

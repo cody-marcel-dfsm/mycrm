@@ -3,16 +3,10 @@
   "name": "my-crm",
   "version": "0.2.0",
   "client": "codex",
-  "application_name": "leaddirector",
-  "mcp_group_name": "crm",
-  "resource_url": "https://dfsm.ai/mcp/apps/leaddirector/crm",
-  "codex_mcp_startup_timeout_sec": 180,
-  "codex_mcp_tool_timeout_sec": 180,
-  "connection_owner": "my-crm",
+  "connection_owner": "bos",
   "dependency_products": [
     "bos"
   ],
-  "authentication": "oauth_2_1",
   "authentication_handoff": {
     "contract_id": "bos.authentication-handoff",
     "contract_version": "1",

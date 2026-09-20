@@ -1,22 +1,12 @@
 ---
 name: my-crm-federation-operations
-description: Compare and merge CRM sources for presentation while preserving server-owned identity confidence, provenance, conflicts, and recovery state.
+description: Apply client-side CRM reasoning across source-native records while preserving provenance, conflicts, freshness, partial failures, and uncertainty.
 ---
 
 # My CRM Federation Operations
 
-## Compare and merge for presentation
+Start from one completed provider-neutral operation response. BOS owns source participation and federation. Preserve every returned record and its complete source, opaque selector, entity label, fields, field-level provenance, observation time, coverage, guarantee, warning, and public error.
 
-1. Invoke one provider-neutral My CRM query.
-2. Preserve every server-returned source result and lifecycle event.
-3. Use only the service's federated records as the merged view. Never rerun identity matching or strengthen match confidence.
-4. Attach field-level provenance, freshness, and conflict evidence.
-5. Present successful sources alongside explicit partial failures.
+Recognize records that may represent one conceptual customer by explaining the evidence, confidence, conflicts, and uncertainty. Never create a durable customer ID, replace source records with a merged object, strengthen source evidence, or claim global identity. Keep conflicting values visible.
 
-## Mutation boundary
-
-Updates and deletes may affect one exact source record in the logical task. A merged contact represented by multiple source records counts as multiple records and is outside the client mutation limit. Offer a read-only comparison or ask the user to choose one exact target.
-
-For an allowed single-record write, use the server-returned source and record handles, current version, declared field authority, and discovered mutation schema. Preserve the source's transactional guarantee and any server-returned reconciliation action. Never perform per-source retries or create client recovery state.
-
-Never silently choose authoritative fields, overwrite an ambiguous identity, or claim distributed atomicity.
+Before mutation, require unambiguous evidence for exactly one conceptual customer. Pass its one to five explicit source records to the discovered update or delete operation. Distinct sources keep distinct transaction boundaries. Preserve every ordered result and describe eventual convergence without promising distributed atomicity.

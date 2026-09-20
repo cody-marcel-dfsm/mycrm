@@ -1,239 +1,221 @@
-export const MY_CRM_RESOURCE = "https://dfsm.ai/mcp/apps/leaddirector/crm";
+import {
+  assertNoPrivateKeys,
+  validateApplicationDiscovery,
+  validateDescribeResponse,
+  validateJsonSchema,
+  validateJsonValueAgainstSchema,
+  validateOperationIds,
+  validatePublicError
+} from "./contracts.mjs";
+import {validateResolvedAction} from "./action-client.mjs";
 
 const AUTHENTICATION_CODES = new Set([
-  "authentication_required",
-  "authentication_expired",
-  "authorization_required",
-  "expired_token",
-  "invalid_client",
-  "invalid_grant",
-  "invalid_token",
-  "mcp_authentication_required",
-  "mcp_session_closed",
-  "mcp_www_authenticate",
-  "missing_grant",
-  "oauth_required",
-  "provider_authorization_required",
-  "reauthenticationrequired",
-  "reauthentication_required",
-  "resource_mismatch",
-  "revoked_grant",
-  "token_expired",
-  "unauthenticated"
+  "AUTHENTICATION_EXPIRED", "AUTHENTICATION_REQUIRED", "AUTHORIZATION_REQUIRED",
+  "EXPIRED_TOKEN", "INVALID_CLIENT", "INVALID_GRANT", "INVALID_TOKEN",
+  "MCP_SESSION_CLOSED", "MCP_WWW_AUTHENTICATE", "MISSING_GRANT",
+  "PROVIDER_AUTHORIZATION_REQUIRED", "REAUTHENTICATION_REQUIRED", "RESOURCE_MISMATCH",
+  "REVOKED_GRANT", "TOKEN_EXPIRED", "UNAUTHENTICATED"
 ]);
+const PUBLIC_INSTRUCTION_KEYS = new Set(["action", "approval_schema", "effect", "message", "review"]);
 
-export class BosMcpError extends Error {
-  constructor(message, { code = "bos_mcp_error", operation = null, details = null } = {}) {
+function validatePublicInstruction(value) {
+  if (!value || typeof value !== "object" || Array.isArray(value)) throw new TypeError("public instruction must be an object");
+  for (const key of Object.keys(value)) if (!PUBLIC_INSTRUCTION_KEYS.has(key)) throw new TypeError(`public instruction contains unsupported field ${key}`);
+  if (Object.keys(value).length === 0) throw new TypeError("public instruction must not be empty");
+  const instruction = structuredClone(value);
+  if (instruction.effect !== undefined && (typeof instruction.effect !== "string" || instruction.effect.trim() === "")) throw new TypeError("public instruction effect is invalid");
+  if (instruction.message !== undefined && (typeof instruction.message !== "string" || instruction.message.trim() === "" || instruction.message.length > 2048)) throw new TypeError("public instruction message is invalid");
+  if (instruction.review !== undefined && (!instruction.review || typeof instruction.review !== "object" || Array.isArray(instruction.review))) throw new TypeError("public instruction review is invalid");
+  if (instruction.approval_schema !== undefined) instruction.approval_schema = validateJsonSchema(instruction.approval_schema, "public instruction approval_schema");
+  if (instruction.action !== undefined) instruction.action = validateResolvedAction(instruction.action);
+  assertNoPrivateKeys({...instruction, action: {}}, "public instruction");
+  return instruction;
+}
+
+export class BosContractError extends Error {
+  constructor(message, {code = "CONTRACT_ERROR", status = null, operation = null, publicError = null, instruction = null} = {}) {
     super(message);
-    this.name = "BosMcpError";
+    this.name = "BosContractError";
     this.code = code;
+    this.status = status;
     this.operation = operation;
-    this.details = details;
+    this.publicError = publicError;
+    this.instruction = instruction;
   }
 }
 
-function semanticId(tool) {
-  return tool?.semanticOperation
-    ?? tool?._meta?.["bos/semantic-operation"]
-    ?? tool?.annotations?.semanticOperation
-    ?? null;
-}
-
-function sideEffect(tool) {
-  return tool?.sideEffect
-    ?? tool?._meta?.["bos/side-effect"]
-    ?? tool?.annotations?.sideEffect
-    ?? "unknown";
-}
-
-function authenticationReason(error) {
-  const code = String(error?.code ?? "").toLowerCase();
-  if (AUTHENTICATION_CODES.has(code)) return code;
-  if (error?.details?.authenticationChallenge === true) return "mcp_www_authenticate";
-  if (Number(error?.details?.status) === 401 || Number(error?.status) === 401) return "unauthenticated";
-  const message = String(error?.message ?? "").toLowerCase();
-  if (message.includes("reauthenticationrequired") || message.includes("requires oauth reauthentication")) {
-    return "reauthentication_required";
-  }
+function authenticationCondition(responseOrError) {
+  const status = Number(responseOrError?.status ?? responseOrError?.details?.status);
+  const code = String(responseOrError?.body?.error?.code ?? responseOrError?.code ?? "").toUpperCase();
+  if (status === 401 || AUTHENTICATION_CODES.has(code)) return code || "UNAUTHENTICATED";
   return null;
 }
 
-export class BosMcpClient {
-  constructor({ transport, bosDependency, mutationReconciler, resourceUrl = MY_CRM_RESOURCE } = {}) {
-    if (resourceUrl !== MY_CRM_RESOURCE) {
-      throw new TypeError(`My CRM resource must remain ${MY_CRM_RESOURCE}`);
-    }
-    for (const method of ["listTools", "callTool", "refreshConnection"]) {
-      if (typeof transport?.[method] !== "function") throw new TypeError(`transport.${method} must be a function`);
-    }
-    if (typeof bosDependency?.recoverAuthentication !== "function") {
-      throw new TypeError("bosDependency.recoverAuthentication must be provided by the required BOS plugin");
-    }
-    if (typeof bosDependency?.waitForAuthenticationReady !== "function") {
-      throw new TypeError("bosDependency.waitForAuthenticationReady must be provided by the required BOS plugin");
-    }
-    if (typeof mutationReconciler?.reconcile !== "function") {
-      throw new TypeError("mutationReconciler.reconcile must be provided by My CRM");
-    }
-    this.transport = transport;
-    this.bosDependency = bosDependency;
-    this.mutationReconciler = mutationReconciler;
-    this.resourceUrl = resourceUrl;
-    this.catalog = null;
+function requireMethod(owner, name) {
+  if (typeof owner?.[name] !== "function") throw new TypeError(`${name} must be provided`);
+}
+
+function sameSource(left, right) {
+  return left?.platform === right?.platform && left?.application === right?.application && left?.plugin === right?.plugin;
+}
+
+function requestFor(contact, body) {
+  return {
+    method: contact.method.toUpperCase(),
+    uri: contact.uri,
+    headers: {"content-type": "application/json"},
+    body: structuredClone(body)
+  };
+}
+
+export class BosContractClient {
+  constructor({discovery, http, bos}) {
+    requireMethod(discovery, "read");
+    requireMethod(discovery, "refresh");
+    requireMethod(http, "request");
+    requireMethod(bos, "recoverAuthentication");
+    this.discoveryTransport = discovery;
+    this.http = http;
+    this.bos = bos;
+    this.discovery = null;
+    this.descriptions = new Map();
+    this.recoveryActive = false;
   }
 
-  async refreshCatalog() {
-    return this.#withBosAuthentication(() => this.#refreshCatalog());
+  async refreshDiscovery() {
+    const current = await this.#readDiscovery(true);
+    this.descriptions.clear();
+    return structuredClone(current);
   }
 
-  resolveOperation(requestedSemanticId, { expectedSideEffect } = {}) {
-    if (!this.catalog) throw new BosMcpError("Refresh the My CRM tool catalog before selecting an operation", { code: "catalog_required" });
-    const matches = this.catalog.filter((tool) => semanticId(tool) === requestedSemanticId);
-    if (matches.length === 0) {
-      throw new BosMcpError(`My CRM does not currently advertise ${requestedSemanticId}`, {
-        code: "operation_unavailable",
-        operation: requestedSemanticId
-      });
+  async describe(operationIds) {
+    const discovery = this.discovery ?? await this.#readDiscovery(false);
+    const requested = validateOperationIds(operationIds, discovery.describe.max_operations);
+    for (const operationId of requested) {
+      if (!discovery.describe.operations.includes(operationId)) {
+        throw new BosContractError(`Operation ${operationId} is not present in current discovery`, {code: "OPERATION_UNAVAILABLE", operation: operationId});
+      }
     }
-    if (matches.length > 1) {
-      throw new BosMcpError(`My CRM advertised an ambiguous operation for ${requestedSemanticId}`, {
-        code: "ambiguous_operation",
-        operation: requestedSemanticId
-      });
-    }
-    const operation = matches[0];
-    if (expectedSideEffect && sideEffect(operation) !== expectedSideEffect) {
-      throw new BosMcpError(`My CRM operation ${requestedSemanticId} has an unexpected side-effect class`, {
-        code: "side_effect_mismatch",
-        operation: requestedSemanticId,
-        details: { expected: expectedSideEffect, actual: sideEffect(operation) }
-      });
-    }
+    const response = await this.#requestWithRecovery(
+      () => this.http.request(requestFor(this.discovery.describe, {operations: requested})),
+      {operationIds: requested, operation: "app.describe"}
+    );
+    if (response.status !== 200) throw this.#publicFailure(response, "app.describe");
+    const described = validateDescribeResponse(response.body, requested);
+    for (const operation of described.operations) this.descriptions.set(operation.operation, operation);
+    return structuredClone(described);
+  }
+
+  getDescription(operationId) {
+    const operation = this.descriptions.get(operationId);
+    if (!operation) throw new BosContractError(`Operation ${operationId} has not been described`, {code: "OPERATION_UNAVAILABLE", operation: operationId});
     return structuredClone(operation);
   }
 
-  async invoke(requestedSemanticId, args, { expectedSideEffect } = {}) {
-    if (!this.catalog) await this.#withBosAuthentication(() => this.#refreshCatalog());
-    const operation = this.resolveOperation(requestedSemanticId, { expectedSideEffect });
-    const originalSideEffect = sideEffect(operation);
-    const invocationArgs = structuredClone(args ?? {});
-    try {
-      return await this.#call(operation.name, invocationArgs);
-    } catch (error) {
-      const reason = authenticationReason(error);
-      if (!reason) throw error;
-      await this.#recoverAuthentication(reason);
-      if (originalSideEffect === "read") {
-        const refreshedOperation = this.resolveOperation(requestedSemanticId, { expectedSideEffect: "read" });
-        return this.#call(refreshedOperation.name, invocationArgs);
+  async execute(operationId, input) {
+    const original = this.descriptions.get(operationId);
+    if (!original) throw new BosContractError(`Operation ${operationId} has not been described`, {code: "OPERATION_UNAVAILABLE", operation: operationId});
+    if (original.status !== "described") throw new BosContractError(`Operation ${operationId} is not available`, {code: "OPERATION_UNAVAILABLE", operation: operationId});
+    validateJsonValueAgainstSchema(input, original.input_schema, `${operationId} input`);
+    const perform = async () => {
+      const current = this.descriptions.get(operationId);
+      if (!current) throw new BosContractError(`Operation ${operationId} is unavailable after discovery refresh`, {code: "OPERATION_UNAVAILABLE", operation: operationId});
+      if (current.status !== "described") throw new BosContractError(`Operation ${operationId} is not available`, {code: "OPERATION_UNAVAILABLE", operation: operationId});
+      const selectedSources = input?.source ? [input.source] : Array.isArray(input?.targets) ? input.targets.map(({source}) => source) : [];
+      const readySources = current.sources.filter(({availability}) => availability === "ready");
+      if ((selectedSources.length === 0 && readySources.length === 0) || selectedSources.some((source) => !readySources.some((candidate) => sameSource(candidate.source, source)))) {
+        throw new BosContractError(`Operation ${operationId} has no ready selected source`, {code: "OPERATION_NOT_READY", operation: operationId});
       }
-      const reconciliation = await this.mutationReconciler.reconcile({
-        semanticOperation: requestedSemanticId,
-        operation: structuredClone(operation),
-        arguments: structuredClone(invocationArgs),
-        authenticationError: error
-      });
-      if (reconciliation?.outcome === "committed") return reconciliation.result;
-      if (reconciliation?.outcome === "retry_safe") {
-        const refreshedOperation = this.resolveOperation(requestedSemanticId, {
-          expectedSideEffect: originalSideEffect
-        });
-        return this.#call(refreshedOperation.name, invocationArgs);
-      }
-      throw new BosMcpError("My CRM could not safely determine whether the mutation committed", {
-        code: "mutation_reconciliation_required",
-        operation: requestedSemanticId,
-        details: { outcome: reconciliation?.outcome ?? "unknown" }
-      });
-    }
+      if (current.effect !== original.effect) throw new BosContractError(`Operation ${operationId} changed effect during recovery`, {code: "EFFECT_CHANGED", operation: operationId});
+      validateJsonValueAgainstSchema(input, current.input_schema, `${operationId} refreshed input`);
+      return this.http.request(requestFor(current.execution, input));
+    };
+    const response = await this.#requestWithRecovery(perform, {operationIds: [operationId], operation: operationId});
+    if (response.status >= 400) throw this.#publicFailure(response, operationId);
+    validateJsonValueAgainstSchema(response.body, this.descriptions.get(operationId).output_schema, `${operationId} output`);
+    return structuredClone(response);
   }
 
-  async listResources() {
-    if (typeof this.transport.listResources !== "function") {
-      throw new BosMcpError("The host does not expose MCP resource listing", { code: "resource_listing_unavailable" });
-    }
-    return this.#withBosAuthentication(() => this.transport.listResources({ resourceUrl: this.resourceUrl }));
-  }
-
-  async readResource(uri) {
-    if (typeof uri !== "string" || uri.length === 0) throw new TypeError("A listed resource URI is required");
-    if (typeof this.transport.readResource !== "function") {
-      throw new BosMcpError("The host does not expose MCP resource reading", { code: "resource_read_unavailable" });
-    }
-    return this.#withBosAuthentication(() => this.transport.readResource({ resourceUrl: this.resourceUrl, uri }));
-  }
-
-  async #withBosAuthentication(action) {
+  async #readDiscovery(refresh) {
+    let value;
     try {
-      return await action();
+      value = await this.discoveryTransport[refresh ? "refresh" : "read"]();
     } catch (error) {
-      const reason = authenticationReason(error);
-      if (!reason) throw error;
-      await this.#recoverAuthentication(reason);
-      return action();
+      const condition = authenticationCondition(error);
+      if (!condition) throw new BosContractError("The BOS discovery transport failed", {code: "TRANSPORT_FAILURE"});
+      if (this.recoveryActive) throw new BosContractError("BOS authentication recovery did not restore discovery", {code: "AUTHENTICATION_RECOVERY_FAILED"});
+      await this.#recover(condition, error?.resource ?? null);
+      try { value = await this.discoveryTransport.refresh(); } catch {
+        throw new BosContractError("BOS authentication recovery did not restore discovery", {code: "AUTHENTICATION_RECOVERY_FAILED"});
+      }
+    }
+    this.discovery = validateApplicationDiscovery(value);
+    return this.discovery;
+  }
+
+  async #requestWithRecovery(action, {operationIds, operation}) {
+    let response;
+    try { response = await action(); } catch (error) {
+      if (error instanceof BosContractError) throw error;
+      const condition = authenticationCondition(error);
+      if (!condition) throw new BosContractError("The discovered HTTPS transport failed", {code: "TRANSPORT_FAILURE", operation});
+      return this.#recoverRefreshAndRetry(condition, action, {operationIds, operation, resource: error?.resource ?? null});
+    }
+    const condition = authenticationCondition(response);
+    if (!condition) return response;
+    return this.#recoverRefreshAndRetry(condition, action, {operationIds, operation, resource: response?.resource ?? null});
+  }
+
+  async #recoverRefreshAndRetry(condition, action, {operationIds, operation, resource}) {
+    if (this.recoveryActive) throw new BosContractError("BOS authentication recovery did not restore the operation", {code: "AUTHENTICATION_RECOVERY_FAILED", operation});
+    this.recoveryActive = true;
+    try {
+      await this.#recover(condition, resource);
+      await this.refreshDiscovery();
+      if (operation !== "app.describe") await this.describe(operationIds);
+      let response;
+      try { response = await action(); } catch (error) {
+        if (error instanceof BosContractError) throw error;
+        if (authenticationCondition(error)) throw new BosContractError("BOS authentication recovery did not restore the operation", {code: "AUTHENTICATION_RECOVERY_FAILED", operation});
+        throw new BosContractError("The discovered HTTPS transport failed after recovery", {code: "TRANSPORT_FAILURE", operation});
+      }
+      if (authenticationCondition(response)) throw new BosContractError("BOS authentication recovery did not restore the operation", {code: "AUTHENTICATION_RECOVERY_FAILED", operation});
+      return response;
+    } finally {
+      this.recoveryActive = false;
     }
   }
 
-  async #recoverAuthentication(reason) {
-    let readiness = await this.bosDependency.recoverAuthentication({
-      resourceUrl: this.resourceUrl,
-      reason
+  async #recover(condition, resource) {
+    const readiness = await this.bos.recoverAuthentication({resource, condition});
+    if (readiness?.status !== "READY") throw new BosContractError("BOS authentication recovery remains active", {code: "AUTHENTICATION_RECOVERY_PENDING"});
+  }
+
+  #publicFailure(response, operation) {
+    let publicError;
+    try { publicError = validatePublicError(response?.body?.error); } catch {
+      return new BosContractError("The server returned a nonconforming public error", {code: "INVALID_PUBLIC_ERROR", status: response?.status, operation});
+    }
+    const description = this.descriptions.get(operation);
+    if (description?.status === "described" && !description.error_contract.codes.includes(publicError.code)) {
+      return new BosContractError("The server returned an unadvertised public error", {code: "INVALID_PUBLIC_ERROR", status: response?.status, operation});
+    }
+    let instruction = null;
+    try {
+      if (response.body?.instruction) {
+        instruction = validatePublicInstruction(response.body.instruction);
+      }
+    } catch {
+      return new BosContractError("The server returned a nonconforming public instruction", {code: "INVALID_PUBLIC_INSTRUCTION", status: response?.status, operation});
+    }
+    return new BosContractError(publicError.message, {
+      code: publicError.code,
+      status: response.status,
+      operation,
+      publicError,
+      instruction
     });
-    if (readiness?.status !== "READY") {
-      readiness = await this.bosDependency.waitForAuthenticationReady({
-        resourceUrl: this.resourceUrl
-      });
-    }
-    if (readiness?.status !== "READY") {
-      throw new BosMcpError("BOS authentication recovery remains pending", {
-        code: "authentication_recovery_pending",
-        details: { status: readiness?.status ?? "NOT_READY" }
-      });
-    }
-    this.catalog = null;
-    await this.transport.refreshConnection({ resourceUrl: this.resourceUrl });
-    await this.#refreshCatalog();
-  }
-
-  async #refreshCatalog() {
-    const result = await this.transport.listTools({ resourceUrl: this.resourceUrl });
-    const tools = Array.isArray(result) ? result : result?.tools;
-    if (!Array.isArray(tools)) throw new BosMcpError("My CRM returned an invalid tool catalog", { code: "invalid_tool_catalog" });
-    this.catalog = tools.map((tool) => structuredClone(tool));
-    return structuredClone(this.catalog);
-  }
-
-  async #call(name, args) {
-    try {
-      const result = await this.transport.callTool({ resourceUrl: this.resourceUrl, name, arguments: structuredClone(args) });
-      if (result?.isError) {
-        throw new BosMcpError("My CRM operation returned an error", {
-          code: result?.structuredContent?.error?.code ?? "operation_failed",
-          operation: name,
-          details: {
-            ...(result?.structuredContent?.error?.details ?? {}),
-            authenticationChallenge: Boolean(result?._meta?.["mcp/www_authenticate"])
-          }
-        });
-      }
-      return result;
-    } catch (error) {
-      if (error instanceof BosMcpError) throw error;
-      const authReason = authenticationReason(error);
-      if (authReason) {
-        throw new BosMcpError("BOS authentication recovery is required", {
-          code: authReason,
-          operation: name,
-          details: { status: error?.status ?? null }
-        });
-      }
-      throw new BosMcpError("My CRM transport could not complete the operation", {
-        code: "transport_error",
-        operation: name,
-        details: { name: error?.name ?? "Error" }
-      });
-    }
   }
 }
 
-export { authenticationReason, semanticId, sideEffect };
+export {authenticationCondition};

@@ -1,0 +1,39 @@
+{
+  "$schema": "https://json-schema.org/draft/2020-12/schema",
+  "$id": "https://dfsm.ai/contracts/my-crm/v1/conceptual-customer.schema.json",
+  "title": "Client-side conceptual customer",
+  "type": "object",
+  "additionalProperties": false,
+  "required": ["records", "evidence", "confidence", "conflicts", "uncertainty"],
+  "properties": {
+    "records": {
+      "type": "array",
+      "minItems": 1,
+      "items": {
+        "type": "object",
+        "required": ["source", "record"],
+        "properties": {
+          "source": {
+            "type": "object",
+            "additionalProperties": false,
+            "required": ["platform", "application", "plugin"],
+            "properties": {
+              "platform": {"type": "string", "minLength": 1, "pattern": "^[a-z][a-z0-9_-]*$"},
+              "application": {"type": "string", "minLength": 1, "pattern": "^[a-z][a-z0-9_-]*$"},
+              "plugin": {"type": "string", "minLength": 1}
+            }
+          },
+          "record": {
+            "type": "object",
+            "required": ["public_selector"],
+            "properties": {"public_selector": {"type": "string", "minLength": 1}}
+          }
+        }
+      }
+    },
+    "evidence": {"type": "array", "minItems": 1, "items": {"type": "object"}},
+    "confidence": {"type": "string", "minLength": 1},
+    "conflicts": {"type": "array"},
+    "uncertainty": {"type": "string", "minLength": 1}
+  }
+}

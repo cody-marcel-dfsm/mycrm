@@ -1,7 +1,7 @@
 {
   "name": "my-crm",
   "version": "0.2.0",
-  "description": "External extension and planned successor to basic Lead Director CRM skills, providing federated CRM operations and customer-specific automation design on BOS",
+  "description": "Independent provider-neutral CRM expertise that consumes discovered BOS application contracts",
   "author": {
     "name": "Infinite State Machines LLC",
     "url": "https://dfsm.ai"
@@ -12,13 +12,13 @@
     "bos",
     "crm",
     "automation",
-    "fsm"
+    "federation"
   ],
   "skills": "./skills/",
   "interface": {
     "displayName": "My CRM",
-    "shortDescription": "Operate CRM data and build governed automations on BOS.",
-    "longDescription": "Use the My CRM product-owned BOS connection to discover the CRM capabilities enabled for the selected organization, work across those sources through one provider-neutral service, inspect customer journeys, and design declarative graph state machines through current advertised operations.",
+    "shortDescription": "Use discovered CRM capabilities through BOS.",
+    "longDescription": "Use the installed BOS product to discover current organization-defined CRM sources, entities, fields, operations, limits, errors, and exact deterministic HTTPS actions. Preserve source records while applying provider-neutral CRM reasoning, freshness, recovery, and presentation.",
     "developerName": "Infinite State Machines LLC",
     "category": "Productivity",
     "capabilities": [
@@ -26,7 +26,7 @@
       "Write"
     ],
     "defaultPrompt": [
-      "Show me the latest leads across my connected CRM sources.",
+      "Find the latest matching customer records across my current CRM sources.",
       "Explain how you would find and merge this customer across my CRM sources.",
       "Compare this customer across sources and show conflicts without changing anything."
     ],
@@ -34,6 +34,5 @@
     "brandColor": "#061638",
     "composerIcon": "./assets/my-crm-logo.png",
     "logo": "./assets/my-crm-logo.png"
-  },
-  "mcpServers": "./.mcp.json"
+  }
 }

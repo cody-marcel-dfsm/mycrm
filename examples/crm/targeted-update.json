@@ -1,0 +1,14 @@
+{
+  "targets": [
+    {
+      "source": {"platform": "discovered-platform", "application": "discovered-application", "plugin": "discovered-source-a"},
+      "record": {"selector": "opaque-selector-a"},
+      "changes": {"discovered_field": "synthetic-value"}
+    },
+    {
+      "source": {"platform": "discovered-platform", "application": "discovered-application", "plugin": "discovered-source-b"},
+      "record": {"selector": "opaque-selector-b"},
+      "changes": {"discovered_field": "synthetic-value"}
+    }
+  ]
+}

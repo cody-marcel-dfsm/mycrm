@@ -1,4 +1,4 @@
 interface:
   display_name: "My CRM Customer Journey"
   short_description: "Show verified CRM graph paths and next steps"
-  default_prompt: "Use $my-crm-customer-journey to show this lead's verified journey and route."
+  default_prompt: "Use $my-crm-customer-journey to show this customer's currently advertised journey evidence."

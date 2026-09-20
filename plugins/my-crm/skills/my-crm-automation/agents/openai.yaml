@@ -1,4 +1,4 @@
 interface:
   display_name: "My CRM Automation"
-  short_description: "Design and run governed CRM state machines"
-  default_prompt: "Use $my-crm-automation to explain and design this CRM automation."
+  short_description: "Contribute CRM expertise to BOS-owned journeys"
+  default_prompt: "Use $my-crm-automation to contribute CRM goals and constraints to this BOS-owned journey."

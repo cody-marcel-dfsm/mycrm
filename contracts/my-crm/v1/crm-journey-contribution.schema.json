@@ -1,0 +1,18 @@
+{
+  "$schema": "https://json-schema.org/draft/2020-12/schema",
+  "$id": "https://dfsm.ai/contracts/my-crm/v1/crm-journey-contribution.schema.json",
+  "title": "My CRM contribution to BOS-owned authoring",
+  "type": "object",
+  "additionalProperties": false,
+  "required": ["goal", "concepts", "constraints", "requiredEvidence", "approvals", "guarantees", "presentation", "recovery"],
+  "properties": {
+    "goal": {"type": "string", "minLength": 1},
+    "concepts": {"type": "array"},
+    "constraints": {"type": "array"},
+    "requiredEvidence": {"type": "array"},
+    "approvals": {"type": "array"},
+    "guarantees": {"type": "array"},
+    "presentation": {"type": "array"},
+    "recovery": {"type": "array"}
+  }
+}

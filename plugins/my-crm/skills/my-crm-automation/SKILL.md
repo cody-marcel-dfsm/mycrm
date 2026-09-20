@@ -1,22 +1,20 @@
 ---
 name: my-crm-automation
-description: Explain, generate, validate, install, activate, or invoke customer-specific CRM FSM automations through current My CRM MCP operations.
+description: Contribute CRM goals and constraints to BOS-owned explain planning and BOSL authoring, then consume returned journey instructions and actions.
 ---
 
 # My CRM Automation
 
-## Explain and generate
+Route explicit explain, preview, and automation requests to installed BOS operating-system/application-client skills. They interpret the complete prompt, request current discovery and Describe, construct explain plans, author BOSL, and control lifecycle interaction. My CRM contributes only CRM goals, concepts, constraints, required evidence, source semantics, approvals, guarantees, presentation, and recovery guidance.
 
-Resolve the selected organization and refresh the My CRM operation and resource contract. Translate the user's goal into explicit states, transitions, guards, terminal goals, failure paths, and effects. Bind every effect to an exact semantic capability identifier returned by current discovery. Never invent an operation identifier or embed provider routing, credentials, tenant identifiers, or record data in the graph definition.
+Implement no local FSM or BOSL dialect, compiler, validator, graph registry, transition selection, execution engine, runtime state, version, digest, revision, or identifier.
 
-Run the local deterministic FSM generator for structural checks. Treat its result as a draft until a discovered server validation operation accepts the graph in the current product scope.
+For a CRM-domain client instruction:
 
-For `explain`, show the proposed graph, capability bindings, sanitized parameter shapes, approvals, failure behavior, and intended live operations. Stop before server validation or execution unless the user asks to proceed.
+1. Validate the bounded goal, advertised schema, public operation key, and returned actions.
+2. Combine the goal with the original user objective and discover the minimum current CRM capability.
+3. Invoke its exact HTTPS contract and retain only public receipt or correlation evidence needed by the returned continuation.
+4. Invoke the returned `complete`, `failed`, or `step` action verbatim. Send only the compiler-approved lifecycle acknowledgment.
+5. When `payload_schema` is `null`, omit both body and `Content-Type`; never send `{}` or JSON `null`.
 
-## Server lifecycle
-
-Use graph validate, install, activate, and invoke operations only when they are advertised by the current My CRM MCP catalog or its resource-owned operation contract. Follow each exact schema and side-effect class. Preserve server-issued graph identity, version, digest, approval bindings, and idempotency requirements.
-
-Fail closed when an operation is absent. Return the structurally valid local draft and identify the missing semantic contract. Never call an assumed REST path, database, private server API, or provider API.
-
-Reconcile uncertain lifecycle mutations by server-issued operation identity before replay. Report completion only from the actual operation result.
+Do not transport CRM records, contact lists, files, source identities, transition names, or runtime state through lifecycle completion. BOS selects every next and catch transition. If audience evidence changes an approval-bound effect, require server reprepare and fresh approval through the returned recovery path.

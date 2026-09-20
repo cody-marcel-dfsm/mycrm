@@ -1,14 +1,12 @@
 ---
 name: my-crm-pipeline-operations
-description: Inspect or change authorized CRM stage, owner, status, value, opportunity, and next-action state through My CRM.
+description: Inspect or change only currently advertised CRM state, ownership, status, value, opportunity, and next-action behavior through BOS-discovered contracts.
 ---
 
 # My CRM Pipeline Operations
 
-Discover the provider-neutral pipeline operation from the current My CRM MCP catalog. Let the server normalize provider vocabulary and select eligible sources.
+Discover the current public operation key and request only its Describe contract. Use its organization-defined labels, fields, schemas, source availability wrappers, guarantees, and exact HTTPS route template. Never normalize source vocabulary into a fixed pipeline model.
 
-For reads, preserve server-returned record handles, pipeline and stage labels, versions, source provenance, freshness, and eligibility evidence. Present current state separately from inferred next actions.
+For reads, preserve source, opaque selector, current observation, freshness, eligibility evidence, and public errors. Separate current facts from client inference.
 
-For a change, resolve one exact source record, require its current version, apply the single-record mutation safeguard, and invoke one discovered operation. Use idempotency only as declared by the schema. Verify the returned receipt or read-back before reporting completion and invalidate affected client caches.
-
-When a request would update more than one source record, stop before mutation and offer a read-only comparison or a one-record selection. Leave source recovery and reconciliation with the server.
+For a change, apply the record-operation safeguards: one conceptual customer, one to five explicit targets, described changes, ordered receipts/errors, and no client version, idempotency, retry, or execution state. Invalidate the affected shared-cache scope after a confirmed mutation.

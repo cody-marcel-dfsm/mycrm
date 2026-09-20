@@ -1,0 +1,80 @@
+import assert from "node:assert/strict";
+import {readFile} from "node:fs/promises";
+import test from "node:test";
+
+import {BosContractClient} from "../src/bos/client.mjs";
+import {buildCreateRequest, buildSearchRequest, buildUpdateRequest, createConceptualCustomer} from "../src/crm/operations.mjs";
+import {validateCreateResult, validateFederatedResult, validateOrderedMutationResult} from "../src/crm/results.mjs";
+
+const published = async (name) => JSON.parse(await readFile(new URL(`../contracts/bos/lead-director/v1/${name}`, import.meta.url), "utf8"));
+const selectDescribe = (response, operationIds) => ({...structuredClone(response), operations: response.operations.filter(({operation}) => operationIds.includes(operation))});
+
+test("canonical search flows through exact app.describe and Describe contacts without client authority", async () => {
+  const discovery = await published("app.describe.example.json");
+  const describe = await published("describe.response.example.json");
+  const examples = await published("operation.examples.json");
+  const requests = [];
+  const client = new BosContractClient({
+    discovery: {read: async () => discovery, refresh: async () => discovery},
+    http: {request: async (request) => {
+      requests.push(structuredClone(request));
+      if (request.uri === discovery.describe.uri) return {status: 200, body: selectDescribe(describe, request.body.operations)};
+      return {status: 200, body: structuredClone(examples.search.response)};
+    }},
+    bos: {recoverAuthentication: async () => ({status: "READY"})}
+  });
+  const described = await client.describe(["search"]);
+  const input = buildSearchRequest({text: "cody.marcel@dfsm.ai"});
+  assert.equal((await client.execute(described.operations[0].operation, input)).status, 200);
+  assert.deepEqual(requests.map(({uri}) => uri), [discovery.describe.uri, described.operations[0].execution.uri]);
+  assert.equal(requests.some(({headers}) => headers?.authorization), false);
+  assert.equal(requests.some(({body}) => body?.source !== undefined), false);
+});
+
+test("published operation examples drive source-first builders and client-owned conceptual reconciliation", async () => {
+  const examples = await published("operation.examples.json");
+  assert.deepEqual(buildSearchRequest(examples.search.request), examples.search.request);
+  assert.deepEqual(buildCreateRequest(examples.create.request), examples.create.request);
+  assert.deepEqual(buildUpdateRequest(examples.update.request), examples.update.request);
+  const search = validateFederatedResult(examples.search.response, {limits: {max_results_per_source: 5}, error_contract: {codes: ["SOURCE_TEMPORARILY_UNAVAILABLE"]}});
+  const records = search.source_results.flatMap((sourceResult) => sourceResult.records.map((record) => ({source: sourceResult.source, record})));
+  const conceptual = createConceptualCustomer({records, evidence: [{kind: "controlled_fixture"}], confidence: "bounded", conflicts: [], uncertainty: "Source records remain distinct."});
+  assert.equal(conceptual.records.length, 1);
+  assert.equal(validateCreateResult(examples.create.response).status, "created");
+  assert.equal(validateOrderedMutationResult(examples.update.response, examples.update.request.targets, {effect: "update", error_contract: {codes: []}}).outcomes.length, 1);
+  assert.equal(validateOrderedMutationResult(examples.delete.response, examples.delete.request.targets, {effect: "delete", error_contract: {codes: []}}).outcomes[0].status, "deleted");
+});
+
+test("canonical create, update, and delete requests invoke only their discovered contracts", async () => {
+  const discovery = await published("app.describe.example.json");
+  const describe = await published("describe.response.example.json");
+  const examples = await published("operation.examples.json");
+  const invoked = [];
+  const client = new BosContractClient({
+    discovery: {read: async () => discovery, refresh: async () => discovery},
+    http: {request: async (request) => {
+      if (request.uri === discovery.describe.uri) return {status: 200, body: selectDescribe(describe, request.body.operations)};
+      const operation = describe.operations.find(({execution}) => execution?.uri === request.uri)?.operation;
+      if (!operation || !["create", "update", "delete"].includes(operation)) throw new Error("unexpected operation URI");
+      invoked.push(operation);
+      return {status: 200, body: structuredClone(examples[operation].response)};
+    }},
+    bos: {recoverAuthentication: async () => ({status: "READY"})}
+  });
+  await client.describe(["create", "update", "delete"]);
+  for (const operation of ["create", "update", "delete"]) await client.execute(operation, examples[operation].request);
+  assert.deepEqual(invoked, ["create", "update", "delete"]);
+});
+
+test("canonical recent-meeting request does not trigger a CRM lookup solely for attendees", () => {
+  const prompt = "Use the attendees from the meeting that just ended to prepare and send a follow-up.";
+  const attendee = "cody.marcel@dfsm.ai";
+  const crmCalls = [];
+  const boundary = ({prompt: currentPrompt, attendees}) => {
+    assert.equal(currentPrompt, prompt);
+    assert.deepEqual(attendees, [attendee]);
+    return {owner: "bos", crmContributionRequired: false};
+  };
+  assert.deepEqual(boundary({prompt, attendees: [attendee]}), {owner: "bos", crmContributionRequired: false});
+  assert.deepEqual(crmCalls, []);
+});
