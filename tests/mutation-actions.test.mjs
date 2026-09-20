@@ -8,34 +8,36 @@ import {BosContractClient} from "../src/bos/client.mjs";
 const published = async (name) => JSON.parse(await readFile(new URL(`../contracts/bos/lead-director/v1/${name}`, import.meta.url), "utf8"));
 const selectDescribe = (response, operationIds) => ({...structuredClone(response), operations: response.operations.filter(({operation}) => operationIds.includes(operation))});
 
-test("an approval action invokes only its returned URI and advertised payload schema", async () => {
+test("a returned action is validated and delegated unchanged to the BOS adapter", async () => {
   const calls = [];
-  const action = {method: "POST", uri: "https://fixture.invalid/action/delete-approved", payload_schema: {type: "object", additionalProperties: false, required: ["approved"], properties: {approved: {const: true}}}};
-  const actions = new ReturnedActionClient({http: {request: async (request) => { calls.push(request); return {status: 200, body: {complete: true}}; }}});
+  const action = {verb: "step", method: "POST", href: "/action/delete-approved", payload_schema: {type: "object", additionalProperties: false, required: ["approved"], properties: {approved: {const: true}}}};
+  const actions = new ReturnedActionClient({bos: {invokeReturnedAction: async (current, payload) => { calls.push({action: current, payload}); return {status: 200, body: {complete: true}}; }}});
   await actions.invoke(action, {approved: true});
-  assert.deepEqual(calls[0], {method: "POST", uri: action.uri, headers: {"content-type": "application/json"}, body: {approved: true}});
+  assert.deepEqual(calls[0], {action, payload: {approved: true}});
+  assert.equal(JSON.stringify(calls[0]).includes("header"), false);
+  assert.equal(JSON.stringify(calls[0]).includes("bos_ctx_v2_"), false);
   await assert.rejects(actions.invoke(action, {approved: false}), /schema/);
   assert.equal(calls.length, 1);
 });
 
 test("in-progress state action is physically bodyless and cannot replay mutation input", async () => {
   const calls = [];
-  const action = {verb: "state", method: "GET", uri: "https://fixture.invalid/action/state", body: null};
-  const actions = new OperationStateActionClient({http: {request: async (request) => { calls.push(request); return {status: 200, body: {complete: true}}; }}});
+  const action = {verb: "state", method: "GET", href: "/action/state", payload_schema: null};
+  const actions = new OperationStateActionClient({bos: {invokeStateAction: async (current) => { calls.push(current); return {status: 200, body: {complete: true}}; }}});
   await actions.invoke(action);
-  assert.deepEqual(calls[0], {method: "GET", uri: action.uri, headers: {}});
+  assert.deepEqual(calls[0], action);
   await assert.rejects(actions.invoke(action, {}), /bodyless/);
   assert.equal(calls.length, 1);
-  assert.deepEqual(validateOperationStateAction({uri: action.uri}), action);
+  assert.deepEqual(validateOperationStateAction(action), action);
   for (const invalid of [
     {...action, method: "POST"},
     {...action, verb: "retry"},
     {...action, body: {}},
-    {...action, payload_schema: null},
-    {...action, uri: "http://fixture.invalid/action/state"},
-    {...action, uri: "https://user:secret@fixture.invalid/action/state"},
-    {...action, uri: "https://fixture.invalid/action/state#fragment"}
-  ]) assert.throws(() => validateOperationStateAction(invalid), /state action|HTTPS|credentials|fragment/);
+    {...action, payload_schema: {type: "object"}},
+    {...action, href: "http://fixture.invalid/action/state"},
+    {...action, href: "//fixture.invalid/action/state"},
+    {...action, href: "/action/state#fragment"}
+  ]) assert.throws(() => validateOperationStateAction(invalid), /returned|state action|origin-relative|fragment/);
 });
 
 test("runtime public failures require correlation evidence, advertised codes, and sanitized details", async () => {
@@ -66,10 +68,10 @@ test("public recovery instructions use a bounded allowlist and validated returne
     message: "Review the exact target.",
     review: {targets: [{source: {platform: "bos", application: "lead-director", plugin: "fixture"}, record: {selector: "opaque"}}]},
     approval_schema: {type: "object", additionalProperties: false, required: ["approved"], properties: {approved: {const: true}}},
-    action: {method: "POST", uri: "https://fixture.invalid/action/approve", payload_schema: {type: "object"}}
+    action: {verb: "step", method: "POST", href: "/action/approve", payload_schema: {type: "object"}}
   };
   await assert.rejects(client.execute("search", {text: "person"}), (error) => error.code === "INVALID_REQUEST" && error.instruction.action.method === "POST");
-  instruction.action.uri = "javascript:alert(1)";
+  instruction.action.href = "javascript:alert(1)";
   await assert.rejects(client.execute("search", {text: "person"}), (error) => error.code === "INVALID_PUBLIC_INSTRUCTION");
   instruction = {effect: "delete_record", approval_schema: {type: "object", properties: {access_token: {type: "string"}}}};
   await assert.rejects(client.execute("search", {text: "person"}), (error) => error.code === "INVALID_PUBLIC_INSTRUCTION");

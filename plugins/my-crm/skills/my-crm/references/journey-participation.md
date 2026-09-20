@@ -4,6 +4,10 @@ BOS skills own explain planning and BOSL authoring. BOS Service owns compilation
 
 A CRM contribution contains the goal, concepts, constraints, evidence, source semantics, approvals, guarantees, presentation, and recovery guidance. It contains no BOSL state, transition, catch target, runtime identity, version, digest, revision, or source binding.
 
-Validate CRM client instructions against their advertised schema. Discover the requested public operation, perform the minimum CRM work, and acknowledge through the exact returned lifecycle action. A null payload schema means a physically bodyless request without `Content-Type`. Let BOS choose the next action.
+An `awaiting_client` CRM instruction contains graph-authored bounded `goal` and `message`, resolved public inputs, exact `after_success` completion action, and exact `on_failure` failed action. It has no client-invented `input_schema` or `actions` wrapper. Discover the requested public operation needed to satisfy that goal, perform the minimum CRM work, and pass the applicable action object unchanged to the BOS-owned dependency adapter. Each action contains exactly `{verb, method, href, payload_schema}`. Add no header, context field, or handle. A null payload schema means a physically bodyless request without `Content-Type`.
+
+`step` and `state` are top-level actions in later BOS Service responses, never members of a CRM instruction. Let BOS choose the next action.
 
 The canonical recent-meeting follow-up does not require CRM lookup merely to obtain attendee addresses. The controlled attendee fixture is `cody.marcel@dfsm.ai`. My CRM participates only when a later client instruction requests CRM expertise.
+
+For CRM audience repair, interpret only the returned sanitized recipient failure. Discover the minimum current CRM operation, recommend a correction or regenerated audience that fits the original request, and obtain user permission before persisting any CRM change. Invoke the returned lifecycle `complete` action with only its compiler-approved acknowledgment. Never attach recipients or a server-held list reference. The following server nodes re-query and rematerialize the audience. A changed audience requires campaign reprepare and fresh approval before another send; previously proven successful deliveries stay excluded from any resend.

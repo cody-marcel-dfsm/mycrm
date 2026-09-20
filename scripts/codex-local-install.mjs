@@ -14,6 +14,17 @@ const exec = promisify(execFile);
 const MARKETPLACE = "my-crm-local";
 const PLUGIN_ID = `my-crm@${MARKETPLACE}`;
 
+function installedProduct(installed, name) {
+  return installed.find((entry) => entry.name === name && entry.enabled && entry.installed) ?? null;
+}
+
+function compatibilitySnapshot(installed) {
+  return ["bos", "education-center"].map((name) => {
+    const entry = installedProduct(installed, name);
+    return entry ? {name, pluginId: entry.pluginId, version: entry.version, enabled: entry.enabled, installed: entry.installed} : null;
+  }).filter(Boolean);
+}
+
 async function defaultRun(args) {
   const {stdout} = await exec("codex", args, {cwd: repositoryRoot, maxBuffer: 4 * 1024 * 1024});
   return stdout;
@@ -29,14 +40,15 @@ export async function verifyNativeRuntime({runCommand = defaultRun, expectedDire
   const installed = listing.installed ?? [];
   const myCrm = installed.find((entry) => entry.pluginId === PLUGIN_ID);
   if (!myCrm?.installed || !myCrm.enabled) throw new Error(`Native Codex plugin ${PLUGIN_ID} is not installed and enabled`);
-  const bos = installed.find((entry) => entry.name === "bos" && entry.enabled && entry.installed);
+  const bos = installedProduct(installed, "bos");
   if (!bos) throw new Error("The installed, enabled BOS dependency is required before My CRM can run");
   if (myCrm.source?.source !== "local" || !myCrm.source.path) throw new Error("My CRM must be installed from the supported local release-candidate marketplace");
   if (await realpath(myCrm.source.path) !== await realpath(path.join(repositoryRoot, "dist/my-crm"))) throw new Error("Installed My CRM marketplace source differs from this release candidate");
   const codexHome = process.env.CODEX_HOME ?? path.join(os.homedir(), ".codex");
   const installedPath = expectedDirectory ?? path.join(codexHome, "plugins/cache", MARKETPLACE, "my-crm", myCrm.version);
   const release = await checkRelease({directory: path.resolve(installedPath)});
-  return {pluginId: myCrm.pluginId, bosPluginId: bos.pluginId, release};
+  const educationCenter = installedProduct(installed, "education-center");
+  return {pluginId: myCrm.pluginId, bosPluginId: bos.pluginId, educationCenterPluginId: educationCenter?.pluginId ?? null, release};
 }
 
 export async function installLocal({runCommand = defaultRun, installedDirectoryFor} = {}) {
@@ -51,19 +63,27 @@ export async function installLocal({runCommand = defaultRun, installedDirectoryF
     if (await realpath(configured) !== await realpath(repositoryRoot)) throw new Error(`${MARKETPLACE} is already configured from a different root`);
   }
   const currentListing = await jsonCommand(runCommand, ["plugin", "list"]);
+  const compatibilityBefore = compatibilitySnapshot(currentListing.installed ?? []);
+  if (!compatibilityBefore.some(({name}) => name === "bos")) throw new Error("The installed, enabled BOS dependency is required before My CRM can be installed");
   const current = (currentListing.installed ?? []).find(({pluginId}) => pluginId === PLUGIN_ID);
   if (current?.version === packageVersion) {
     const codexHome = process.env.CODEX_HOME ?? path.join(os.homedir(), ".codex");
     const installedPath = installedDirectoryFor?.(current) ?? path.join(codexHome, "plugins/cache", MARKETPLACE, "my-crm", current.version);
     try {
-      return await verifyNativeRuntime({runCommand, expectedDirectory: installedPath});
+      const verified = await verifyNativeRuntime({runCommand, expectedDirectory: installedPath});
+      const afterListing = await jsonCommand(runCommand, ["plugin", "list"]);
+      if (JSON.stringify(compatibilitySnapshot(afterListing.installed ?? [])) !== JSON.stringify(compatibilityBefore)) throw new Error("My CRM verification changed the installed BOS product compatibility baseline");
+      return verified;
     } catch (error) {
       throw new Error(`Installed My CRM ${packageVersion} differs from this candidate; bump the package version before installing changed bytes: ${error.message}`);
     }
   }
   const installation = await jsonCommand(runCommand, ["plugin", "add", PLUGIN_ID]);
   if (!installation.installedPath) throw new Error("Native Codex install did not return its installed release path");
-  return verifyNativeRuntime({runCommand, expectedDirectory: installation.installedPath});
+  const verified = await verifyNativeRuntime({runCommand, expectedDirectory: installation.installedPath});
+  const afterListing = await jsonCommand(runCommand, ["plugin", "list"]);
+  if (JSON.stringify(compatibilitySnapshot(afterListing.installed ?? [])) !== JSON.stringify(compatibilityBefore)) throw new Error("My CRM installation changed the installed BOS product compatibility baseline");
+  return verified;
 }
 
 async function main() {

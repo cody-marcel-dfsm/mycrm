@@ -25,6 +25,9 @@ test("published federated search results preserve source records and advertised 
   const described = await published("describe.response.example.json");
   const examples = await published("operation.examples.json");
   assert.equal(validateFederatedResult(examples.search.response, described.operations[0]).source_results.length, 1);
+  const organizationField = structuredClone(examples.search.response);
+  organizationField.source_results[0].records[0].student_id = "student-public-42";
+  assert.equal(validateFederatedResult(organizationField, described.operations[0]).source_results[0].records[0].student_id, "student-public-42");
   const excessive = structuredClone(examples.search.response);
   excessive.source_results[0].records = Array.from({length: 6}, () => structuredClone(examples.search.response.source_results[0].records[0]));
   assert.throws(() => validateFederatedResult(excessive, described.operations[0]), /advertised result limit/);
@@ -70,7 +73,7 @@ test("mutation result validators consume canonical in-progress state actions and
   const descriptions = await published("describe.response.example.json");
   const createDescription = descriptions.operations.find(({operation}) => operation === "create");
   const updateDescription = descriptions.operations.find(({operation}) => operation === "update");
-  const stateAction = {verb: "state", method: "GET", uri: "https://fixture.invalid/operations/corr-example", body: null};
+  const stateAction = {verb: "state", method: "GET", href: "/operations/corr-example", payload_schema: null};
   const inProgressCreate = {...structuredClone(examples.create.response), complete: false, status: "in_progress", record: null, receipt: null, error: null, retry_after_seconds: 2, action: stateAction};
   assert.equal(validateCreateResult(inProgressCreate, createDescription).action.verb, "state");
   assert.equal(validateCreateResult({...examples.create.response, retry_after_seconds: null, action: null}, createDescription).complete, true);

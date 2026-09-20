@@ -20,6 +20,19 @@ test("Oracle-approved app.describe and task-scoped Describe release artifacts co
   const described = validateDescribeResponse(response, request.operations);
   assert.deepEqual(described.operations.map(({operation, status}) => [operation, status]), [["search", "described"], ["create", "described"], ["update", "described"], ["delete", "described"], ["calendar_read_event", "not_available"]]);
   assert.equal(described.operations[0].sources[0].availability, "ready");
+  assert.deepEqual(Object.keys(described.operations[0].sources[0]).sort(), ["availability", "error_contract", "guarantees", "input_schema", "limits", "output_schema", "receipt_schema", "source"]);
+  assert.equal(described.operations[0].execution.context_header, "X-BOS-Context-Handle");
+});
+
+test("Describe accepts only complete source-specific contracts from the frozen BOS bundle", async () => {
+  const request = await published("describe.request.example.json");
+  const response = await published("describe.response.example.json");
+  const partial = structuredClone(response);
+  delete partial.operations[0].sources[0].receipt_schema;
+  assert.throws(() => validateDescribeResponse(partial, request.operations), /schema|shape/);
+  const leakedHandle = structuredClone(response);
+  leakedHandle.operations[0].execution.context_header = `bos_ctx_v2_${"a".repeat(64)}`;
+  assert.throws(() => validateDescribeResponse(leakedHandle, request.operations), /schema|context_header|handle/);
 });
 
 test("app.describe pins the canonical Describe route and one BOSL authority partition", async () => {

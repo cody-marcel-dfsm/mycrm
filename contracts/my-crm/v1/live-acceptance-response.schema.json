@@ -9,6 +9,11 @@
     "bos_connection_reused",
     "application_discovered",
     "search_described",
+    "search_executed",
+    "result_validated",
+    "source_provenance_preserved",
+    "freshness_presented",
+    "conceptual_reconciliation_assessed",
     "mutation_performed",
     "authority_exposed",
     "message"
@@ -28,6 +33,21 @@
       "type": "boolean"
     },
     "search_described": {
+      "type": "boolean"
+    },
+    "search_executed": {
+      "type": "boolean"
+    },
+    "result_validated": {
+      "type": "boolean"
+    },
+    "source_provenance_preserved": {
+      "type": "boolean"
+    },
+    "freshness_presented": {
+      "type": "boolean"
+    },
+    "conceptual_reconciliation_assessed": {
       "type": "boolean"
     },
     "mutation_performed": {

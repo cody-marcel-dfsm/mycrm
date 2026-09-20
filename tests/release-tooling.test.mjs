@@ -9,6 +9,7 @@ import test from "node:test";
 import {buildRelease, releaseDirectory} from "../scripts/build-release.mjs";
 import {checkRelease} from "../scripts/check-release.mjs";
 import {installLocal, verifyNativeRuntime} from "../scripts/codex-local-install.mjs";
+import {importBocDependencyContract} from "../scripts/import-boc-dependency-contract.mjs";
 import {importBosContract} from "../scripts/import-bos-contract.mjs";
 import {repositoryRoot, sha256File, stableJson} from "../scripts/release-utils.mjs";
 import {LIVE_ACCEPTANCE_PROMPT, runLiveAcceptance} from "../scripts/verify-live-contract.mjs";
@@ -35,6 +36,11 @@ test("immutable BOS contract import validates archive, source commit, and exact 
   await mkdir(path.dirname(provenance), {recursive: true});
   await cp(path.join(repositoryRoot, "contracts/bos/lead-director/v1"), archiveRoot, {recursive: true});
   await cp(path.join(repositoryRoot, "contracts/bos/lead-director/v1"), target, {recursive: true});
+  const archiveManifestFile = path.join(archiveRoot, "manifest.json");
+  const archiveManifest = JSON.parse(await readFile(archiveManifestFile, "utf8"));
+  archiveManifest.auth_impact = "owner-approved-auth-adjacent-context-selection";
+  archiveManifest.preserved_auth_contract = "oauth-login-token-grant-callback-session-unchanged";
+  await writeFile(archiveManifestFile, stableJson(archiveManifest));
   await writeFile(provenance, "{}\n");
   const archive = path.join(temporary, "bundle.tgz");
   await run("tar", ["-czf", archive, "-C", path.join(temporary, "archive"), "lead-director-public-contract"]);
@@ -46,6 +52,23 @@ test("immutable BOS contract import validates archive, source commit, and exact 
   await importBosContract({archive, archiveSha256, sourceRevision, check: true, targetDirectory: target, provenanceFile: provenance});
   await assert.rejects(importBosContract({archive, archiveSha256: "0".repeat(64), sourceRevision, targetDirectory: target, provenanceFile: provenance}), /does not match/);
   await assert.rejects(importBosContract({archive, archiveSha256, sourceRevision: "short", targetDirectory: target, provenanceFile: provenance}), /source revision/);
+
+  const wrongAuthRoot = path.join(temporary, "wrong-auth/lead-director-public-contract");
+  await cp(archiveRoot, wrongAuthRoot, {recursive: true});
+  const wrongAuthManifestFile = path.join(wrongAuthRoot, "manifest.json");
+  const wrongAuthManifest = JSON.parse(await readFile(wrongAuthManifestFile, "utf8"));
+  wrongAuthManifest.auth_impact = "none";
+  await writeFile(wrongAuthManifestFile, stableJson(wrongAuthManifest));
+  const wrongImpactArchive = path.join(temporary, "wrong-impact.tgz");
+  await run("tar", ["-czf", wrongImpactArchive, "-C", path.join(temporary, "wrong-auth"), "lead-director-public-contract"]);
+  await assert.rejects(importBosContract({archive: wrongImpactArchive, archiveSha256: await sha256File(wrongImpactArchive), sourceRevision, targetDirectory: target, provenanceFile: provenance}), /exact owner-approved auth-adjacent classification/);
+
+  wrongAuthManifest.auth_impact = "owner-approved-auth-adjacent-context-selection";
+  wrongAuthManifest.preserved_auth_contract = "changed";
+  await writeFile(wrongAuthManifestFile, stableJson(wrongAuthManifest));
+  const wrongAuthArchive = path.join(temporary, "wrong-auth.tgz");
+  await run("tar", ["-czf", wrongAuthArchive, "-C", path.join(temporary, "wrong-auth"), "lead-director-public-contract"]);
+  await assert.rejects(importBosContract({archive: wrongAuthArchive, archiveSha256: await sha256File(wrongAuthArchive), sourceRevision, targetDirectory: target, provenanceFile: provenance}), /exact owner-approved auth-adjacent classification/);
 
   await mkdir(path.join(archiveRoot, "unexpected"));
   const extraDirectoryArchive = path.join(temporary, "extra-directory.tgz");
@@ -60,6 +83,35 @@ test("immutable BOS contract import validates archive, source commit, and exact 
   await assert.rejects(importBosContract({archive: unsafeArchive, archiveSha256: await sha256File(unsafeArchive), sourceRevision, targetDirectory: target, provenanceFile: provenance}), /regular files/);
 });
 
+test("immutable BOC dependency-v2 import validates public artifacts and provenance", async (context) => {
+  const temporary = await mkdtemp(path.join(os.tmpdir(), "my-crm-boc-import-test-"));
+  context.after(() => rm(temporary, {recursive: true, force: true}));
+  const published = path.join(repositoryRoot, "contracts/bos-operations-center/external-product-dependency/v2");
+  const schema = path.join(temporary, "dependency.schema.json");
+  const contract = path.join(temporary, "dependency.md");
+  const destination = path.join(temporary, "consumer/v2");
+  await cp(path.join(published, "external-product-dependency.v2.schema.json"), schema);
+  await cp(path.join(published, "external-product-dependency.v2.md"), contract);
+  const args = {
+    schema,
+    schemaSha256: await sha256File(schema),
+    contract,
+    contractSha256: await sha256File(contract),
+    sourceRevision: "b".repeat(40),
+    adapterSha256: "c".repeat(64),
+    bocVersion: "0.4.106",
+    destination
+  };
+  const imported = await importBocDependencyContract(args);
+  assert.equal(imported.sourceRevision, args.sourceRevision);
+  assert.equal(JSON.parse(await readFile(path.join(destination, "import-provenance.json"), "utf8")).adapter_source_sha256, args.adapterSha256);
+  await assert.rejects(importBocDependencyContract({...args, schemaSha256: "0".repeat(64)}), /digest mismatch/);
+  await assert.rejects(importBocDependencyContract({...args, sourceRevision: "short"}), /source revision/);
+  const linked = path.join(temporary, "linked-schema.json");
+  await symlink(schema, linked);
+  await assert.rejects(importBocDependencyContract({...args, schema: linked}), /regular non-link file/);
+});
+
 function nativeCommandHarness() {
   let marketplaceAdded = false;
   let pluginAdded = false;
@@ -71,7 +123,8 @@ function nativeCommandHarness() {
     if (key === `plugin marketplace add ${repositoryRoot}`) { marketplaceAdded = true; return stableJson({name: "my-crm-local"}); }
     if (key === "plugin list") return stableJson({installed: [
       {pluginId: "bos@bos-release", name: "bos", installed: true, enabled: true},
-      ...(pluginAdded ? [{pluginId: "my-crm@my-crm-local", name: "my-crm", marketplaceName: "my-crm-local", version: "0.2.1", installed: true, enabled: true, source: {source: "local", path: releaseDirectory}}] : [])
+      {pluginId: "education-center@bos-release", name: "education-center", version: "fixture-version", installed: true, enabled: true},
+      ...(pluginAdded ? [{pluginId: "my-crm@my-crm-local", name: "my-crm", marketplaceName: "my-crm-local", version: "0.2.3", installed: true, enabled: true, source: {source: "local", path: releaseDirectory}}] : [])
     ]});
     if (key === "plugin add my-crm@my-crm-local") { pluginAdded = true; return stableJson({pluginId: "my-crm@my-crm-local", installedPath: releaseDirectory}); }
     throw new Error(`Unexpected native command: ${key}`);
@@ -84,6 +137,7 @@ test("native install uses the supported Codex marketplace and verifies BOS deleg
   const result = await installLocal({runCommand: harness.runCommand, installedDirectoryFor: () => releaseDirectory});
   assert.equal(result.pluginId, "my-crm@my-crm-local");
   assert.equal(result.bosPluginId, "bos@bos-release");
+  assert.equal(result.educationCenterPluginId, "education-center@bos-release");
   assert.ok(harness.calls.some((args) => args.includes("marketplace") && args.includes("add")));
   assert.ok(harness.calls.some((args) => args.includes("my-crm@my-crm-local")));
   await verifyNativeRuntime({runCommand: harness.runCommand, expectedDirectory: releaseDirectory});
@@ -101,7 +155,10 @@ test("failed native reinstall never removes the working candidate", async () => 
     const key = args.filter((value) => value !== "--json").join(" ");
     if (key === "plugin marketplace list") return stableJson({marketplaces: [{name: "my-crm-local", root: repositoryRoot, marketplaceSource: {sourceType: "local", source: repositoryRoot}}]});
     if (key === "plugin add my-crm@my-crm-local") throw new Error("simulated native install failure");
-    if (key === "plugin list") return stableJson({installed: installed ? [{pluginId: "my-crm@my-crm-local", name: "my-crm", marketplaceName: "my-crm-local", version: "0.2.0", installed: true, enabled: true, source: {source: "local", path: releaseDirectory}}] : []});
+    if (key === "plugin list") return stableJson({installed: [
+      {pluginId: "bos@bos-release", name: "bos", installed: true, enabled: true},
+      ...(installed ? [{pluginId: "my-crm@my-crm-local", name: "my-crm", marketplaceName: "my-crm-local", version: "0.2.0", installed: true, enabled: true, source: {source: "local", path: releaseDirectory}}] : [])
+    ]});
     if (key.includes("remove")) installed = false;
     throw new Error(`Unexpected native command: ${key}`);
   };
@@ -123,7 +180,7 @@ test("same-version changed bytes fail closed before native installation", async 
     if (key === "plugin marketplace list") return stableJson({marketplaces: [{name: "my-crm-local", root: repositoryRoot, marketplaceSource: {sourceType: "local", source: repositoryRoot}}]});
     if (key === "plugin list") return stableJson({installed: [
       {pluginId: "bos@bos-release", name: "bos", installed: true, enabled: true},
-      {pluginId: "my-crm@my-crm-local", name: "my-crm", marketplaceName: "my-crm-local", version: "0.2.1", installed: true, enabled: true, source: {source: "local", path: releaseDirectory}}
+      {pluginId: "my-crm@my-crm-local", name: "my-crm", marketplaceName: "my-crm-local", version: "0.2.3", installed: true, enabled: true, source: {source: "local", path: releaseDirectory}}
     ]});
     throw new Error(`Unexpected native command: ${key}`);
   };
@@ -138,9 +195,11 @@ test("native runtime verification rejects a missing BOS dependency", async () =>
   await assert.rejects(verifyNativeRuntime({runCommand, expectedDirectory: releaseDirectory}), /BOS dependency/);
 });
 
-test("live acceptance delegates read-only discovery to installed BOS", async () => {
+test("live acceptance delegates discovered read-only CRM search to installed BOS", async () => {
   assert.match(LIVE_ACCEPTANCE_PROMPT, /single authenticated connection/);
-  assert.match(LIVE_ACCEPTANCE_PROMPT, /Perform only read-only/);
+  assert.match(LIVE_ACCEPTANCE_PROMPT, /read-only HTTPS search contract/);
+  assert.match(LIVE_ACCEPTANCE_PROMPT, /Search for cody\.marcel@dfsm\.ai/);
+  assert.match(LIVE_ACCEPTANCE_PROMPT, /exact read-only HTTPS search contract/);
   assert.match(LIVE_ACCEPTANCE_PROMPT, /Do not create, update, delete/);
   assert.doesNotMatch(LIVE_ACCEPTANCE_PROMPT, /site_code|access_token|installation_id/);
   const runCommand = async (args) => {
@@ -151,6 +210,11 @@ test("live acceptance delegates read-only discovery to installed BOS", async () 
       bos_connection_reused: true,
       application_discovered: true,
       search_described: true,
+      search_executed: true,
+      result_validated: true,
+      source_provenance_preserved: true,
+      freshness_presented: true,
+      conceptual_reconciliation_assessed: true,
       mutation_performed: false,
       authority_exposed: false,
       message: "Installed BOS discovery and task-scoped Describe succeeded."
@@ -174,6 +238,11 @@ test("live acceptance evidence rejects authority or internal identity text", asy
       bos_connection_reused: true,
       application_discovered: true,
       search_described: true,
+      search_executed: true,
+      result_validated: true,
+      source_provenance_preserved: true,
+      freshness_presented: true,
+      conceptual_reconciliation_assessed: true,
       mutation_performed: false,
       authority_exposed: false,
       message: "organization_id was leaked"

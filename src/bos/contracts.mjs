@@ -8,9 +8,10 @@ const DESCRIBE_RESPONSE_SCHEMA = require("../../contracts/bos/lead-director/v1/d
 
 const HTTP_METHODS = new Set(["DELETE", "GET", "PATCH", "POST", "PUT"]);
 const LIMIT_KEYS = ["max_targets", "max_results_per_source", "pagination_supported", "bulk_supported", "streaming_supported", "maximum_duration_seconds", "maximum_fan_out"];
+const REQUIRED_LIMIT_KEYS = ["pagination_supported", "bulk_supported", "streaming_supported"];
 const GUARANTEE_KEYS = ["read_consistency", "per_source_atomicity", "cross_source_atomicity", "convergence", "idempotency"];
 const PUBLIC_ERROR_KEYS = new Set(["code", "message", "retryable", "correlation_id", "details"]);
-const SAFE_PUBLIC_KEYS = new Set(["$id", "correlation_id", "organization_name", "service_id"]);
+const SAFE_PUBLIC_KEYS = new Set(["$id", "context_header", "correlation_id", "organization_name", "service_id"]);
 const FORBIDDEN_PUBLIC_TOKENS = new Set([
   "accesstoken", "apikey", "authorization", "authority", "credential", "databaseid",
   "actionid", "appid", "applicationid", "approvalid", "clientid", "context", "executionid", "grant", "idempotencykey", "installationid", "internalid", "journeyid", "oauth", "organizationid", "principal",
@@ -53,6 +54,9 @@ function forbiddenKey(key) {
 }
 
 export function assertNoPrivateKeys(value, label = "public contract", path = []) {
+  if (typeof value === "string" && /^bos_ctx_v2_[a-f0-9]{64}$/.test(value)) {
+    throw new TypeError(`${label} contains a forbidden context handle at ${path.join(".") || "value"}`);
+  }
   if (Array.isArray(value)) {
     value.forEach((item, index) => assertNoPrivateKeys(item, label, [...path, String(index)]));
     return;
@@ -129,23 +133,30 @@ export function validateApplicationDiscovery(value) {
 
 function validateExecution(value, label) {
   const execution = object(value, `${label} execution`);
-  exactKeys(execution, ["method", "uri"], `${label} execution`);
+  const allowed = new Set(["context_header", "method", "transport", "uri"]);
+  for (const key of Object.keys(execution)) if (!allowed.has(key)) throw new TypeError(`${label} execution shape is invalid`);
+  if (execution.transport === "journey_runtime") {
+    if (execution.method != null || execution.uri != null || execution.context_header != null) throw new TypeError(`${label} journey execution shape is invalid`);
+    return {transport: "journey_runtime"};
+  }
+  if (execution.transport != null) throw new TypeError(`${label} execution transport is invalid`);
   const method = nonEmpty(execution.method, `${label} execution method`).toUpperCase();
   if (!HTTP_METHODS.has(method)) throw new TypeError(`${label} execution method is unsupported`);
   publicRoute(execution.uri, `${label} execution URI`);
-  return {method, uri: execution.uri};
+  if (execution.context_header !== "X-BOS-Context-Handle") throw new TypeError(`${label} execution context_header is invalid`);
+  return {method, uri: execution.uri, context_header: execution.context_header};
 }
 function validateLimits(value, label) {
   const limits = object(value, `${label} limits`);
-  exactKeys(limits, LIMIT_KEYS, `${label} limits`);
-  for (const key of LIMIT_KEYS) {
-    if (!(key in limits)) throw new TypeError(`${label} limits.${key} is required`);
+  for (const key of Object.keys(limits)) if (!LIMIT_KEYS.includes(key)) throw new TypeError(`${label} limits shape is invalid`);
+  for (const key of REQUIRED_LIMIT_KEYS) if (!(key in limits)) throw new TypeError(`${label} limits.${key} is required`);
+  for (const key of Object.keys(limits)) {
     const current = limits[key];
     if (current !== null && typeof current !== (key.endsWith("supported") ? "boolean" : "number")) throw new TypeError(`${label} limits.${key} has an invalid type`);
     if (typeof current === "number" && (!Number.isInteger(current) || current < 1)) throw new TypeError(`${label} limits.${key} must be a positive integer`);
   }
-  if (limits.maximum_duration_seconds === null || limits.maximum_fan_out === null) throw new TypeError(`${label} execution limits are required`);
-  if (limits.maximum_duration_seconds > 900 || limits.maximum_fan_out > 100) throw new TypeError(`${label} limits exceed the public contract`);
+  if (limits.maximum_duration_seconds != null && limits.maximum_duration_seconds > 900) throw new TypeError(`${label} limits exceed the public contract`);
+  if (limits.maximum_fan_out != null && limits.maximum_fan_out > 100) throw new TypeError(`${label} limits exceed the public contract`);
 }
 function validateGuarantees(value, label) {
   const guarantees = object(value, `${label} guarantees`);
@@ -178,9 +189,31 @@ export function validateOperationDescription(value, label = "operation") {
   if (!Array.isArray(operation.sources) || operation.sources.length < 1) throw new TypeError(`${label} sources must be a non-empty array`);
   operation.sources = operation.sources.map((current, index) => {
     const source = object(current, `${label}.sources[${index}]`);
-    if (JSON.stringify(Object.keys(source).sort()) !== JSON.stringify(["availability", "source"])) throw new TypeError(`${label}.sources[${index}] shape is invalid`);
+    const baseKeys = ["availability", "source"];
+    const contractKeys = ["error_contract", "guarantees", "input_schema", "limits", "output_schema", "receipt_schema"];
+    const keys = Object.keys(source).sort();
+    const hasSourceContract = contractKeys.some((key) => key in source);
+    const expected = [...baseKeys, ...(hasSourceContract ? contractKeys : [])].sort();
+    if (JSON.stringify(keys) !== JSON.stringify(expected)) throw new TypeError(`${label}.sources[${index}] shape is invalid`);
     if (!new Set(["ready", "authorization_required", "configuration_required", "temporarily_unavailable"]).has(source.availability)) throw new TypeError(`${label}.sources[${index}] availability is invalid`);
-    return {source: validateSourceReference(source.source, `${label}.sources[${index}].source`), availability: source.availability};
+    const validated = {source: validateSourceReference(source.source, `${label}.sources[${index}].source`), availability: source.availability};
+    if (hasSourceContract) {
+      for (const schemaName of ["input_schema", "output_schema", "receipt_schema"]) {
+        const schema = object(source[schemaName], `${label}.sources[${index}].${schemaName}`);
+        if (schema.$schema !== "https://json-schema.org/draft/2020-12/schema" || schema.type !== "object" || !Array.isArray(schema["x-bos-fields"])) throw new TypeError(`${label}.sources[${index}].${schemaName} is not a public operation schema`);
+        validated[schemaName] = validateJsonSchema(schema, `${label}.sources[${index}].${schemaName}`);
+      }
+      validateLimits(source.limits, `${label}.sources[${index}]`);
+      validateGuarantees(source.guarantees, `${label}.sources[${index}]`);
+      const sourceErrorContract = object(source.error_contract, `${label}.sources[${index}].error_contract`);
+      if (JSON.stringify(Object.keys(sourceErrorContract).sort()) !== JSON.stringify(["codes", "schema"])) throw new TypeError(`${label}.sources[${index}].error_contract shape is invalid`);
+      if (sourceErrorContract.schema !== "lead-director-public-error/v1" || !Array.isArray(sourceErrorContract.codes) || sourceErrorContract.codes.length < 1 || new Set(sourceErrorContract.codes).size !== sourceErrorContract.codes.length) throw new TypeError(`${label}.sources[${index}].error_contract is invalid`);
+      sourceErrorContract.codes.forEach((code, codeIndex) => nonEmpty(code, `${label}.sources[${index}].error_contract.codes[${codeIndex}]`));
+      validated.limits = clone(source.limits);
+      validated.guarantees = clone(source.guarantees);
+      validated.error_contract = clone(sourceErrorContract);
+    }
+    return validated;
   });
   validateLimits(operation.limits, label);
   validateGuarantees(operation.guarantees, label);
@@ -227,7 +260,7 @@ export function validateDescribeResponse(value, requestedOperationIds) {
 function compileJsonSchema(schema, label) {
   if (!(typeof schema === "boolean" || (schema && typeof schema === "object" && !Array.isArray(schema)))) throw new TypeError(`${label} schema is invalid`);
   try {
-    const ajv = new Ajv2020({allErrors: true, strict: true});
+    const ajv = new Ajv2020({allErrors: true, strict: true, strictRequired: false});
     addFormats(ajv, {mode: "full"});
     ajv.addKeyword("x-bos-fields");
     return ajv.compile(schema);

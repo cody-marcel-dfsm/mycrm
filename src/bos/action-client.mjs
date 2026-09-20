@@ -1,68 +1,65 @@
 import {assertNoPrivateKeys, validateJsonSchema, validateJsonValueAgainstSchema} from "./contracts.mjs";
 
-function absoluteHttpsUri(value, label) {
-  let uri;
-  try { uri = new URL(value); } catch { throw new TypeError(`${label} must be absolute HTTPS`); }
-  if (uri.protocol !== "https:") throw new TypeError(`${label} must be absolute HTTPS`);
-  if (uri.username || uri.password) throw new TypeError(`${label} must not contain credentials`);
-  if (uri.hash) throw new TypeError(`${label} must not contain a fragment`);
+const ACTION_VERBS = new Set(["start", "complete", "step", "failed", "state"]);
+
+function originRelativeHref(value, label) {
+  if (typeof value !== "string" || !value.startsWith("/") || value.startsWith("//") || value.includes("#") || /(?:^|\/)\.\.(?:\/|$)/.test(value)) {
+    throw new TypeError(`${label} must be an origin-relative URI without traversal or fragment`);
+  }
   return value;
 }
 
 export function validateResolvedAction(value) {
   if (!value || typeof value !== "object" || Array.isArray(value)) throw new TypeError("returned action must be an object");
   const keys = Object.keys(value).sort();
-  if (JSON.stringify(keys) !== JSON.stringify(["method", "payload_schema", "uri"])) throw new TypeError("returned action contains unsupported fields");
-  const method = value.method;
-  if (!["DELETE", "GET", "PATCH", "POST", "PUT"].includes(method)) throw new TypeError("returned action method is invalid");
-  absoluteHttpsUri(value.uri, "returned action URI");
+  if (JSON.stringify(keys) !== JSON.stringify(["href", "method", "payload_schema", "verb"])) throw new TypeError("returned action contains unsupported fields");
+  if (!ACTION_VERBS.has(value.verb)) throw new TypeError("returned action verb is invalid");
+  const expectedMethod = value.verb === "state" ? "GET" : "POST";
+  if (value.method !== expectedMethod) throw new TypeError(`returned ${value.verb} action method must be ${expectedMethod}`);
+  originRelativeHref(value.href, "returned action href");
   if (!(value.payload_schema === null || (value.payload_schema && typeof value.payload_schema === "object" && !Array.isArray(value.payload_schema)))) throw new TypeError("returned action payload_schema must be an object or null");
+  if (value.verb === "state" && value.payload_schema !== null) throw new TypeError("returned state action must be bodyless");
   if (value.payload_schema !== null) validateJsonSchema(value.payload_schema, "returned action payload");
-  const result = {method, uri: value.uri, payload_schema: structuredClone(value.payload_schema)};
+  const result = {verb: value.verb, method: value.method, href: value.href, payload_schema: structuredClone(value.payload_schema)};
   assertNoPrivateKeys(result, "returned action");
   return result;
 }
 
 export function validateOperationStateAction(value) {
-  if (!value || typeof value !== "object" || Array.isArray(value)) throw new TypeError("operation state action must be an object");
-  const allowed = new Set(["body", "method", "uri", "verb"]);
-  for (const key of Object.keys(value)) if (!allowed.has(key)) throw new TypeError(`operation state action contains unsupported field ${key}`);
-  if (!("uri" in value)) throw new TypeError("operation state action uri is required");
-  if (value.verb !== undefined && value.verb !== "state") throw new TypeError("operation state action verb must be state");
-  if (value.method !== undefined && value.method !== "GET") throw new TypeError("operation state action method must be GET");
-  if (value.body !== undefined && value.body !== null) throw new TypeError("operation state action body must be null");
-  const result = {verb: value.verb ?? "state", method: value.method ?? "GET", uri: absoluteHttpsUri(value.uri, "operation state action URI"), body: null};
-  assertNoPrivateKeys(result, "operation state action");
-  return result;
+  const action = validateResolvedAction(value);
+  if (action.verb !== "state") throw new TypeError("operation state action verb must be state");
+  return action;
 }
 
 export class ReturnedActionClient {
-  constructor({http}) {
-    if (typeof http?.request !== "function") throw new TypeError("http.request is required");
-    this.http = http;
+  constructor({bos}) {
+    if (typeof bos?.invokeReturnedAction !== "function") throw new TypeError("bos.invokeReturnedAction is required");
+    this.bos = bos;
   }
 
   async invoke(value, payload) {
     const current = validateResolvedAction(value);
+    if (current.verb === "state") throw new TypeError("Use the BOS state-action adapter for a state action");
     if (current.payload_schema === null) {
       if (payload !== undefined) throw new TypeError("A bodyless returned action cannot receive a payload");
-      return this.http.request({method: current.method, uri: current.uri, headers: {}});
+      return this.bos.invokeReturnedAction(current);
     }
     if (payload === undefined) throw new TypeError("Returned action payload is required");
     validateJsonValueAgainstSchema(payload, current.payload_schema, "returned action payload");
-    return this.http.request({method: current.method, uri: current.uri, headers: {"content-type": "application/json"}, body: structuredClone(payload)});
+    assertNoPrivateKeys(payload, "returned action payload");
+    return this.bos.invokeReturnedAction(current, structuredClone(payload));
   }
 }
 
 export class OperationStateActionClient {
-  constructor({http}) {
-    if (typeof http?.request !== "function") throw new TypeError("http.request is required");
-    this.http = http;
+  constructor({bos}) {
+    if (typeof bos?.invokeStateAction !== "function") throw new TypeError("bos.invokeStateAction is required");
+    this.bos = bos;
   }
 
   async invoke(value, payload) {
     const current = validateOperationStateAction(value);
     if (payload !== undefined) throw new TypeError("An operation state action is physically bodyless");
-    return this.http.request({method: current.method, uri: current.uri, headers: {}});
+    return this.bos.invokeStateAction(current);
   }
 }

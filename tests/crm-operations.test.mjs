@@ -15,7 +15,7 @@ const sourceB = {platform: "fixture-platform", application: "fixture-application
 test("request builders preserve complete discovered source references", () => {
   assert.deepEqual(buildSearchRequest({text: "cody.marcel@dfsm.ai"}), {text: "cody.marcel@dfsm.ai"});
   assert.deepEqual(buildSearchRequest({text: "person", source: sourceA}).source, sourceA);
-  assert.deepEqual(buildCreateRequest({source: sourceA, changes: {custom_field: "value"}}), {source: sourceA, changes: {custom_field: "value"}});
+  assert.deepEqual(buildCreateRequest({source: sourceA, changes: {custom_field: "value", student_id: "student-public-42"}}), {source: sourceA, changes: {custom_field: "value", student_id: "student-public-42"}});
 });
 
 test("update and delete accept one to five explicit unique targets for one conceptual customer", () => {

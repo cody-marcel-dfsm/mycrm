@@ -31,13 +31,30 @@ export class CrmCacheClient {
     this.maxAgeMs = maxAgeMs;
   }
   async read(scope) {
-    const entry = await this.adapter.read(key(scope));
-    if (!entry || entry.status !== "complete" || !Number.isFinite(entry.retrieved_at_ms)) return null;
-    try { validateDateTime(entry.retrieved_at, "cache retrieved_at"); } catch { return null; }
-    if (Date.parse(entry.retrieved_at) !== entry.retrieved_at_ms) return null;
+    const cacheKey = key(scope);
+    const entry = await this.adapter.read(cacheKey);
+    if (!entry) return null;
+    if (entry.status !== "complete" || !Number.isFinite(entry.retrieved_at_ms)) {
+      await this.adapter.invalidate({partition: requireString(scope?.partition, "opaque cache partition"), scope: "query", key: cacheKey});
+      return null;
+    }
+    try { validateDateTime(entry.retrieved_at, "cache retrieved_at"); } catch {
+      await this.adapter.invalidate({partition: requireString(scope?.partition, "opaque cache partition"), scope: "query", key: cacheKey});
+      return null;
+    }
+    if (Date.parse(entry.retrieved_at) !== entry.retrieved_at_ms) {
+      await this.adapter.invalidate({partition: requireString(scope?.partition, "opaque cache partition"), scope: "query", key: cacheKey});
+      return null;
+    }
     const age = this.now() - entry.retrieved_at_ms;
-    if (!Number.isFinite(age) || age < 0 || age > this.maxAgeMs) return null;
-    assertNoPrivateKeys(entry.value, "cached public result");
+    if (!Number.isFinite(age) || age < 0 || age > this.maxAgeMs) {
+      await this.adapter.invalidate({partition: requireString(scope?.partition, "opaque cache partition"), scope: "query", key: cacheKey});
+      return null;
+    }
+    try { assertNoPrivateKeys(entry.value, "cached public result"); } catch {
+      await this.adapter.invalidate({partition: requireString(scope?.partition, "opaque cache partition"), scope: "query", key: cacheKey});
+      return null;
+    }
     return {origin: "cached", retrieved_at: entry.retrieved_at, value: structuredClone(entry.value)};
   }
   async publish(scope, value) {
@@ -53,6 +70,11 @@ export class CrmCacheClient {
     const value = await loader();
     return this.publish(scope, value);
   }
+  async load(scope, loader) {
+    const cached = await this.read(scope);
+    if (cached) return cached;
+    return this.refresh(scope, loader);
+  }
   async inspect(partition) {
     const result = await this.adapter.inspect(requireString(partition, "opaque cache partition"));
     assertNoPrivateKeys(result, "cache inspection");
@@ -65,5 +87,19 @@ export class CrmCacheClient {
   }
   invalidateDataset({partition, dataset}) {
     return this.adapter.invalidate({partition: requireString(partition, "opaque cache partition"), scope: "dataset", dataset: requireString(dataset, "dataset")});
+  }
+  async invalidateAfterMutation({partition, sources = [], datasets = []}) {
+    requireString(partition, "opaque cache partition");
+    if (!Array.isArray(sources) || !Array.isArray(datasets)) throw new TypeError("mutation invalidation sources and datasets must be arrays");
+    const uniqueSources = new Map();
+    for (const source of sources) {
+      const current = validateSourceReference(source, "mutation invalidation source");
+      uniqueSources.set(JSON.stringify(current), current);
+    }
+    const uniqueDatasets = new Set(datasets.map((dataset) => requireString(dataset, "mutation invalidation dataset")));
+    await Promise.all([
+      ...[...uniqueSources.values()].map((source) => this.invalidateSource({partition, source})),
+      ...[...uniqueDatasets].map((dataset) => this.invalidateDataset({partition, dataset}))
+    ]);
   }
 }

@@ -32,8 +32,9 @@ test("plugin depends on the single BOS-owned connection and declares no authenti
 });
 
 test("package contains source-first CRM expertise and no local runtime", async () => {
-  const expected = ["my-crm", "my-crm-record-operations", "my-crm-pipeline-operations", "my-crm-activity-operations", "my-crm-federation-operations", "my-crm-customer-journey", "my-crm-automation"];
+  const expected = ["my-crm", "my-crm-record-operations", "my-crm-pipeline-operations", "my-crm-activity-operations", "my-crm-federation-operations", "my-crm-customer-journey", "my-crm-automation", "my-crm-cache-maintenance"];
   for (const skill of expected) await access(path.join(root, `plugins/my-crm/skills/${skill}/SKILL.md`));
+  await access(path.join(root, "examples/crm/README.md"));
   for (const retired of ["src/fsm", "contracts/fsm", "examples/fsm", "plugins/my-crm/.app.json"]) await assert.rejects(access(path.join(root, retired)));
 });
 

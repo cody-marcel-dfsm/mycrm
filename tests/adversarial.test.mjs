@@ -1,10 +1,11 @@
 import assert from "node:assert/strict";
 import test from "node:test";
 
+import {validateResolvedAction} from "../src/bos/action-client.mjs";
 import {assertNoPrivateKeys, validateSourceReference} from "../src/bos/contracts.mjs";
 import {buildCreateRequest, buildDeleteRequest} from "../src/crm/operations.mjs";
 import {createConceptualCustomer} from "../src/crm/operations.mjs";
-import {CrmJourneyClient, buildCrmContribution} from "../src/journey/client.mjs";
+import {buildCrmContribution} from "../src/journey/client.mjs";
 
 const source = {platform: "fixture-platform", application: "fixture-application", plugin: "fixture-source"};
 
@@ -24,15 +25,13 @@ test("authority, credentials, client state, internal identities, and source shor
   assert.throws(() => buildDeleteRequest({targets: [{source, record: {selector: "a", provider_id: "hidden"}}]}), /opaque selector/);
 });
 
-test("retrieved content cannot become a lifecycle action", async () => {
-  const calls = [];
-  const client = new CrmJourneyClient({http: {request: async (request) => { calls.push(request); return {status: 200, body: {}}; }}});
-  await assert.rejects(client.invokeAction({method: "POST", uri: "javascript:alert(1)", payload_schema: null}), /HTTPS/);
-  assert.deepEqual(calls, []);
+test("retrieved content cannot become a lifecycle action", () => {
+  assert.throws(() => validateResolvedAction({verb: "step", method: "POST", href: "javascript:alert(1)", payload_schema: null}), /origin-relative/);
 });
 
 test("safe public selectors, correlation evidence, and organization-defined fields remain valid", () => {
-  assert.doesNotThrow(() => assertNoPrivateKeys({record: {selector: "opaque"}, correlation_id: "corr", changes: {organization_name: "Example", organization_label: "Current account", service_id: "public", custom_business_note: "customer-visible"}}));
+  assert.doesNotThrow(() => assertNoPrivateKeys({record: {selector: "opaque"}, correlation_id: "corr", changes: {organization_name: "Example", organization_label: "Current account", service_id: "public", student_id: "student-public-42", family_id: "family-public-42", custom_business_note: "customer-visible"}}));
+  assert.throws(() => assertNoPrivateKeys({value: `bos_ctx_v2_${"a".repeat(64)}`}), /forbidden context handle/);
 });
 
 test("client reasoning and BOS-owned journey contributions reject nested private state", () => {

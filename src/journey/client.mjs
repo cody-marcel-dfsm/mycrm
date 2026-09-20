@@ -1,9 +1,10 @@
 import {ReturnedActionClient, validateResolvedAction} from "../bos/action-client.mjs";
-import {assertNoPrivateKeys, validateJsonSchema} from "../bos/contracts.mjs";
+import {assertNoPrivateKeys, validatePublicError} from "../bos/contracts.mjs";
 
 const CONTRIBUTION_KEYS = new Set(["goal", "concepts", "constraints", "requiredEvidence", "approvals", "guarantees", "presentation", "recovery"]);
-const INSTRUCTION_KEYS = new Set(["actions", "domain", "goal", "input_schema", "operation"]);
-const ACTION_KEYS = new Set(["complete", "failed", "step"]);
+const CLIENT_ENVELOPE_KEYS = ["current_step", "identity", "instruction", "status"];
+const INSTRUCTION_ACTIONS = new Map([["after_success", "complete"], ["on_failure", "failed"]]);
+const RETIRED_INSTRUCTION_KEYS = new Set(["actions", "input_schema"]);
 const RUNTIME_KEYS = new Set(["bosl", "catch", "digest", "execution_id", "journey_id", "next", "revision", "state", "transition", "version"]);
 
 function requireString(value, label) {
@@ -24,26 +25,74 @@ export function buildCrmContribution(input) {
 }
 
 export class CrmJourneyClient {
-  constructor({http}) {
-    if (typeof http?.request !== "function") throw new TypeError("http.request is required");
-    this.actions = new ReturnedActionClient({http});
+  constructor({bos}) {
+    if (typeof bos?.invokeReturnedAction !== "function") throw new TypeError("bos.invokeReturnedAction is required");
+    this.actions = new ReturnedActionClient({bos});
   }
   validateInstruction(value) {
-    if (!value || typeof value !== "object" || Array.isArray(value)) throw new TypeError("CRM instruction must be an object");
-    for (const key of Object.keys(value)) if (!INSTRUCTION_KEYS.has(key) || RUNTIME_KEYS.has(key)) throw new TypeError(`CRM instruction exposes unsupported field ${key}`);
-    if (value.domain !== "crm") throw new TypeError("CRM instruction domain must be crm");
-    requireString(value.goal, "CRM instruction goal");
-    requireString(value.operation, "CRM instruction operation");
-    if (!value.input_schema || typeof value.input_schema !== "object") throw new TypeError("CRM instruction input_schema is required");
-    validateJsonSchema(value.input_schema, "CRM instruction input_schema");
-    if (!value.actions || typeof value.actions !== "object" || Array.isArray(value.actions)) throw new TypeError("CRM instruction actions are required");
-    for (const name of Object.keys(value.actions)) if (!ACTION_KEYS.has(name)) throw new TypeError(`CRM instruction action ${name} is unsupported`);
-    if (Object.keys(value.actions).length === 0) throw new TypeError("CRM instruction actions must not be empty");
-    assertNoPrivateKeys({...value, input_schema: {}, actions: {}}, "CRM instruction");
-    const actions = Object.fromEntries(Object.entries(value.actions).map(([name, current]) => [name, validateResolvedAction(current)]));
-    return {...structuredClone(value), actions};
+    return validateCrmInstruction(value);
   }
-  async invokeAction(value, payload) {
-    return this.actions.invoke(value, payload);
+  async invokeInstructionAction(instruction, name, payload) {
+    if (!INSTRUCTION_ACTIONS.has(name)) throw new TypeError(`CRM instruction action ${name} is unsupported`);
+    const current = this.validateInstruction(instruction);
+    return this.actions.invoke(current[name], payload);
   }
+}
+
+export function validateCrmInstruction(value) {
+  if (!value || typeof value !== "object" || Array.isArray(value)) throw new TypeError("CRM instruction must be an object");
+  for (const key of Object.keys(value)) {
+    if (RETIRED_INSTRUCTION_KEYS.has(key)) throw new TypeError(`CRM instruction field ${key} is not part of the BOS Service envelope`);
+    if (RUNTIME_KEYS.has(key)) throw new TypeError(`CRM instruction exposes forbidden runtime field ${key}`);
+  }
+  requireString(value.goal, "CRM instruction goal");
+  requireString(value.message, "CRM instruction message");
+  assertNoPrivateKeys(value, "CRM instruction");
+  const instruction = structuredClone(value);
+  for (const [name, verb] of INSTRUCTION_ACTIONS) {
+    const action = validateResolvedAction(value[name]);
+    if (action.verb !== verb) throw new TypeError(`CRM instruction ${name} action must use verb ${verb}`);
+    instruction[name] = action;
+  }
+  return instruction;
+}
+
+export function validateCrmInstructionEnvelope(value) {
+  if (!value || typeof value !== "object" || Array.isArray(value)) throw new TypeError("CRM journey response must be an object");
+  if (JSON.stringify(Object.keys(value).sort()) !== JSON.stringify(CLIENT_ENVELOPE_KEYS)) throw new TypeError("CRM awaiting_client response shape is invalid");
+  requireString(value.identity, "CRM journey identity");
+  if (value.status !== "awaiting_client") throw new TypeError("CRM journey response status must be awaiting_client");
+  if (!value.current_step || typeof value.current_step !== "object" || Array.isArray(value.current_step)) throw new TypeError("CRM journey current_step must be an object");
+  if (JSON.stringify(Object.keys(value.current_step).sort()) !== JSON.stringify(["code", "type"])) throw new TypeError("CRM journey current_step shape is invalid");
+  requireString(value.current_step.code, "CRM journey current_step code");
+  if (value.current_step.type !== "client") throw new TypeError("CRM journey current_step type must be client");
+  const response = structuredClone(value);
+  response.instruction = validateCrmInstruction(value.instruction);
+  assertNoPrivateKeys(response, "CRM awaiting_client response");
+  return response;
+}
+
+export function createAudienceRepairGuidance({instruction, failure, audienceChanged = false} = {}) {
+  const current = validateCrmInstruction(instruction);
+  const publicFailure = validatePublicError(failure);
+  if (current.after_success.verb !== "complete") throw new TypeError("CRM audience repair requires a returned after_success completion action");
+  if (typeof audienceChanged !== "boolean") throw new TypeError("audienceChanged must be boolean");
+  return {
+    goal: current.goal,
+    ...(current.operation === undefined ? {} : {operation: current.operation}),
+    failure: publicFailure,
+    client: {
+      discover_current_crm_operation: true,
+      correct_or_regenerate_recipient_evidence: true,
+      require_user_approval_for_crm_mutation: true,
+      send_audience_or_server_reference_in_completion: false,
+      invoke_returned_complete_action_only_after_goal_is_satisfied: true
+    },
+    server: {
+      requery_and_rematerialize_audience: true,
+      reprepare_campaign: audienceChanged,
+      require_fresh_campaign_approval: audienceChanged,
+      preserve_proven_successful_deliveries: true
+    }
+  };
 }

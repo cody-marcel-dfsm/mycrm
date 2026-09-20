@@ -2,10 +2,51 @@ import assert from "node:assert/strict";
 import {readFile} from "node:fs/promises";
 import test from "node:test";
 
-import {BosContractClient, BosContractError} from "../src/bos/client.mjs";
+import {authenticationCondition, BosContractClient, BosContractError, buildDiscoveredExecutionRequest} from "../src/bos/client.mjs";
 
 const published = async (name) => JSON.parse(await readFile(new URL(`../contracts/bos/lead-director/v1/${name}`, import.meta.url), "utf8"));
 const selectDescribe = (response, operationIds) => ({...structuredClone(response), operations: response.operations.filter(({operation}) => operationIds.includes(operation))});
+
+test("identity-v2 delegates only the discovered static context-header marker to BOS transport", () => {
+  const request = buildDiscoveredExecutionRequest(
+    {method: "POST", uri: "/fixture/operation", context_header: "X-BOS-Context-Handle"},
+    {text: "person"}
+  );
+  assert.deepEqual(request, {
+    method: "POST",
+    uri: "/fixture/operation",
+    headers: {"content-type": "application/json"},
+    body: {text: "person"},
+    context_header: "X-BOS-Context-Handle"
+  });
+  assert.equal(request.headers["X-BOS-Context-Handle"], undefined);
+  assert.equal(JSON.stringify(request).includes("bos_ctx_v2_"), false);
+  assert.throws(() => buildDiscoveredExecutionRequest({method: "POST", uri: "/fixture/operation", context_header: "Authorization"}, {}), /context_header/);
+  assert.throws(() => buildDiscoveredExecutionRequest({method: "POST", uri: "/fixture/operation", context_header: {name: "X-BOS-Context-Handle", value: `bos_ctx_v2_${"a".repeat(64)}`}}, {}), /context_header/);
+  assert.throws(() => buildDiscoveredExecutionRequest({method: "POST", uri: "/fixture/operation", context_header: "X-BOS-Context-Handle"}, {value: `bos_ctx_v2_${"a".repeat(64)}`}), /forbidden context handle/);
+});
+
+test("every package-declared authentication condition delegates to BOS", async () => {
+  const product = JSON.parse(await readFile(new URL("../plugins/my-crm/.bos-product.json", import.meta.url), "utf8"));
+  for (const condition of product.authentication_handoff.recognized_condition_categories) {
+    assert.deepEqual(authenticationCondition({code: condition}), {
+      category: condition === "MCP_SESSION_CLOSED" ? "mcp_session" : "authentication",
+      code: condition,
+      source: "protected_resource"
+    });
+  }
+  assert.deepEqual(authenticationCondition({status: 401}), {
+    category: "authentication",
+    code: "AUTHORIZATION_REQUIRED",
+    source: "protected_resource"
+  });
+  assert.deepEqual(authenticationCondition({status: 401, body: {error: {code: "RAW_PROVIDER_TOKEN_FAILURE"}}}), {
+    category: "authentication",
+    code: "AUTHORIZATION_REQUIRED",
+    source: "protected_resource"
+  });
+  assert.equal(authenticationCondition({status: 403, code: "PERMISSION_DENIED"}), null);
+});
 
 test("client consumes canonical app.describe and invokes its exact search route template", async () => {
   const discovery = await published("app.describe.example.json");
@@ -37,6 +78,7 @@ test("authentication delegates only condition/resource, refreshes, redescribes, 
   let executions = 0;
   let refreshes = 0;
   let recoveries = 0;
+  let authorityInvalidations = 0;
   const client = new BosContractClient({
     discovery: {read: async () => discovery, refresh: async () => { refreshes += 1; return discovery; }},
     http: {request: async ({uri, body}) => {
@@ -45,11 +87,13 @@ test("authentication delegates only condition/resource, refreshes, redescribes, 
       if (executions === 1) return {status: 401, body: {error: {code: "AUTHENTICATION_REQUIRED"}}};
       return {status: 200, body: structuredClone(examples.search.response)};
     }},
-    bos: {recoverAuthentication: async (request) => { recoveries += 1; assert.deepEqual(Object.keys(request).sort(), ["condition", "resource"]); return {status: "READY"}; }}
+    bos: {recoverAuthentication: async (request) => { recoveries += 1; assert.deepEqual(Object.keys(request).sort(), ["condition", "resource"]); return {status: "READY"}; }},
+    onAuthenticationReady: async () => { authorityInvalidations += 1; }
   });
   await client.describe(["search"]);
   assert.equal((await client.execute("search", {text: "person"})).status, 200);
   assert.equal(recoveries, 1);
+  assert.equal(authorityInvalidations, 1);
   assert.equal(refreshes, 1);
   assert.equal(executions, 2);
 });
@@ -72,7 +116,41 @@ test("HTTP authentication recovery preserves the affected protected resource", a
   });
   await client.describe(["search"]);
   await client.execute("search", {text: "person"});
-  assert.deepEqual(recoveries, [{condition: "AUTHENTICATION_REQUIRED", resource: "https://fixture.invalid/protected-resource"}]);
+  assert.deepEqual(recoveries, [{
+    condition: {
+      category: "authentication",
+      code: "AUTHENTICATION_REQUIRED",
+      source: "protected_resource"
+    },
+    resource: "https://fixture.invalid/protected-resource"
+  }]);
+});
+
+test("thrown authentication recovery preserves the exact protected resource and structured condition", async () => {
+  const discovery = await published("app.describe.example.json");
+  const describe = await published("describe.response.example.json");
+  const recoveries = [];
+  let describes = 0;
+  const resource = "https://fixture.invalid/mcp/lead-director";
+  const client = new BosContractClient({
+    discovery: {read: async () => discovery, refresh: async () => discovery},
+    http: {request: async ({body}) => {
+      describes += 1;
+      if (describes === 1) {
+        const error = new Error("private transport detail");
+        error.code = "MCP_SESSION_CLOSED";
+        error.resource = resource;
+        throw error;
+      }
+      return {status: 200, body: selectDescribe(describe, body.operations)};
+    }},
+    bos: {recoverAuthentication: async (request) => { recoveries.push(request); return {status: "READY"}; }}
+  });
+  assert.deepEqual((await client.describe(["search"])).operations.map(({operation}) => operation), ["search"]);
+  assert.deepEqual(recoveries, [{
+    resource,
+    condition: {category: "mcp_session", code: "MCP_SESSION_CLOSED", source: "protected_resource"}
+  }]);
 });
 
 test("client distinguishes absent and published not_available operations", async () => {
@@ -140,6 +218,59 @@ test("authentication continuation is bounded to one BOS recovery", async () => {
   await client.describe(["search"]);
   await assert.rejects(client.execute("search", {text: "person"}), (error) => error instanceof BosContractError && error.code === "AUTHENTICATION_RECOVERY_FAILED");
   assert.equal(recoveries, 1);
+});
+
+test("authentication recovery remains pending through BOS host action and resumes without user repair instructions", async () => {
+  const discovery = await published("app.describe.example.json");
+  const describe = await published("describe.response.example.json");
+  const examples = await published("operation.examples.json");
+  let executions = 0;
+  let waits = 0;
+  const client = new BosContractClient({
+    discovery: {read: async () => discovery, refresh: async () => discovery},
+    http: {request: async ({uri, body}) => {
+      if (uri === discovery.describe.uri) return {status: 200, body: selectDescribe(describe, body.operations)};
+      executions += 1;
+      if (executions === 1) return {status: 401, resource: "https://fixture.invalid/protected-resource", body: {error: {code: "AUTHENTICATION_REQUIRED"}}};
+      return {status: 200, body: structuredClone(examples.search.response)};
+    }},
+    bos: {
+      recoverAuthentication: async () => ({status: "HOST_ACTION_REQUIRED"}),
+      waitForAuthentication: async (request) => { waits += 1; assert.deepEqual(request, {
+        resource: "https://fixture.invalid/protected-resource",
+        condition: {
+          category: "authentication",
+          code: "AUTHENTICATION_REQUIRED",
+          source: "protected_resource"
+        }
+      }); return {status: "READY"}; }
+    }
+  });
+  await client.describe(["search"]);
+  assert.equal((await client.execute("search", {text: "person"})).status, 200);
+  assert.equal(waits, 1);
+  assert.equal(executions, 2);
+});
+
+test("returned lifecycle actions pass unchanged to the BOS dependency adapter", async () => {
+  const discovery = await published("app.describe.example.json");
+  const calls = [];
+  const client = new BosContractClient({
+    discovery: {read: async () => discovery, refresh: async () => discovery},
+    http: {request: async () => { throw new Error("returned actions must not use the raw HTTP transport"); }},
+    bos: {
+      recoverAuthentication: async () => ({status: "READY"}),
+      invokeReturnedAction: async (action, payload) => {
+        calls.push({action, payload});
+        return {status: 200, body: {status: "step_completed"}};
+      }
+    }
+  });
+  const action = {verb: "complete", method: "POST", href: "/actions/complete", payload_schema: {type: "object", additionalProperties: false, required: ["acknowledged"], properties: {acknowledged: {const: true}}}};
+  assert.equal((await client.invokeReturnedAction(action, {acknowledged: true})).status, 200);
+  assert.deepEqual(calls, [{action, payload: {acknowledged: true}}]);
+  assert.equal(JSON.stringify(calls).includes("header"), false);
+  assert.equal(JSON.stringify(calls).includes("bos_ctx_v2_"), false);
 });
 
 test("BOSL descriptor changes invalidate cached descriptions", async () => {

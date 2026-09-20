@@ -1,0 +1,8 @@
+{
+  "schema": "my-crm.boc-contract-import/v1",
+  "source_revision": "d7cb8cb52a7f93dc998bbc6031e343b326445fe4",
+  "boc_version": "0.4.106",
+  "schema_sha256": "5993bccbc461cb731110438398fbee426f8226477471b36bbb972ae0852a426b",
+  "contract_sha256": "60430c35dab503034ede0d9da07ff7f5af08e2984685295e60f8db5968d66a85",
+  "adapter_source_sha256": "83e9fd82b91e4aff074d09b88ba295a3131a45957430d52afaa6b6c1bca78054"
+}

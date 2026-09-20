@@ -1,8 +1,7 @@
 {
   "schema": "my-crm.bos-contract-import/v1",
-  "source_revision": null,
-  "archive_sha256": "e617342210233ffeda0f550a70d493aba2db4ebd6d52ee2699774b2f5ee76fdd",
-  "manifest_sha256": "d6ec68b56d6fb13234a0f6e661e9e434def82c78164284204b3a57002e71134d",
-  "bundle_sha256": "96b222b222aa2e71e359f9e0427cfbb5567be77152afdfc82d131277c75c45de",
-  "consumer_import_commit": "609ec5dec62f1143409f930b396181fdc2f33229"
+  "source_revision": "c3f38b07bbaed9070b4fe7a72bee389af1e18687",
+  "archive_sha256": "69e66fa4f091f094fcda696f2575a0f43359ee7a8c6d7b6756f4c0dcbc078c3d",
+  "manifest_sha256": "28cdaf4594a5ca1a5d936b7019a42945a1608c91714671e3ae0f42c222ab5849",
+  "bundle_sha256": "d025bcba9329ee7551a67316cdb4803afcafbc912529e6e03ebd025bb46df381"
 }

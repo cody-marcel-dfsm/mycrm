@@ -12,6 +12,8 @@ const CONTRACT_DIRECTORY = path.join(repositoryRoot, "contracts/bos/lead-directo
 const PROVENANCE_FILE = path.join(repositoryRoot, "contracts/bos/lead-director/import-provenance.json");
 const MAX_ARCHIVE_BYTES = 2 * 1024 * 1024;
 const MAX_EXTRACTED_BYTES = 10 * 1024 * 1024;
+const EXPECTED_AUTH_IMPACT = "owner-approved-auth-adjacent-context-selection";
+const EXPECTED_PRESERVED_AUTH_CONTRACT = "oauth-login-token-grant-callback-session-unchanged";
 const EXPECTED_FILES = [
   "api.contract.request.example.json",
   "api.contract.request.schema.json",
@@ -82,7 +84,10 @@ async function validateCandidate(directory) {
   if (manifest.contract !== "bos-public-contract-release/v1" || manifest.contract_id !== "lead-director-describe" || manifest.contract_version !== "lead-director-describe/v1") {
     throw new Error("Contract archive has the wrong BOS public contract identity");
   }
-  if (manifest.owner !== "bos" || manifest.auth_impact !== "none") throw new Error("Contract archive must be BOS-owned and declare auth impact none");
+  if (manifest.owner !== "bos") throw new Error("Contract archive must be BOS-owned");
+  if (manifest.auth_impact !== EXPECTED_AUTH_IMPACT || manifest.preserved_auth_contract !== EXPECTED_PRESERVED_AUTH_CONTRACT) {
+    throw new Error("Contract archive must declare the exact owner-approved auth-adjacent classification and preserved authentication contract");
+  }
   const paths = manifest.files?.map((entry) => assertSafeRelativePath(entry.path, "manifest file path"));
   if (JSON.stringify([...paths].sort()) !== JSON.stringify([...EXPECTED_FILES].sort())) throw new Error("Manifest file inventory is invalid");
   const directoryFiles = (await readdir(directory, {withFileTypes: true})).filter((entry) => entry.isFile()).map((entry) => entry.name).sort();

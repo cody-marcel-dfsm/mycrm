@@ -1,0 +1,4 @@
+interface:
+  display_name: "My CRM Cache Maintenance"
+  short_description: "Inspect and refresh shared BOS CRM cache data"
+  default_prompt: "Use $my-crm-cache-maintenance to inspect or refresh my current CRM cache safely."

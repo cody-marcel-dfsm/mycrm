@@ -13,7 +13,7 @@ import {validateJsonValueAgainstSchema} from "../src/bos/contracts.mjs";
 const exec = promisify(execFile);
 const schemaFile = path.join(repositoryRoot, "contracts/my-crm/v1/live-acceptance-response.schema.json");
 
-export const LIVE_ACCEPTANCE_PROMPT = `Use the installed My CRM skills and the installed BOS product's single authenticated connection. Perform only read-only BOS application discovery and a task-scoped Describe request for the Lead Director search operation. Do not create, update, delete, register, start, step, complete, or fail a journey. Do not call a provider write. Do not request, infer, or emit an organization selector, authority value, credential, token, installation identifier, role identifier, internal identifier, or provider identifier. My CRM must delegate authentication and discovery to installed BOS and must not create a second connection. Return APPROVED only when authenticated BOS discovery found the current application and Describe returned the search contract. Return HOST_ACTION_REQUIRED when the native host must complete BOS sign-in or authorization. Return REJECTED for any other contract failure.`;
+export const LIVE_ACCEPTANCE_PROMPT = `Use the installed My CRM skills and the installed BOS product's single authenticated connection. Perform authenticated BOS application discovery, request task-scoped Describe for the current CRM search operation, and invoke only the exact read-only HTTPS search contract it returns. Search for cody.marcel@dfsm.ai. Validate the response against the advertised output contract. Preserve every returned source-native record and its complete source attribution. Assess whether returned records may represent one conceptual customer while retaining every underlying record, conflict, and uncertainty. Present live or cached origin and a human-readable local freshness time. Do not create, update, delete, register, start, step, complete, or fail a journey. Do not call a provider write. Do not request, infer, or emit an organization selector, authority value, credential, token, installation identifier, role identifier, internal identifier, or provider identifier. My CRM must delegate authentication, discovery, and transport to installed BOS and must not create a second connection. Return APPROVED only when discovery, task-scoped Describe, the discovered search request, response validation, provenance preservation, freshness presentation, and conceptual reconciliation assessment all succeed. Return HOST_ACTION_REQUIRED when the native host must complete BOS sign-in or authorization. Return REJECTED for any other contract failure.`;
 
 async function defaultRun(args) {
   const {stdout} = await exec("codex", args, {cwd: repositoryRoot, maxBuffer: 16 * 1024 * 1024});
@@ -32,13 +32,13 @@ export async function runLiveAcceptance({runCommand = defaultRun, verifyRuntime 
     ]);
     const response = JSON.parse(await readFile(responseFile, "utf8"));
     validateJsonValueAgainstSchema(response, JSON.parse(await readFile(schemaFile, "utf8")), "native live acceptance response");
-    for (const key of ["bos_connection_reused", "application_discovered", "search_described", "mutation_performed", "authority_exposed"]) {
+    for (const key of ["bos_connection_reused", "application_discovered", "search_described", "search_executed", "result_validated", "source_provenance_preserved", "freshness_presented", "conceptual_reconciliation_assessed", "mutation_performed", "authority_exposed"]) {
       if (typeof response[key] !== "boolean") throw new Error(`Live acceptance response is missing boolean ${key}`);
     }
     if (/(?:access|refresh)[_ -]?token|bearer|context[_ -]?id|organization[_ -]?id|installation[_ -]?id|role[_ -]?id|provider[_ -]?id|internal[_ -]?id/i.test(response.message)) {
       throw new Error("Live acceptance response contains forbidden authority or internal-identity text");
     }
-    const approved = response.status === "APPROVED" && response.bos_connection_reused && response.application_discovered && response.search_described && !response.mutation_performed && !response.authority_exposed;
+    const approved = response.status === "APPROVED" && response.bos_connection_reused && response.application_discovered && response.search_described && response.search_executed && response.result_validated && response.source_provenance_preserved && response.freshness_presented && response.conceptual_reconciliation_assessed && !response.mutation_performed && !response.authority_exposed;
     const hostAction = response.status === "HOST_ACTION_REQUIRED" && !response.mutation_performed && !response.authority_exposed;
     const evidence = {
       schema: "my-crm.live-acceptance-evidence/v1",
