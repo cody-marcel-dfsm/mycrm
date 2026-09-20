@@ -39,8 +39,10 @@ if (pkg.license !== "Apache-2.0" || manifest.license !== "Apache-2.0") errors.pu
 if (pkg.version !== manifest.version || pkg.version !== product.version) errors.push("package, plugin, and product versions must match");
 if (manifest.name !== "my-crm" || manifest.interface?.displayName !== "My CRM") errors.push("plugin identity is invalid");
 if (manifest.apps !== undefined || manifest.mcpServers !== undefined) errors.push("My CRM must not declare an app mapping or a second MCP connection");
-if (product.connection_owner !== "bos" || JSON.stringify(product.dependency_products) !== JSON.stringify(["bos"])) errors.push("My CRM must depend on the BOS-owned connection");
-for (const key of ["resource_url", "authentication", "oauth", "mcp_group_name", "application_name"]) if (product[key] !== undefined) errors.push(`My CRM product metadata must not declare ${key}`);
+if (product.schema_version !== "2" || product.application_name !== "my-crm") errors.push("My CRM must use the published BOS external-product dependency v2 identity");
+if (product.connection_owner !== "bos" || JSON.stringify(product.dependency_products) !== JSON.stringify(["bos"]) || product.authentication !== "bos_dependency") errors.push("My CRM must depend on the BOS-owned connection");
+if (product.authorization_scope_policy !== "ONE_ORGANIZATION_APPLICATION_INSTALLATION_ROLE_PER_GRANT") errors.push("My CRM must preserve the published BOS authorization scope policy");
+for (const key of ["resource_url", "oauth", "token", "grant", "session", "credential", "mcp_group_name", "mcp_server_name", "codex_mcp_startup_timeout_sec", "codex_mcp_tool_timeout_sec"]) if (product[key] !== undefined) errors.push(`My CRM product metadata must not declare ${key}`);
 const handoff = product.authentication_handoff;
 if (handoff?.authentication_manager !== "bos" || handoff?.credential_lifecycle_owner !== "host" || handoff?.authorization_enforcement_owner !== "bos-service" || handoff?.delegation_policy !== "AUTOMATIC") errors.push("BOS authentication delegation metadata is invalid");
 if (handoff?.readiness_result?.representation !== "AUTHENTICATION_READINESS_ONLY" || handoff?.readiness_result?.authority_data !== "EXCLUDED") errors.push("Authentication handoff must return readiness without authority data");

@@ -15,9 +15,13 @@ test("plugin depends on the single BOS-owned connection and declares no authenti
   const product = await json("plugins/my-crm/.bos-product.json");
   assert.equal(manifest.license, "Apache-2.0");
   assert.equal(manifest.mcpServers, undefined);
+  assert.equal(product.schema_version, "2");
+  assert.equal(product.application_name, "my-crm");
   assert.equal(product.connection_owner, "bos");
   assert.deepEqual(product.dependency_products, ["bos"]);
-  for (const key of ["resource_url", "authentication", "oauth", "application_name", "mcp_group_name"]) assert.equal(product[key], undefined);
+  assert.equal(product.authentication, "bos_dependency");
+  assert.equal(product.authorization_scope_policy, "ONE_ORGANIZATION_APPLICATION_INSTALLATION_ROLE_PER_GRANT");
+  for (const key of ["resource_url", "oauth", "token", "grant", "session", "credential", "mcp_group_name", "mcp_server_name", "codex_mcp_startup_timeout_sec", "codex_mcp_tool_timeout_sec"]) assert.equal(product[key], undefined);
   assert.equal(product.authentication_handoff.authentication_manager, "bos");
   assert.equal(product.authentication_handoff.credential_lifecycle_owner, "host");
   assert.equal(product.authentication_handoff.readiness_result.authority_data, "EXCLUDED");
