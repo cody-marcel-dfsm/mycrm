@@ -1,0 +1,20 @@
+{
+  "name": "my-crm-local",
+  "interface": {
+    "displayName": "My CRM Local Release Candidate"
+  },
+  "plugins": [
+    {
+      "name": "my-crm",
+      "source": {
+        "source": "local",
+        "path": "./dist/my-crm"
+      },
+      "policy": {
+        "installation": "AVAILABLE",
+        "authentication": "ON_USE"
+      },
+      "category": "Productivity"
+    }
+  ]
+}

@@ -1,0 +1,45 @@
+{
+  "$schema": "https://json-schema.org/draft/2020-12/schema",
+  "$id": "https://dfsm.ai/contracts/my-crm/v1/live-acceptance-response.schema.json",
+  "title": "My CRM native live acceptance result",
+  "type": "object",
+  "additionalProperties": false,
+  "required": [
+    "status",
+    "bos_connection_reused",
+    "application_discovered",
+    "search_described",
+    "mutation_performed",
+    "authority_exposed",
+    "message"
+  ],
+  "properties": {
+    "status": {
+      "enum": [
+        "APPROVED",
+        "HOST_ACTION_REQUIRED",
+        "REJECTED"
+      ]
+    },
+    "bos_connection_reused": {
+      "type": "boolean"
+    },
+    "application_discovered": {
+      "type": "boolean"
+    },
+    "search_described": {
+      "type": "boolean"
+    },
+    "mutation_performed": {
+      "const": false
+    },
+    "authority_exposed": {
+      "const": false
+    },
+    "message": {
+      "type": "string",
+      "minLength": 1,
+      "maxLength": 512
+    }
+  }
+}

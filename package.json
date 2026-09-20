@@ -1,6 +1,6 @@
 {
   "name": "my-crm",
-  "version": "0.2.0",
+  "version": "0.2.1",
   "description": "Independent native GPT plugin and reference implementation for building provider-neutral CRM automations on BOS",
   "license": "Apache-2.0",
   "type": "module",
@@ -15,9 +15,16 @@
     "README.md"
   ],
   "scripts": {
+    "build": "node scripts/build-release.mjs",
     "check:boundary": "node scripts/check-boundary.mjs",
     "check:contracts": "node scripts/validate-contracts.mjs",
+    "check:release": "node scripts/check-release.mjs",
+    "contracts:import": "node scripts/import-bos-contract.mjs",
+    "install:local": "node scripts/codex-local-install.mjs install",
+    "install:verify": "node scripts/codex-local-install.mjs verify",
+    "release:check": "npm run build && npm test && npm run check:release",
     "test": "npm run check:boundary && npm run check:contracts && node --test tests/*.test.mjs",
+    "test:live": "node scripts/verify-live-contract.mjs",
     "vault:init": "node scripts/init-vault.mjs",
     "vault:sync": "node scripts/vault.mjs sync",
     "vault:query": "node scripts/vault.mjs query"

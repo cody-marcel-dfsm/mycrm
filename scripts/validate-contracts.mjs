@@ -34,6 +34,7 @@ async function jsonFiles(directory, files = []) {
 const pkg = await readJson("package.json");
 const manifest = await readJson("plugins/my-crm/.codex-plugin/plugin.json");
 const product = await readJson("plugins/my-crm/.bos-product.json");
+const marketplace = await readJson(".agents/plugins/marketplace.json");
 
 if (pkg.license !== "Apache-2.0" || manifest.license !== "Apache-2.0") errors.push("package and plugin must declare Apache-2.0");
 if (pkg.version !== manifest.version || pkg.version !== product.version) errors.push("package, plugin, and product versions must match");
@@ -46,6 +47,10 @@ for (const key of ["resource_url", "oauth", "token", "grant", "session", "creden
 const handoff = product.authentication_handoff;
 if (handoff?.authentication_manager !== "bos" || handoff?.credential_lifecycle_owner !== "host" || handoff?.authorization_enforcement_owner !== "bos-service" || handoff?.delegation_policy !== "AUTOMATIC") errors.push("BOS authentication delegation metadata is invalid");
 if (handoff?.readiness_result?.representation !== "AUTHENTICATION_READINESS_ONLY" || handoff?.readiness_result?.authority_data !== "EXCLUDED") errors.push("Authentication handoff must return readiness without authority data");
+if (marketplace.name !== "my-crm-local" || marketplace.plugins?.length !== 1) errors.push("Local marketplace identity is invalid");
+const marketplacePlugin = marketplace.plugins?.[0];
+if (marketplacePlugin?.name !== "my-crm" || marketplacePlugin?.source?.source !== "local" || marketplacePlugin?.source?.path !== "./dist/my-crm") errors.push("Local marketplace must install the built My CRM release candidate");
+if (marketplacePlugin?.policy?.installation !== "AVAILABLE" || marketplacePlugin?.policy?.authentication !== "ON_USE") errors.push("Local marketplace policy is invalid");
 
 try {
   const request = await readJson("contracts/bos/lead-director/v1/describe.request.example.json");
@@ -54,8 +59,13 @@ try {
   const releaseManifestPath = path.join(root, "contracts/bos/lead-director/v1/manifest.json");
   const releaseManifestContent = await readFile(releaseManifestPath);
   const release = JSON.parse(releaseManifestContent);
-  if (createHash("sha256").update(releaseManifestContent).digest("hex") !== "d6ec68b56d6fb13234a0f6e661e9e434def82c78164284204b3a57002e71134d") errors.push("BOS public contract manifest provenance is invalid");
-  if (release.contract !== "bos-public-contract-release/v1" || release.owner !== "bos" || release.auth_impact !== "none" || release.bundle_sha256 !== "96b222b222aa2e71e359f9e0427cfbb5567be77152afdfc82d131277c75c45de") errors.push("BOS public contract release provenance is invalid");
+  const provenance = await readJson("contracts/bos/lead-director/import-provenance.json");
+  if (provenance.schema !== "my-crm.bos-contract-import/v1" || !/^[a-f0-9]{64}$/.test(provenance.archive_sha256 ?? "") || !/^[a-f0-9]{64}$/.test(provenance.manifest_sha256 ?? "") || !/^[a-f0-9]{64}$/.test(provenance.bundle_sha256 ?? "")) errors.push("BOS public contract import provenance is invalid");
+  if (provenance.source_revision === null) {
+    if (!/^[a-f0-9]{40}$/.test(provenance.consumer_import_commit ?? "")) errors.push("Legacy BOS contract provenance must identify its consumer import commit");
+  } else if (!/^[a-f0-9]{40}$/.test(provenance.source_revision ?? "") || provenance.consumer_import_commit !== undefined) errors.push("Imported BOS contract provenance must identify exactly one source revision");
+  if (createHash("sha256").update(releaseManifestContent).digest("hex") !== provenance.manifest_sha256 || release.bundle_sha256 !== provenance.bundle_sha256) errors.push("BOS public contract manifest does not match import provenance");
+  if (release.contract !== "bos-public-contract-release/v1" || release.contract_id !== "lead-director-describe" || release.contract_version !== "lead-director-describe/v1" || release.owner !== "bos" || release.auth_impact !== "none") errors.push("BOS public contract release provenance is invalid");
   if (JSON.stringify(release.files.map(({path: filePath}) => filePath).sort()) !== JSON.stringify([...leadDirectorReleaseFiles].sort())) errors.push("BOS public contract release file inventory is invalid");
   const releaseDirectoryFiles = (await readdir(path.join(root, "contracts/bos/lead-director/v1"), {withFileTypes: true}))
     .filter((entry) => entry.isFile())
@@ -79,6 +89,7 @@ try {
   buildUpdateRequest(await readJson("examples/crm/targeted-update.json"));
   createConceptualCustomer(conceptualCustomer);
   buildCrmContribution(journeyContribution);
+  validateJsonSchema(await readJson("contracts/my-crm/v1/live-acceptance-response.schema.json"), "live acceptance response schema");
   validateJsonValueAgainstSchema(conceptualCustomer, await readJson("contracts/my-crm/v1/conceptual-customer.schema.json"), "conceptual customer example");
   validateJsonValueAgainstSchema(journeyContribution, await readJson("contracts/my-crm/v1/crm-journey-contribution.schema.json"), "CRM journey contribution example");
 } catch (error) { errors.push(error.message); }
@@ -90,9 +101,11 @@ for (const relative of [
   "contracts/bos/lead-director/v1/api.contract.response.schema.json",
   "contracts/bos/lead-director/v1/describe.response.schema.json",
   "contracts/bos/lead-director/v1/manifest.json",
+  "contracts/bos/lead-director/import-provenance.json",
   "contracts/my-crm/v1/conceptual-customer.schema.json",
   "contracts/my-crm/v1/crm-journey-contribution.schema.json",
-  "contracts/my-crm/v1/release-dependencies.json"
+  "contracts/my-crm/v1/release-dependencies.json",
+  "contracts/my-crm/v1/live-acceptance-response.schema.json"
 ]) {
   try { await access(path.join(root, relative)); } catch { errors.push(`${relative} is missing`); }
 }

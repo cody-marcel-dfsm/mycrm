@@ -1,0 +1,8 @@
+{
+  "schema": "my-crm.bos-contract-import/v1",
+  "source_revision": null,
+  "archive_sha256": "e617342210233ffeda0f550a70d493aba2db4ebd6d52ee2699774b2f5ee76fdd",
+  "manifest_sha256": "d6ec68b56d6fb13234a0f6e661e9e434def82c78164284204b3a57002e71134d",
+  "bundle_sha256": "96b222b222aa2e71e359f9e0427cfbb5567be77152afdfc82d131277c75c45de",
+  "consumer_import_commit": "609ec5dec62f1143409f930b396181fdc2f33229"
+}
