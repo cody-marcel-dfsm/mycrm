@@ -3,13 +3,25 @@ import {createHash} from "node:crypto";
 import path from "node:path";
 import process from "node:process";
 
-import {validateApplicationDiscovery, validateDescribeResponse, validateJsonValueAgainstSchema} from "../src/bos/contracts.mjs";
+import {validateApplicationDiscovery, validateDescribeResponse, validateJsonSchema, validateJsonValueAgainstSchema} from "../src/bos/contracts.mjs";
 import {buildCrmContribution} from "../src/journey/client.mjs";
 import {buildUpdateRequest, createConceptualCustomer} from "../src/crm/operations.mjs";
 
 const root = path.resolve(new URL("..", import.meta.url).pathname);
 const readJson = async (relative) => JSON.parse(await readFile(path.join(root, relative), "utf8"));
 const errors = [];
+const leadDirectorReleaseFiles = [
+  "api.contract.request.example.json",
+  "api.contract.request.schema.json",
+  "api.contract.response.example.json",
+  "api.contract.response.schema.json",
+  "app.describe.example.json",
+  "app.describe.schema.json",
+  "describe.request.example.json",
+  "describe.response.example.json",
+  "describe.response.schema.json",
+  "operation.examples.json"
+];
 
 async function jsonFiles(directory, files = []) {
   for (const entry of await readdir(directory, {withFileTypes: true})) {
@@ -37,12 +49,29 @@ try {
   const request = await readJson("contracts/bos/lead-director/v1/describe.request.example.json");
   validateApplicationDiscovery(await readJson("contracts/bos/lead-director/v1/app.describe.example.json"));
   validateDescribeResponse(await readJson("contracts/bos/lead-director/v1/describe.response.example.json"), request.operations);
-  const release = await readJson("contracts/bos/lead-director/v1/manifest.json");
-  if (release.contract !== "bos-public-contract-release/v1" || release.bundle_sha256 !== "fd73779783242b4420dc72d7d8ade232f5adbc318ae69261b584b2b5dcfd5367") errors.push("BOS public contract release provenance is invalid");
+  const releaseManifestPath = path.join(root, "contracts/bos/lead-director/v1/manifest.json");
+  const releaseManifestContent = await readFile(releaseManifestPath);
+  const release = JSON.parse(releaseManifestContent);
+  if (createHash("sha256").update(releaseManifestContent).digest("hex") !== "d6ec68b56d6fb13234a0f6e661e9e434def82c78164284204b3a57002e71134d") errors.push("BOS public contract manifest provenance is invalid");
+  if (release.contract !== "bos-public-contract-release/v1" || release.owner !== "bos" || release.auth_impact !== "none" || release.bundle_sha256 !== "96b222b222aa2e71e359f9e0427cfbb5567be77152afdfc82d131277c75c45de") errors.push("BOS public contract release provenance is invalid");
+  if (JSON.stringify(release.files.map(({path: filePath}) => filePath).sort()) !== JSON.stringify([...leadDirectorReleaseFiles].sort())) errors.push("BOS public contract release file inventory is invalid");
+  const releaseDirectoryFiles = (await readdir(path.join(root, "contracts/bos/lead-director/v1"), {withFileTypes: true}))
+    .filter((entry) => entry.isFile())
+    .map((entry) => entry.name)
+    .sort();
+  if (JSON.stringify(releaseDirectoryFiles) !== JSON.stringify([...leadDirectorReleaseFiles, "manifest.json"].sort())) errors.push("BOS public contract release directory is not the exact eleven-file bundle");
   for (const file of release.files) {
     const content = await readFile(path.join(root, "contracts/bos/lead-director/v1", file.path));
     if (createHash("sha256").update(content).digest("hex") !== file.sha256) errors.push(`BOS public contract digest mismatch: ${file.path}`);
   }
+  const apiContractRequest = await readJson("contracts/bos/lead-director/v1/api.contract.request.example.json");
+  const apiContractResponse = await readJson("contracts/bos/lead-director/v1/api.contract.response.example.json");
+  validateJsonValueAgainstSchema(apiContractRequest, await readJson("contracts/bos/lead-director/v1/api.contract.request.schema.json"), "api.contract.get request example");
+  validateJsonValueAgainstSchema(apiContractResponse, await readJson("contracts/bos/lead-director/v1/api.contract.response.schema.json"), "api.contract.get response example");
+  if (apiContractResponse.operation !== apiContractRequest.operation || apiContractResponse.cacheScope !== "private" || apiContractResponse.ttlMs !== 0) errors.push("api.contract.get release example parity is invalid");
+  validateJsonSchema(apiContractResponse.input_schema, "api.contract.get input schema");
+  validateJsonSchema(apiContractResponse.output_schema, "api.contract.get output schema");
+  validateJsonSchema(apiContractResponse.receipt_schema, "api.contract.get receipt schema");
   const conceptualCustomer = await readJson("examples/crm/conceptual-customer.json");
   const journeyContribution = await readJson("examples/crm/journey-contribution.json");
   buildUpdateRequest(await readJson("examples/crm/targeted-update.json"));
@@ -55,6 +84,8 @@ try {
 for (const relative of [
   "LICENSE", "NOTICE", "plugins/my-crm/assets/my-crm-logo.png",
   "contracts/bos/lead-director/v1/app.describe.schema.json",
+  "contracts/bos/lead-director/v1/api.contract.request.schema.json",
+  "contracts/bos/lead-director/v1/api.contract.response.schema.json",
   "contracts/bos/lead-director/v1/describe.response.schema.json",
   "contracts/bos/lead-director/v1/manifest.json",
   "contracts/my-crm/v1/conceptual-customer.schema.json",

@@ -73,6 +73,43 @@ test("released operation examples conform to every advertised invocation schema"
   }
 });
 
+test("released api.contract.get artifacts are internally conformant private authoring metadata", async () => {
+  const requestSchema = await published("api.contract.request.schema.json");
+  const responseSchema = await published("api.contract.response.schema.json");
+  const request = await published("api.contract.request.example.json");
+  const response = await published("api.contract.response.example.json");
+  assert.doesNotThrow(() => validateJsonValueAgainstSchema(request, requestSchema, "api.contract.get request"));
+  assert.doesNotThrow(() => validateJsonValueAgainstSchema(response, responseSchema, "api.contract.get response"));
+  assert.equal(response.operation, request.operation);
+  assert.equal(response.cacheScope, "private");
+  assert.equal(response.ttlMs, 0);
+  assert.throws(() => validateJsonValueAgainstSchema({operation: "search"}, requestSchema, "api.contract.get request"), /pattern/);
+  assert.throws(() => validateJsonValueAgainstSchema({...request, source: "invented"}, requestSchema, "api.contract.get request"), /additionalProperties/);
+  assert.throws(() => validateJsonValueAgainstSchema({...response, cacheScope: "public"}, responseSchema, "api.contract.get response"), /const/);
+  assert.throws(() => validateJsonValueAgainstSchema({...response, ttlMs: 1}, responseSchema, "api.contract.get response"), /const/);
+  assert.throws(() => validateJsonValueAgainstSchema({...response, bosl_server_node: true}, responseSchema, "api.contract.get response"), /required/);
+  assert.throws(() => validateJsonValueAgainstSchema({...response, node_type: "server"}, responseSchema, "api.contract.get response"), /not/);
+  assert.doesNotThrow(() => validateJsonValueAgainstSchema({...response, bosl_server_node: true, node_type: "server"}, responseSchema, "api.contract.get response"));
+});
+
+test("My CRM pins api.contract.get release evidence but delegates its runtime use to BOS authoring", async () => {
+  const runtimeFiles = [
+    "../src/bos/client.mjs",
+    "../src/bos/action-client.mjs",
+    "../src/cache/client.mjs",
+    "../src/crm/intent.mjs",
+    "../src/crm/operations.mjs",
+    "../src/crm/presentation.mjs",
+    "../src/crm/results.mjs",
+    "../src/journey/client.mjs"
+  ];
+  const runtime = (await Promise.all(runtimeFiles.map((relative) => readFile(new URL(relative, import.meta.url), "utf8")))).join("\n");
+  assert.doesNotMatch(runtime, /api\.contract\.get/);
+  const automation = await readFile(new URL("../plugins/my-crm/skills/my-crm-automation/SKILL.md", import.meta.url), "utf8");
+  assert.match(automation, /BOS operating-system\/application-client skills/);
+  assert.match(automation, /own prompt-wide planning and BOSL authoring|author BOSL/);
+});
+
 test("discovered JSON Schemas enforce local references, composition, and scalar constraints", () => {
   const schema = {
     $schema: "https://json-schema.org/draft/2020-12/schema",
