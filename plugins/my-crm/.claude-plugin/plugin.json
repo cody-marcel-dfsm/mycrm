@@ -1,0 +1,19 @@
+{
+  "name": "my-crm",
+  "description": "Independent provider-neutral CRM expertise that consumes discovered BOS application contracts",
+  "version": "0.2.3",
+  "author": {
+    "name": "Infinite State Machines LLC",
+    "url": "https://dfsm.ai"
+  },
+  "displayName": "My CRM",
+  "homepage": "https://dfsm.ai",
+  "license": "Apache-2.0",
+  "keywords": [
+    "bos",
+    "crm",
+    "automation",
+    "federation"
+  ],
+  "skills": "./skills/"
+}

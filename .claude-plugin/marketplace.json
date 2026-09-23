@@ -1,0 +1,14 @@
+{
+  "name": "mycrm",
+  "owner": {
+    "name": "Infinite State Machines LLC",
+    "url": "https://dfsm.ai"
+  },
+  "plugins": [
+    {
+      "name": "my-crm",
+      "source": "./plugins/my-crm",
+      "description": "Independent provider-neutral CRM expertise that consumes discovered BOS application contracts."
+    }
+  ]
+}
