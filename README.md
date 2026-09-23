@@ -1,6 +1,6 @@
 # My CRM
 
-My CRM is an independent Apache-2.0 CRM-expertise plugin for BOS. It consumes published authenticated discovery and deterministic HTTPS contracts as an external developer. It contains no BOS source dependency, authentication client, source adapter, database access, or execution runtime.
+My CRM is the first independently built, Apache-2.0 CRM-expertise plugin for BOS and the first independently owned external product in the BOS Product Family. It is the reference implementation showing how an outside company can build a client agent or plugin against the BOS operating system through published authenticated discovery and deterministic HTTPS contracts. My CRM contains no BOS source dependency, authentication client, source adapter, database access, or execution runtime.
 
 ## What it owns
 

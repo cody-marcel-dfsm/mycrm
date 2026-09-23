@@ -7,6 +7,12 @@ description: Contribute CRM goals and constraints to BOS-owned explain planning 
 
 Route explicit explain, preview, and automation requests to installed BOS operating-system/application-client skills. They interpret the complete prompt, request current discovery and Describe, construct explain plans, author BOSL, and control lifecycle interaction. My CRM contributes only CRM goals, concepts, constraints, required evidence, source semantics, approvals, guarantees, presentation, and recovery guidance.
 
+When a user asks to explain, inspect, or preview an organization's automation plugin, route the request to the BOS workflow orchestrator. Require fresh `app.describe`, `plugins.list`, and the selected plugin's exact `service.describe` contract. My CRM contributes CRM terminology, goals, constraints, required evidence, and the customer-facing interpretation of the described workflow; BOS owns the complete explain plan.
+
+Present the customer's progression through the automation plugin, starting with its described trigger and continuing through verified human touchpoints, automated steps, connected services, approvals, success outcomes, final failure outcomes, and recovery. Lead with a source-backed diagram of that plugin workflow and use only interfaces, channels, operations, and services named by current Describe evidence. Keep technical steps, node ownership, effects, typed inputs and outputs, and readiness in the explain plan or supporting detail.
+
+Do not substitute the Lead Director record-state graph, a record's current journey position, a shortest lifecycle path, plugin health, or campaign status for the automation workflow. Use `my-crm-customer-journey` only when the user asks about an individual record or the organization's record lifecycle itself. If the plugin Describe contract is unavailable, retain it as an explicit dependency and do not infer the automation from generic CRM behavior.
+
 Implement no local FSM or BOSL dialect, compiler, validator, graph registry, transition selection, execution engine, runtime state, version, digest, revision, or identifier.
 
 For a CRM-domain client instruction:

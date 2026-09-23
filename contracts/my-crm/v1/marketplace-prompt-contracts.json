@@ -1,0 +1,35 @@
+{
+  "$schema": "https://dfsm.ai/contracts/my-crm/v1/marketplace-prompt-contracts.schema.json",
+  "schema": "my-crm.marketplace-prompt-contracts/v1",
+  "prompts": [
+    {
+      "id": "find-customer-records",
+      "text": "Find the latest matching customer records across my current CRM sources.",
+      "operation": "search",
+      "effect": "read",
+      "assertions": [
+        "described-operation",
+        "deterministic-https-execution",
+        "federated-result-validation",
+        "source-provenance-preservation",
+        "freshness-preservation",
+        "no-mutation"
+      ]
+    },
+    {
+      "id": "compare-customer-across-sources",
+      "text": "Compare this customer across sources and show conflicts without changing anything.",
+      "operation": "search",
+      "effect": "read",
+      "assertions": [
+        "described-operation",
+        "deterministic-https-execution",
+        "federated-result-validation",
+        "source-provenance-preservation",
+        "freshness-preservation",
+        "conceptual-customer-reconciliation",
+        "no-mutation"
+      ]
+    }
+  ]
+}

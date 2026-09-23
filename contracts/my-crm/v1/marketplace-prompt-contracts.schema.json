@@ -1,0 +1,69 @@
+{
+  "$schema": "https://json-schema.org/draft/2020-12/schema",
+  "$id": "https://dfsm.ai/contracts/my-crm/v1/marketplace-prompt-contracts.schema.json",
+  "title": "My CRM marketplace starter-prompt contracts",
+  "type": "object",
+  "additionalProperties": false,
+  "required": [
+    "$schema",
+    "schema",
+    "prompts"
+  ],
+  "properties": {
+    "$schema": {
+      "const": "https://dfsm.ai/contracts/my-crm/v1/marketplace-prompt-contracts.schema.json"
+    },
+    "schema": {
+      "const": "my-crm.marketplace-prompt-contracts/v1"
+    },
+    "prompts": {
+      "type": "array",
+      "minItems": 1,
+      "uniqueItems": true,
+      "items": {
+        "type": "object",
+        "additionalProperties": false,
+        "required": [
+          "id",
+          "text",
+          "operation",
+          "effect",
+          "assertions"
+        ],
+        "properties": {
+          "id": {
+            "type": "string",
+            "pattern": "^[a-z][a-z0-9_-]*$"
+          },
+          "text": {
+            "type": "string",
+            "minLength": 1,
+            "maxLength": 500
+          },
+          "operation": {
+            "const": "search"
+          },
+          "effect": {
+            "const": "read"
+          },
+          "assertions": {
+            "type": "array",
+            "minItems": 1,
+            "uniqueItems": true,
+            "items": {
+              "enum": [
+                "described-operation",
+                "deterministic-https-execution",
+                "federated-result-validation",
+                "source-provenance-preservation",
+                "freshness-preservation",
+                "conceptual-customer-reconciliation",
+                "no-mutation"
+              ]
+            }
+          }
+        }
+      }
+    }
+  }
+}

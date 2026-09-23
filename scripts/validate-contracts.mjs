@@ -34,6 +34,7 @@ async function jsonFiles(directory, files = []) {
 const pkg = await readJson("package.json");
 const manifest = await readJson("plugins/my-crm/.codex-plugin/plugin.json");
 const product = await readJson("plugins/my-crm/.bos-product.json");
+const marketplacePromptContracts = await readJson("contracts/my-crm/v1/marketplace-prompt-contracts.json");
 const marketplace = await readJson(".agents/plugins/marketplace.json");
 const bocDependencySchemaPath = "contracts/bos-operations-center/external-product-dependency/v2/external-product-dependency.v2.schema.json";
 const bocDependencyContractPath = "contracts/bos-operations-center/external-product-dependency/v2/external-product-dependency.v2.md";
@@ -46,6 +47,8 @@ const bocDependencyContractBytes = await readFile(path.join(root, bocDependencyC
 if (pkg.license !== "Apache-2.0" || manifest.license !== "Apache-2.0") errors.push("package and plugin must declare Apache-2.0");
 if (pkg.version !== manifest.version || pkg.version !== product.version) errors.push("package, plugin, and product versions must match");
 if (manifest.name !== "my-crm" || manifest.interface?.displayName !== "My CRM") errors.push("plugin identity is invalid");
+if (JSON.stringify(manifest.interface?.defaultPrompt) !== JSON.stringify(marketplacePromptContracts.prompts?.map(({text}) => text))) errors.push("plugin starter prompts must exactly match their marketplace prompt contracts");
+if (manifest.interface?.defaultPrompt?.some((prompt) => /meeting that just ended/i.test(prompt))) errors.push("unaccepted meeting-follow-up workflow must not be advertised as a My CRM starter prompt");
 if (manifest.apps !== undefined || manifest.mcpServers !== undefined) errors.push("My CRM must not declare an app mapping or a second MCP connection");
 if (product.schema_version !== "2" || product.application_name !== "my-crm") errors.push("My CRM must use the published BOS external-product dependency v2 identity");
 if (product.connection_owner !== "bos" || JSON.stringify(product.dependency_products) !== JSON.stringify(["bos"]) || product.authentication !== "bos_dependency") errors.push("My CRM must depend on the BOS-owned connection");
@@ -103,6 +106,9 @@ try {
   buildCrmContribution(journeyContribution);
   validateCrmInstructionEnvelope(journeyFixture);
   validateJsonSchema(await readJson("contracts/my-crm/v1/live-acceptance-response.schema.json"), "live acceptance response schema");
+  const marketplacePromptSchema = await readJson("contracts/my-crm/v1/marketplace-prompt-contracts.schema.json");
+  validateJsonSchema(marketplacePromptSchema, "marketplace prompt contracts schema");
+  validateJsonValueAgainstSchema(marketplacePromptContracts, marketplacePromptSchema, "marketplace prompt contracts");
   validateJsonValueAgainstSchema(conceptualCustomer, await readJson("contracts/my-crm/v1/conceptual-customer.schema.json"), "conceptual customer example");
   validateJsonValueAgainstSchema(journeyContribution, await readJson("contracts/my-crm/v1/crm-journey-contribution.schema.json"), "CRM journey contribution example");
 } catch (error) { errors.push(error.message); }
@@ -119,6 +125,8 @@ for (const relative of [
   "contracts/my-crm/v1/crm-journey-contribution.schema.json",
   "contracts/my-crm/v1/release-dependencies.json",
   "contracts/my-crm/v1/live-acceptance-response.schema.json",
+  "contracts/my-crm/v1/marketplace-prompt-contracts.json",
+  "contracts/my-crm/v1/marketplace-prompt-contracts.schema.json",
   bocDependencySchemaPath,
   bocDependencyContractPath,
   bocDependencyProvenancePath,

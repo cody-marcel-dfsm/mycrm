@@ -1,0 +1,4 @@
+interface:
+  display_name: "Ship It"
+  short_description: "Approve and complete the full MyCRM release"
+  default_prompt: "Use $ship-it as my explicit and final authorization to create the next MyCRM version, validate and commit the complete reviewed payload, push its release branch, open and merge the pull request into main after required checks, install the merged plugin through supported Codex controls, and complete read-only native acceptance."

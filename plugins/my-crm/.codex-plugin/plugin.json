@@ -1,6 +1,6 @@
 {
   "name": "my-crm",
-  "version": "0.2.3",
+  "version": "0.2.10",
   "description": "Independent provider-neutral CRM expertise that consumes discovered BOS application contracts",
   "author": {
     "name": "Infinite State Machines LLC",
@@ -27,7 +27,6 @@
     ],
     "defaultPrompt": [
       "Find the latest matching customer records across my current CRM sources.",
-      "Explain how you would find and merge this customer across my CRM sources.",
       "Compare this customer across sources and show conflicts without changing anything."
     ],
     "websiteURL": "https://dfsm.ai",

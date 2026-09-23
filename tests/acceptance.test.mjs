@@ -7,6 +7,7 @@ import {buildCreateRequest, buildSearchRequest, buildUpdateRequest, createConcep
 import {validateCreateResult, validateFederatedResult, validateOrderedMutationResult} from "../src/crm/results.mjs";
 
 const published = async (name) => JSON.parse(await readFile(new URL(`../contracts/bos/lead-director/v1/${name}`, import.meta.url), "utf8"));
+const repositoryJson = async (name) => JSON.parse(await readFile(new URL(`../${name}`, import.meta.url), "utf8"));
 const selectDescribe = (response, operationIds) => ({...structuredClone(response), operations: response.operations.filter(({operation}) => operationIds.includes(operation))});
 
 test("canonical search flows through exact app.describe and Describe contacts without client authority", async () => {
@@ -77,4 +78,62 @@ test("canonical recent-meeting request does not trigger a CRM lookup solely for 
   };
   assert.deepEqual(boundary({prompt, attendees: [attendee]}), {owner: "bos", crmContributionRequired: false});
   assert.deepEqual(crmCalls, []);
+});
+
+test("every marketplace starter prompt performs its exact published read contract", async () => {
+  const manifest = await repositoryJson("plugins/my-crm/.codex-plugin/plugin.json");
+  const promptContracts = await repositoryJson("contracts/my-crm/v1/marketplace-prompt-contracts.json");
+  const discovery = await published("app.describe.example.json");
+  const describe = await published("describe.response.example.json");
+  const examples = await published("operation.examples.json");
+  assert.deepEqual(manifest.interface.defaultPrompt, promptContracts.prompts.map(({text}) => text));
+
+  for (const promptContract of promptContracts.prompts) {
+    const requests = [];
+    const client = new BosContractClient({
+      discovery: {read: async () => discovery, refresh: async () => discovery},
+      http: {request: async (request) => {
+        requests.push(structuredClone(request));
+        if (request.uri === discovery.describe.uri) return {status: 200, body: selectDescribe(describe, request.body.operations)};
+        return {status: 200, body: structuredClone(examples.search.response)};
+      }},
+      bos: {recoverAuthentication: async () => ({status: "READY"})}
+    });
+    const described = await client.describe([promptContract.operation]);
+    const description = described.operations[0];
+    assert.equal(description.operation, "search", `${promptContract.id} must resolve the advertised search contract`);
+    assert.equal(description.effect, promptContract.effect, `${promptContract.id} must stay read-only`);
+    const result = validateFederatedResult(
+      (await client.execute(description.operation, buildSearchRequest(examples.search.request))).body,
+      description
+    );
+    assert.deepEqual(requests.map(({uri}) => uri), [discovery.describe.uri, description.execution.uri]);
+    assert.ok(result.observed_at);
+    assert.ok(result.source_results.every(({source, observed_at}) => source && observed_at));
+
+    const performed = new Set([
+      "described-operation",
+      "deterministic-https-execution",
+      "federated-result-validation",
+      "source-provenance-preservation",
+      "freshness-preservation",
+      "no-mutation"
+    ]);
+    if (promptContract.assertions.includes("conceptual-customer-reconciliation")) {
+      const records = result.source_results.flatMap(({source, records: sourceRecords}) =>
+        sourceRecords.map((record) => ({source, record}))
+      );
+      const conceptual = createConceptualCustomer({
+        records,
+        evidence: [{kind: "marketplace_prompt_contract", prompt_id: promptContract.id}],
+        confidence: "bounded",
+        conflicts: [],
+        uncertainty: "Source records remain distinct."
+      });
+      assert.deepEqual(conceptual.records, records);
+      performed.add("conceptual-customer-reconciliation");
+    }
+    assert.deepEqual([...performed].sort(), [...promptContract.assertions].sort());
+    assert.equal(requests.some(({method}) => ![undefined, "GET", "POST"].includes(method)), false);
+  }
 });

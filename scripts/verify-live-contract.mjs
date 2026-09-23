@@ -1,6 +1,5 @@
 import {execFile} from "node:child_process";
 import {mkdtemp, readFile, rm, writeFile} from "node:fs/promises";
-import {promisify} from "node:util";
 import {fileURLToPath} from "node:url";
 import os from "node:os";
 import path from "node:path";
@@ -10,25 +9,52 @@ import {repositoryRoot, stableJson} from "./release-utils.mjs";
 import {verifyNativeRuntime} from "./codex-local-install.mjs";
 import {validateJsonValueAgainstSchema} from "../src/bos/contracts.mjs";
 
-const exec = promisify(execFile);
 const schemaFile = path.join(repositoryRoot, "contracts/my-crm/v1/live-acceptance-response.schema.json");
 
-export const LIVE_ACCEPTANCE_PROMPT = `Use the installed My CRM skills and the installed BOS product's single authenticated connection. Perform authenticated BOS application discovery, request task-scoped Describe for the current CRM search operation, and invoke only the exact read-only HTTPS search contract it returns. Search for cody.marcel@dfsm.ai. Validate the response against the advertised output contract. Preserve every returned source-native record and its complete source attribution. Assess whether returned records may represent one conceptual customer while retaining every underlying record, conflict, and uncertainty. Present live or cached origin and a human-readable local freshness time. Do not create, update, delete, register, start, step, complete, or fail a journey. Do not call a provider write. Do not request, infer, or emit an organization selector, authority value, credential, token, installation identifier, role identifier, internal identifier, or provider identifier. My CRM must delegate authentication, discovery, and transport to installed BOS and must not create a second connection. Return APPROVED only when discovery, task-scoped Describe, the discovered search request, response validation, provenance preservation, freshness presentation, and conceptual reconciliation assessment all succeed. Return HOST_ACTION_REQUIRED when the native host must complete BOS sign-in or authorization. Return REJECTED for any other contract failure.`;
+const CONTEXT_LABEL = /^[A-Za-z0-9][A-Za-z0-9 ._()'-]{0,127}$/;
+
+export function buildLiveAcceptancePrompt(contextLabel) {
+  if (typeof contextLabel !== "string" || !CONTEXT_LABEL.test(contextLabel)) {
+    throw new Error("MYCRM_LIVE_CONTEXT_LABEL must be an explicit user-authorized BOS context label");
+  }
+  return `Use the installed My CRM skills and the installed BOS product's single authenticated connection. The user-authorized target context label is ${JSON.stringify(contextLabel)}; treat that label only as user intent and require BOS to resolve and revalidate the current authority. Perform authenticated BOS application discovery. Invoke the direct read-only plugins.list and service.describe tools with the fresh selected context handle; do not route those discovery calls through bos_execute. Request task-scoped Describe for the current CRM search operation, and invoke only the exact read-only HTTPS search contract it returns. Search for cody.marcel@dfsm.ai. Validate the response against the advertised output contract. Preserve every returned source-native record and its complete source attribution. Assess whether returned records may represent one conceptual customer while retaining every underlying record, conflict, and uncertainty. Present live or cached origin and a human-readable local freshness time. Do not create, update, delete, register, start, step, complete, or fail a journey. Do not call a provider write. Do not infer another selector or request or emit an authority value, credential, token, installation identifier, role identifier, internal identifier, or provider identifier. My CRM must delegate authentication, context resolution, discovery, and transport to installed BOS and must not create a second connection. Return APPROVED only when discovery, task-scoped Describe, the discovered search request, response validation, provenance preservation, freshness presentation, and conceptual reconciliation assessment all succeed. Return HOST_ACTION_REQUIRED when the native host must complete BOS sign-in or authorization. Return REJECTED for any other contract failure.`;
+}
+
+export function execFileWithClosedStdin(command, args, options = {}) {
+  return new Promise((resolve, reject) => {
+    const child = execFile(command, args, options, (error, stdout, stderr) => {
+      if (error) {
+        error.stdout = stdout;
+        error.stderr = stderr;
+        reject(error);
+        return;
+      }
+      resolve({stdout, stderr});
+    });
+    child.stdin?.end();
+  });
+}
 
 async function defaultRun(args) {
-  const {stdout} = await exec("codex", args, {cwd: repositoryRoot, maxBuffer: 16 * 1024 * 1024});
+  const {stdout} = await execFileWithClosedStdin("codex", args, {
+    cwd: repositoryRoot,
+    maxBuffer: 16 * 1024 * 1024,
+    timeout: 10 * 60 * 1000,
+    killSignal: "SIGTERM"
+  });
   return stdout;
 }
 
-export async function runLiveAcceptance({runCommand = defaultRun, verifyRuntime = verifyNativeRuntime, evidenceFile = process.env.MYCRM_LIVE_EVIDENCE_OUT, authorized = process.env.MYCRM_LIVE_ACCEPTANCE === "1"} = {}) {
+export async function runLiveAcceptance({runCommand = defaultRun, verifyRuntime = verifyNativeRuntime, evidenceFile = process.env.MYCRM_LIVE_EVIDENCE_OUT, authorized = process.env.MYCRM_LIVE_ACCEPTANCE === "1", contextLabel = process.env.MYCRM_LIVE_CONTEXT_LABEL} = {}) {
   if (!authorized) throw new Error("Set MYCRM_LIVE_ACCEPTANCE=1 to run the authorized, read-only native live-contract check");
+  const prompt = buildLiveAcceptancePrompt(contextLabel);
   const runtime = await verifyRuntime();
   const temporary = await mkdtemp(path.join(os.tmpdir(), "my-crm-live-"));
   const responseFile = path.join(temporary, "response.json");
   try {
     await runCommand([
       "exec", "--ephemeral", "--json", "--sandbox", "read-only", "--cd", repositoryRoot,
-      "--output-schema", schemaFile, "--output-last-message", responseFile, LIVE_ACCEPTANCE_PROMPT
+      "--output-schema", schemaFile, "--output-last-message", responseFile, prompt
     ]);
     const response = JSON.parse(await readFile(responseFile, "utf8"));
     validateJsonValueAgainstSchema(response, JSON.parse(await readFile(schemaFile, "utf8")), "native live acceptance response");

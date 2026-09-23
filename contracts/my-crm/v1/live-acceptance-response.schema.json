@@ -20,6 +20,7 @@
   ],
   "properties": {
     "status": {
+      "type": "string",
       "enum": [
         "APPROVED",
         "HOST_ACTION_REQUIRED",
@@ -51,9 +52,11 @@
       "type": "boolean"
     },
     "mutation_performed": {
+      "type": "boolean",
       "const": false
     },
     "authority_exposed": {
+      "type": "boolean",
       "const": false
     },
     "message": {

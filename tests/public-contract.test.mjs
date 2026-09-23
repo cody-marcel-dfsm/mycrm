@@ -121,6 +121,12 @@ test("My CRM pins api.contract.get release evidence but delegates its runtime us
   const automation = await readFile(new URL("../plugins/my-crm/skills/my-crm-automation/SKILL.md", import.meta.url), "utf8");
   assert.match(automation, /BOS operating-system\/application-client skills/);
   assert.match(automation, /own prompt-wide planning and BOSL authoring|author BOSL/);
+  assert.match(automation, /BOS workflow orchestrator/);
+  assert.match(automation, /fresh `app\.describe`, `plugins\.list`/);
+  assert.match(automation, /exact `service\.describe` contract/);
+  assert.match(automation, /customer's progression through the automation plugin/);
+  assert.match(automation, /source-backed diagram of that plugin workflow/);
+  assert.match(automation, /Do not substitute the Lead Director record-state graph/);
 });
 
 test("discovered JSON Schemas enforce local references, composition, and scalar constraints", () => {
