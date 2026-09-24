@@ -12,9 +12,11 @@ const run = promisify(execFile);
 
 test("plugin depends on the single BOS-owned connection and declares no authentication binding", async () => {
   const manifest = await json("plugins/my-crm/.codex-plugin/plugin.json");
+  const claudeManifest = await json("plugins/my-crm/.claude-plugin/plugin.json");
   const product = await json("plugins/my-crm/.bos-product.json");
   const promptContracts = await json("contracts/my-crm/v1/marketplace-prompt-contracts.json");
   assert.equal(manifest.license, "Apache-2.0");
+  assert.equal(claudeManifest.version, manifest.version);
   assert.equal(manifest.mcpServers, undefined);
   assert.deepEqual(manifest.interface.defaultPrompt, promptContracts.prompts.map(({text}) => text));
   assert.equal(manifest.interface.defaultPrompt.some((prompt) => /meeting that just ended/i.test(prompt)), false);

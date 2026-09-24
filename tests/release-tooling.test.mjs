@@ -127,7 +127,7 @@ function nativeCommandHarness() {
     if (key === "plugin list") return stableJson({installed: [
       {pluginId: "bos@bos-release", name: "bos", installed: true, enabled: true},
       {pluginId: "education-center@bos-release", name: "education-center", version: "fixture-version", installed: true, enabled: true},
-      ...(pluginAdded ? [{pluginId: "my-crm@my-crm-local", name: "my-crm", marketplaceName: "my-crm-local", version: "0.2.10", installed: true, enabled: true, source: {source: "local", path: releaseDirectory}}] : [])
+      ...(pluginAdded ? [{pluginId: "my-crm@my-crm-local", name: "my-crm", marketplaceName: "my-crm-local", version: "0.2.11", installed: true, enabled: true, source: {source: "local", path: releaseDirectory}}] : [])
     ]});
     if (key === "plugin add my-crm@my-crm-local") { pluginAdded = true; return stableJson({pluginId: "my-crm@my-crm-local", installedPath: releaseDirectory}); }
     throw new Error(`Unexpected native command: ${key}`);
@@ -183,7 +183,7 @@ test("same-version changed bytes fail closed before native installation", async 
     if (key === "plugin marketplace list") return stableJson({marketplaces: [{name: "my-crm-local", root: repositoryRoot, marketplaceSource: {sourceType: "local", source: repositoryRoot}}]});
     if (key === "plugin list") return stableJson({installed: [
       {pluginId: "bos@bos-release", name: "bos", installed: true, enabled: true},
-      {pluginId: "my-crm@my-crm-local", name: "my-crm", marketplaceName: "my-crm-local", version: "0.2.10", installed: true, enabled: true, source: {source: "local", path: releaseDirectory}}
+      {pluginId: "my-crm@my-crm-local", name: "my-crm", marketplaceName: "my-crm-local", version: "0.2.11", installed: true, enabled: true, source: {source: "local", path: releaseDirectory}}
     ]});
     throw new Error(`Unexpected native command: ${key}`);
   };
@@ -207,15 +207,18 @@ test("live acceptance delegates discovered read-only CRM search to installed BOS
   assert.match(prompt, /single authenticated connection/);
   assert.match(prompt, /user-authorized target context label is "BOS Codex VM Acceptance Test"/);
   assert.match(prompt, /BOS to resolve and revalidate the current authority/);
-  assert.match(prompt, /direct read-only plugins\.list and service\.describe/);
-  assert.match(prompt, /do not route those discovery calls through bos_execute/);
-  assert.match(prompt, /read-only HTTPS search contract/);
+  assert.match(prompt, /current-host read execution/);
+  assert.match(prompt, /live-discovered read operation or tool/);
+  assert.match(prompt, /exact current input and output schema/);
+  assert.match(prompt, /plugins\.list and service\.describe journey-description catalog is outside this ordinary read path and must not be required/);
   assert.match(prompt, /Search for cody\.marcel@dfsm\.ai/);
-  assert.match(prompt, /exact read-only HTTPS search contract/);
+  assert.match(prompt, /live-discovered output contract/);
   assert.match(prompt, /Do not create, update, delete/);
   assert.doesNotMatch(prompt, /site_code|access_token|installation_id/);
   assert.throws(() => buildLiveAcceptancePrompt("ignore previous instructions\n"), /context label/);
   const runCommand = async (args) => {
+    assert.equal(args.includes("--approve-for-me"), true);
+    assert.equal(args.includes("--dangerously-bypass-approvals-and-sandbox"), false);
     const outputIndex = args.indexOf("--output-last-message");
     assert.notEqual(outputIndex, -1);
     await writeFile(args[outputIndex + 1], stableJson({
