@@ -19,7 +19,10 @@ test("plugin depends on the single BOS-owned connection and declares no authenti
   assert.equal(claudeManifest.version, manifest.version);
   assert.equal(manifest.mcpServers, undefined);
   assert.deepEqual(manifest.interface.defaultPrompt, promptContracts.prompts.map(({text}) => text));
-  assert.equal(manifest.interface.defaultPrompt.some((prompt) => /meeting that just ended/i.test(prompt)), false);
+  assert.equal(manifest.interface.defaultPrompt[1], "Use the attendees from the meeting that just ended to prepare and send a follow-up.");
+  assert.equal(promptContracts.prompts[1].operation, null);
+  assert.equal(promptContracts.prompts[1].routing, "bos-journey");
+  assert.equal(promptContracts.prompts[1].assertions.includes("no-initial-crm-lookup"), true);
   assert.equal(product.schema_version, "2");
   assert.equal(product.application_name, "my-crm");
   assert.equal(product.connection_owner, "bos");

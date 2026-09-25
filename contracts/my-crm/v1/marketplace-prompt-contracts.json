@@ -7,6 +7,7 @@
       "text": "Find the latest matching customer records across my current CRM sources.",
       "operation": "search",
       "effect": "read",
+      "routing": "direct",
       "assertions": [
         "described-operation",
         "deterministic-https-execution",
@@ -17,10 +18,24 @@
       ]
     },
     {
+      "id": "canonical-recent-meeting-follow-up",
+      "text": "Use the attendees from the meeting that just ended to prepare and send a follow-up.",
+      "operation": null,
+      "effect": "approval-gated-write",
+      "routing": "bos-journey",
+      "assertions": [
+        "bos-owned-journey-orchestration",
+        "no-initial-crm-lookup",
+        "approval-before-send",
+        "crm-only-on-returned-instruction"
+      ]
+    },
+    {
       "id": "compare-customer-across-sources",
       "text": "Compare this customer across sources and show conflicts without changing anything.",
       "operation": "search",
       "effect": "read",
+      "routing": "direct",
       "assertions": [
         "described-operation",
         "deterministic-https-execution",

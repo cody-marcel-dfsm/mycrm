@@ -52,16 +52,29 @@ test("client-owned conceptual reconciliation preserves every discovered source r
   assert.deepEqual(conceptual.records, records);
 });
 
-test("every marketplace starter prompt resolves through current discovery as a read", async (context) => {
+test("every marketplace starter prompt follows its declared direct or BOS journey routing", async (context) => {
   const service = await startSyntheticBosService();
   context.after(service.close);
   const manifest = JSON.parse(await readFile(new URL("../plugins/my-crm/.codex-plugin/plugin.json", import.meta.url), "utf8"));
   const promptContracts = JSON.parse(await readFile(new URL("../contracts/my-crm/v1/marketplace-prompt-contracts.json", import.meta.url), "utf8"));
   assert.deepEqual(manifest.interface.defaultPrompt, promptContracts.prompts.map(({text}) => text));
   for (const prompt of promptContracts.prompts) {
-    const client = new BosContractClient({discovery: service.discovery, bos: service.bos});
-    const operation = (await client.describe([prompt.operation])).operations[0];
-    assert.equal(operation.effect, "read");
-    await client.execute(operation.operation, {text: "Synthetic Person"});
+    const callCount = service.calls.length;
+    if (prompt.routing === "direct") {
+      const client = new BosContractClient({discovery: service.discovery, bos: service.bos});
+      const operation = (await client.describe([prompt.operation])).operations[0];
+      assert.equal(operation.effect, "read");
+      await client.execute(operation.operation, {text: "Synthetic Person"});
+      assert.equal(service.calls.length, callCount + 3);
+    } else {
+      assert.equal(prompt.routing, "bos-journey");
+      assert.equal(prompt.operation, null);
+      assert.equal(prompt.effect, "approval-gated-write");
+      assert.equal(prompt.assertions.includes("bos-owned-journey-orchestration"), true);
+      assert.equal(prompt.assertions.includes("no-initial-crm-lookup"), true);
+      assert.equal(prompt.assertions.includes("approval-before-send"), true);
+      assert.equal(prompt.assertions.includes("crm-only-on-returned-instruction"), true);
+      assert.equal(service.calls.length, callCount);
+    }
   }
 });

@@ -29,6 +29,8 @@ Never construct an application or organization coordinate, route, source, provid
 
 Ordinary work invokes its operation directly. For an explicit explain, preview, or automation request, route to installed BOS operating-system/application-client skills; they own prompt-wide planning and BOSL authoring. Contribute only CRM goals, concepts, constraints, evidence, approvals, guarantees, presentation, and recovery guidance.
 
+Route the canonical request “Use the attendees from the meeting that just ended to prepare and send a follow-up” directly to the installed BOS workflow orchestrator. Calendar attendees supply the initial audience, so perform no CRM discovery or lookup merely to obtain their addresses. My CRM participates only if a later returned client instruction explicitly requests CRM expertise.
+
 ## Present truthful results
 
 Preserve every source record, opaque selector, provenance item, observation time, coverage statement, limit, guarantee, receipt, pending outcome, and sanitized public error. Recognize likely representations of one conceptual customer only as client reasoning with evidence, confidence, conflicts, and uncertainty. Create no global customer identity.
