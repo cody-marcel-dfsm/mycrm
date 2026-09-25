@@ -1,9 +1,0 @@
-{
-  "schema": "my-crm.bos-service-consumer-import/v1",
-  "artifact_status": "deployed_staging",
-  "source_revision": "a354dea61112fcb16d09662bd400ff6480ac3ba0",
-  "deployed_revision": "lead-director-backend-staging-01810-l6l",
-  "image_digest": "sha256:01bf48fa5c04b603c07cf3128ef2caba851307eae9050f8c64a2f9720a31df65",
-  "archive_sha256": "6d61d346e4ec6896bc7495e2b0fd47eaed253e11d57926091f3c585a1a37e48c",
-  "bundle_sha256": "bcf4a9dd9f368304ec74d3f42987cc4e14d39a5fb0b384d413237884656746a4"
-}

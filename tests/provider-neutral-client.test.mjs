@@ -1,11 +1,10 @@
 import assert from "node:assert/strict";
-import {readFile} from "node:fs/promises";
 import test from "node:test";
 
 import {ProviderNeutralCrmClient} from "../src/crm/client.mjs";
+import {createSyntheticDocuments} from "./support/synthetic-bos-service.mjs";
 
-const described = JSON.parse(await readFile(new URL("../contracts/bos/lead-director/v1/describe.response.example.json", import.meta.url), "utf8"));
-const examples = JSON.parse(await readFile(new URL("../contracts/bos/lead-director/v1/operation.examples.json", import.meta.url), "utf8"));
+const {describe: described, examples} = createSyntheticDocuments();
 const descriptions = new Map(described.operations.map((operation) => [operation.operation, operation]));
 
 function fixtureBos() {

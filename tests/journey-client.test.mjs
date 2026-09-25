@@ -1,11 +1,35 @@
 import assert from "node:assert/strict";
-import {readFile} from "node:fs/promises";
 import test from "node:test";
 
 import { CrmJourneyClient, buildCrmContribution, createAudienceRepairGuidance, validateCrmInstructionEnvelope, validateCrmResolutionEnvelope } from "../src/journey/client.mjs";
 
-const serviceFixture = JSON.parse(await readFile(new URL("./fixtures/bos/journey/awaiting-client.crm.json", import.meta.url), "utf8"));
-const actionRequiredFixture = JSON.parse(await readFile(new URL("../contracts/bos/service-journey/v1/journey.client-action-required.example.json", import.meta.url), "utf8"));
+const serviceFixture = {
+  identity: "synthetic-crm-evidence",
+  status: "awaiting_client",
+  current_step: {code: "resolve_crm_evidence", type: "client"},
+  instruction: {
+    goal: "Find current CRM evidence for the synthetic attendee.",
+    message: "Resolve the attendee against current CRM sources.",
+    lookup_text: "synthetic.attendee@example.invalid",
+    student_id: "student-synthetic-42",
+    after_success: {verb: "complete", method: "POST", href: "/actions/complete?capability=synthetic_complete", payload_schema: {type: "object", additionalProperties: false, required: ["acknowledged"], properties: {acknowledged: {const: true}}}},
+    on_failure: {verb: "failed", method: "POST", href: "/actions/failed?capability=synthetic_failed", payload_schema: {type: "object", additionalProperties: false, required: ["code", "message"], properties: {code: {type: "string"}, message: {type: "string"}}}}
+  }
+};
+const actionRequiredFixture = {
+  identity: "synthetic-follow-up",
+  status: "client_action_required",
+  current_step: {code: "resolve_template", type: "server", operation: "automation.templates.resolve"},
+  error: {code: "AUTOMATION_TEMPLATE_NOT_FOUND", message: "No email template is configured for the requested follow-up.", retryable: false, correlation_id: "corr_synthetic", details: [{purpose: "meeting_follow_up", channel: "email"}]},
+  resolution: {
+    goal: "create_automation_template",
+    instruction: "Recommend a follow-up email template and obtain permission before creating it.",
+    operation: "automation.templates.create",
+    requires_user_approval: true,
+    approval_scope: ["purpose", "channel", "subject", "content", "configured_storage_target"],
+    after_success: {verb: "step", method: "POST", href: "/synthetic/journeys/follow-up/step?capability=synthetic_step", payload_schema: null}
+  }
+};
 
 test("journey client requires the BOS-authenticated action invoker", () => {
   assert.throws(() => new CrmJourneyClient({http: {request: async () => ({status: 200})}}), /bos\.invokeReturnedAction/);
@@ -23,11 +47,11 @@ test("published BOS awaiting_client CRM instruction is accepted and delegated un
   const client = new CrmJourneyClient({bos: {invokeReturnedAction: async (action, payload) => { calls.push({action, payload}); return {status: 200, body: {status: "completed"}}; }}});
   const response = validateCrmInstructionEnvelope(serviceFixture);
   assert.equal(response.status, "awaiting_client");
-  assert.equal(response.identity, "crm-attendee-evidence");
+  assert.equal(response.identity, "synthetic-crm-evidence");
   assert.deepEqual(response.current_step, {code: "resolve_crm_evidence", type: "client"});
   const instruction = client.validateInstruction(response.instruction);
-  assert.equal(instruction.lookup_text, "fixture.attendee@example.invalid");
-  assert.equal(instruction.student_id, "student-public-42");
+  assert.equal(instruction.lookup_text, "synthetic.attendee@example.invalid");
+  assert.equal(instruction.student_id, "student-synthetic-42");
   await client.invokeInstructionAction(instruction, "after_success", {acknowledged: true});
   assert.deepEqual(calls, [{action: serviceFixture.instruction.after_success, payload: {acknowledged: true}}]);
 });
@@ -42,7 +66,7 @@ test("awaiting_client envelope is closed and exposes only the public journey ide
 test("CRM instructions are bounded and server transitions remain opaque", () => {
   const client = new CrmJourneyClient({bos: {invokeReturnedAction: async () => ({status: 200, body: {}})}});
   const instruction = client.validateInstruction(serviceFixture.instruction);
-  assert.equal(instruction.goal, "Find current CRM evidence for the meeting attendee.");
+  assert.equal(instruction.goal, "Find current CRM evidence for the synthetic attendee.");
   assert.throws(() => client.validateInstruction({...instruction, access_token: "private"}), /forbidden private key/i);
   assert.throws(() => client.validateInstruction({...instruction, actions: {complete: instruction.after_success}}), /not part of the BOS Service envelope/i);
   assert.throws(() => client.validateInstruction({...instruction, input_schema: {type: "object"}}), /not part of the BOS Service envelope/i);

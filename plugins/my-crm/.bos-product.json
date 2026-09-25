@@ -1,7 +1,7 @@
 {
   "schema_version": "2",
   "name": "my-crm",
-  "version": "0.2.15",
+  "version": "0.2.16",
   "client": "codex",
   "application_name": "my-crm",
   "connection_owner": "bos",

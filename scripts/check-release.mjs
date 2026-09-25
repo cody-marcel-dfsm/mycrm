@@ -7,7 +7,7 @@ import {releaseDirectory} from "./build-release.mjs";
 import {checkPrivacy} from "./check-privacy.mjs";
 import {readJson, repositoryRoot, sha256, sha256File, walkFiles} from "./release-utils.mjs";
 
-const COPY_ROOTS = ["contracts", "examples", "src"];
+const COPY_ROOTS = ["examples", "src"];
 const COPY_FILES = ["LICENSE", "NOTICE", "README.md"];
 
 async function canonicalInventory() {
@@ -59,12 +59,12 @@ export async function checkRelease({directory = releaseDirectory} = {}) {
   if (JSON.stringify(release.files) !== JSON.stringify(inventory)) throw new Error("Release manifest file inventory is invalid");
   const contentSha256 = sha256(inventory.map(({path: relative, sha256: digest}) => `${relative}\0${digest}\n`).join(""));
   if (release.content_sha256 !== contentSha256) throw new Error("Release content digest is invalid");
-  const bosManifest = await readJson(path.join(directory, "contracts/bos/lead-director/v1/manifest.json"));
-  if (release.bos_contract_bundle_sha256 !== bosManifest.bundle_sha256) throw new Error("Release BOS contract bundle digest is invalid");
-  const bosServiceProvenance = await readJson(path.join(directory, "contracts/bos/service-journey/import-provenance.json"));
-  if (release.bos_service_consumer_archive_sha256 !== bosServiceProvenance.archive_sha256) throw new Error("Release BOS Service consumer archive digest is invalid");
-  const bocClientManifest = await readJson(path.join(directory, "contracts/bos-operations-center/bos-client-dependency/v1/manifest.json"));
-  if (release.boc_client_dependency_bundle_sha256 !== bocClientManifest.bundle_sha256) throw new Error("Release BOC client dependency bundle digest is invalid");
+  for (const forbiddenKey of ["bos_contract_bundle_sha256", "bos_service_consumer_archive_sha256", "boc_client_dependency_bundle_sha256"]) {
+    if (release[forbiddenKey] !== undefined) throw new Error(`Release manifest must not pin external BOS artifacts: ${forbiddenKey}`);
+  }
+  if (actualFiles.some((relative) => relative.startsWith("contracts/bos/") || relative.startsWith("contracts/bos-operations-center/"))) {
+    throw new Error("Release must not package BOS Service or BOS Operations Center contracts");
+  }
   JSON.parse(await readFile(path.join(directory, "release-manifest.json"), "utf8"));
   return release;
 }

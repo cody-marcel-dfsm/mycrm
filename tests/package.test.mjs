@@ -43,7 +43,7 @@ test("package contains source-first CRM expertise and no local runtime", async (
   for (const retired of ["src/fsm", "contracts/fsm", "examples/fsm", "plugins/my-crm/.app.json"]) await assert.rejects(access(path.join(root, retired)));
 });
 
-test("built artifact excludes Vault, credentials, a second MCP, and retired contracts", async () => {
+test("built artifact excludes Vault, credentials, a second MCP, and every external BOS contract", async () => {
   const {stdout} = await run("npm", ["pack", "--dry-run", "--json"], {cwd: root, maxBuffer: 1024 * 1024});
   const report = JSON.parse(stdout)[0];
   const files = report.files.map(({path: relative}) => relative);
@@ -51,12 +51,8 @@ test("built artifact excludes Vault, credentials, a second MCP, and retired cont
   assert.equal(files.some((relative) => relative.endsWith(".mcp.json") || relative.includes("/fsm/")), false);
   assert.ok(files.includes("LICENSE"));
   assert.ok(files.includes("NOTICE"));
-  for (const name of [
-    "api.contract.request.example.json",
-    "api.contract.request.schema.json",
-    "api.contract.response.example.json",
-    "api.contract.response.schema.json"
-  ]) assert.ok(files.includes(`contracts/bos/lead-director/v1/${name}`));
+  assert.equal(files.some((relative) => relative.startsWith("contracts/")), false);
+  assert.equal(files.some((relative) => /provenance|\.tgz$|\.tar\.gz$/.test(relative)), false);
 });
 
 test("Vault initializer recreates the private layout and Vault stays untracked", async (context) => {

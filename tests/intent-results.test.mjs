@@ -1,14 +1,14 @@
 import assert from "node:assert/strict";
-import {readFile} from "node:fs/promises";
 import test from "node:test";
 
 import {interpretCrmIntent, selectDiscoveredOperation} from "../src/crm/intent.mjs";
 import {validateCreateResult, validateFederatedResult, validateOrderedMutationResult} from "../src/crm/results.mjs";
+import {createSyntheticDocuments} from "./support/synthetic-bos-service.mjs";
 
-const published = async (name) => JSON.parse(await readFile(new URL(`../contracts/bos/lead-director/v1/${name}`, import.meta.url), "utf8"));
+const synthetic = () => createSyntheticDocuments();
 
 test("natural-language intent selects only a current described operation", async () => {
-  const described = await published("describe.response.example.json");
+  const described = synthetic().describe;
   const intent = interpretCrmIntent("Find the current customer by email");
   assert.equal(intent.kind, "search");
   assert.equal(selectDiscoveredOperation(intent, described.operations).operation, "search");
@@ -22,8 +22,7 @@ test("natural-language intent selects only a current described operation", async
 });
 
 test("published federated search results preserve source records and advertised limits", async () => {
-  const described = await published("describe.response.example.json");
-  const examples = await published("operation.examples.json");
+  const {describe: described, examples} = synthetic();
   assert.equal(validateFederatedResult(examples.search.response, described.operations[0]).source_results.length, 1);
   const organizationField = structuredClone(examples.search.response);
   organizationField.source_results[0].records[0].student_id = "student-public-42";
@@ -42,7 +41,7 @@ test("published federated search results preserve source records and advertised 
 });
 
 test("mutation outcomes remain ordered and preserve public success/error evidence", async () => {
-  const examples = await published("operation.examples.json");
+  const {examples} = synthetic();
   const {request, response} = examples.update;
   const description = {effect: "update", error_contract: {codes: ["CONFLICT"]}};
   assert.equal(validateOrderedMutationResult(response, request.targets, description).outcomes.length, 1);
@@ -69,8 +68,7 @@ test("mutation outcomes remain ordered and preserve public success/error evidenc
 });
 
 test("mutation result validators consume canonical in-progress state actions and terminal null recovery", async () => {
-  const examples = await published("operation.examples.json");
-  const descriptions = await published("describe.response.example.json");
+  const {examples, describe: descriptions} = synthetic();
   const createDescription = descriptions.operations.find(({operation}) => operation === "create");
   const updateDescription = descriptions.operations.find(({operation}) => operation === "update");
   const stateAction = {verb: "state", method: "GET", href: "/operations/corr-example", payload_schema: null};

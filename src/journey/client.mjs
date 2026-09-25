@@ -1,10 +1,5 @@
-import {createRequire} from "node:module";
-
 import {ReturnedActionClient, validateResolvedAction} from "../bos/action-client.mjs";
-import {assertNoPrivateKeys, validateJsonValueAgainstSchema, validatePublicError} from "../bos/contracts.mjs";
-
-const require = createRequire(import.meta.url);
-const CLIENT_ACTION_REQUIRED_SCHEMA = require("../../contracts/bos/service-journey/v1/journey.client-action-required.schema.json");
+import {assertNoPrivateKeys, validatePublicError} from "../bos/contracts.mjs";
 
 const CONTRIBUTION_KEYS = new Set(["goal", "concepts", "constraints", "requiredEvidence", "approvals", "guarantees", "presentation", "recovery"]);
 const CLIENT_ENVELOPE_KEYS = ["current_step", "identity", "instruction", "status"];
@@ -107,9 +102,10 @@ export function validateCrmResolution(value) {
 }
 
 export function validateCrmResolutionEnvelope(value) {
-  validateJsonValueAgainstSchema(value, CLIENT_ACTION_REQUIRED_SCHEMA, "CRM client_action_required response");
+  if (!value || typeof value !== "object" || Array.isArray(value)) throw new TypeError("CRM client_action_required response must be an object");
   if (JSON.stringify(Object.keys(value).sort()) !== JSON.stringify(RESOLUTION_ENVELOPE_KEYS)) throw new TypeError("CRM client_action_required response shape is invalid");
   requireString(value.identity, "CRM journey identity");
+  if (value.identity.length > 160) throw new TypeError("CRM journey identity is too long");
   if (value.status !== "client_action_required") throw new TypeError("CRM journey response status must be client_action_required");
   if (!value.current_step || typeof value.current_step !== "object" || Array.isArray(value.current_step)) throw new TypeError("CRM journey current_step must be an object");
   if (JSON.stringify(Object.keys(value.current_step).sort()) !== JSON.stringify(["code", "operation", "type"])) throw new TypeError("CRM journey current_step shape is invalid");

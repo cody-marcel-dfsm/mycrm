@@ -1,5 +1,3 @@
-import {createRequire} from "node:module";
-
 import {
   assertNoPrivateKeys,
   validateApplicationDiscovery,
@@ -10,10 +8,6 @@ import {
   validatePublicError
 } from "./contracts.mjs";
 import {OperationStateActionClient, ReturnedActionClient, validateResolvedAction} from "./action-client.mjs";
-
-const require = createRequire(import.meta.url);
-const DISCOVERED_OPERATION_REQUEST_SCHEMA = require("../../contracts/bos-operations-center/bos-client-dependency/v1/discovered-operation.request.schema.json");
-const DISCOVERED_OPERATION_RESPONSE_SCHEMA = require("../../contracts/bos-operations-center/bos-client-dependency/v1/discovered-operation.response.schema.json");
 
 const AUTHENTICATION_CODES = new Set([
   "AUTHENTICATION_EXPIRED", "AUTHENTICATION_REQUIRED", "AUTHORIZATION_REQUIRED",
@@ -70,6 +64,32 @@ function requireMethod(owner, name) {
 
 function sameSource(left, right) {
   return left?.platform === right?.platform && left?.application === right?.application && left?.plugin === right?.plugin;
+}
+
+function validateAdapterRequest(contact, payload, label) {
+  if (!contact?.execution || contact.execution.transport != null || typeof contact.execution.method !== "string" || typeof contact.execution.uri !== "string") {
+    throw new TypeError(`${label} does not describe a deterministic HTTPS operation`);
+  }
+  if (contact.execution.context_header !== "X-BOS-Context-Handle") throw new TypeError(`${label} context header is invalid`);
+  if (contact.execution.method === "GET" && payload !== undefined) throw new TypeError(`${label} GET operation must be bodyless`);
+  if (contact.execution.method !== "GET" && payload === undefined) throw new TypeError(`${label} payload is required`);
+}
+
+function validateAdapterResponse(value, label) {
+  if (!value || typeof value !== "object" || Array.isArray(value)) throw new TypeError(`${label} must be an object`);
+  const allowed = new Set(["body", "headers", "status"]);
+  for (const key of Object.keys(value)) if (!allowed.has(key)) throw new TypeError(`${label} contains unsupported field ${key}`);
+  if (!Object.hasOwn(value, "body")) throw new TypeError(`${label}.body is required`);
+  if (!Number.isInteger(value.status) || value.status < 100 || value.status > 599) throw new TypeError(`${label}.status is invalid`);
+  if (value.headers !== undefined) {
+    if (!value.headers || typeof value.headers !== "object" || Array.isArray(value.headers)) throw new TypeError(`${label}.headers must be an object`);
+    const allowedHeaders = new Set(["content-type", "retry-after", "x-correlation-id"]);
+    for (const [key, header] of Object.entries(value.headers)) {
+      if (!allowedHeaders.has(key)) throw new TypeError(`${label}.headers contains unsupported field ${key}`);
+      if (typeof header !== "string") throw new TypeError(`${label}.headers.${key} must be a string`);
+    }
+  }
+  return value;
 }
 
 export class BosContractClient {
@@ -130,11 +150,11 @@ export class BosContractClient {
       if (current.effect !== original.effect) throw new BosContractError(`Operation ${operationId} changed effect during recovery`, {code: "EFFECT_CHANGED", operation: operationId});
       validateJsonValueAgainstSchema(input, current.input_schema, `${operationId} refreshed input`);
       const contact = structuredClone(current);
-      const adapterRequest = current.execution.method === "GET" ? {contact} : {contact, payload: structuredClone(input)};
-      validateJsonValueAgainstSchema(adapterRequest, DISCOVERED_OPERATION_REQUEST_SCHEMA, `${operationId} BOS dependency request`);
+      const payload = current.execution.method === "GET" ? undefined : structuredClone(input);
+      validateAdapterRequest(contact, payload, `${operationId} BOS dependency request`);
       return current.execution.method === "GET"
         ? this.bos.invokeDiscoveredOperation(contact)
-        : this.bos.invokeDiscoveredOperation(contact, adapterRequest.payload);
+        : this.bos.invokeDiscoveredOperation(contact, payload);
     };
     let response;
     try {
@@ -145,7 +165,7 @@ export class BosContractClient {
       throw new BosContractError("The BOS dependency adapter could not execute the discovered operation", {code, operation: operationId});
     }
     try {
-      validateJsonValueAgainstSchema(response, DISCOVERED_OPERATION_RESPONSE_SCHEMA, `${operationId} BOS dependency response`);
+      validateAdapterResponse(response, `${operationId} BOS dependency response`);
     } catch {
       throw new BosContractError("The BOS dependency adapter returned an invalid transport result", {code: "TRANSPORT_FAILURE", operation: operationId});
     }
