@@ -1,6 +1,6 @@
 {
   "name": "my-crm",
-  "version": "0.2.10",
+  "version": "0.2.16",
   "description": "Independent provider-neutral CRM expertise that consumes discovered BOS application contracts",
   "author": {
     "name": "Infinite State Machines LLC",

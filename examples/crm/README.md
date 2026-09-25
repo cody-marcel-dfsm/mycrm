@@ -12,10 +12,9 @@ Describe contact, and ask Describe for only `search`. Extract the user's lookup
 text and invoke the returned HTTPS method and URI with `{ "text": "..." }`.
 Include `source` only when the user selected one, copying the complete
 `{platform, application, plugin}` reference from Describe. Validate the result
-against the advertised output and error contracts. The canonical wire examples
-are `contracts/bos/lead-director/v1/app.describe.example.json`,
-`describe.request.example.json`, `describe.response.example.json`, and the
-`search` entry in `operation.examples.json`.
+against the advertised output and error contracts. Tests begin with a
+tenant-neutral synthetic BOS discovery URL and fetch these contracts at
+runtime; My CRM packages no BOS Service schema or wire example.
 
 ## Conceptual customer
 

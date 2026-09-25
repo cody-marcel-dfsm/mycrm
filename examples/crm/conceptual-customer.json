@@ -3,15 +3,15 @@
     {
       "source": {"platform": "discovered-platform", "application": "discovered-application", "plugin": "discovered-source-a"},
       "record": {"public_selector": "opaque-selector-a"},
-      "fields": {"address": "cody.marcel@dfsm.ai"}
+      "fields": {"address": "fixture.person@example.invalid"}
     },
     {
       "source": {"platform": "discovered-platform", "application": "discovered-application", "plugin": "discovered-source-b"},
       "record": {"public_selector": "opaque-selector-b"},
-      "fields": {"mailbox": "cody.marcel@dfsm.ai"}
+      "fields": {"mailbox": "fixture.person@example.invalid"}
     }
   ],
-  "evidence": [{"kind": "exact", "values": ["cody.marcel@dfsm.ai"]}],
+  "evidence": [{"kind": "exact", "values": ["fixture.person@example.invalid"]}],
   "confidence": "high",
   "conflicts": [],
   "uncertainty": "This grouping is a client interpretation; both source records remain distinct."

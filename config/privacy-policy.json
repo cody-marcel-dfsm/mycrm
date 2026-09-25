@@ -1,0 +1,27 @@
+{
+  "schema": "my-crm.privacy-policy/v1",
+  "allowed_email_domains": [
+    "example.com",
+    "example.net",
+    "example.org",
+    "example.invalid",
+    "test.invalid"
+  ],
+  "forbidden_value_patterns": [
+    {
+      "id": "uuid-value",
+      "pattern": "\\b[0-9a-fA-F]{8}-[0-9a-fA-F]{4}-[0-9a-fA-F]{4}-[0-9a-fA-F]{4}-[0-9a-fA-F]{12}\\b"
+    },
+    {
+      "id": "bos-context-handle-value",
+      "pattern": "\\bbos_ctx_v2_[a-f0-9]{64}\\b"
+    }
+  ],
+  "forbidden_evidence_patterns": [
+    {
+      "id": "identity-bearing-evidence-field",
+      "pattern": "\"(?:actor|context_label|customer_id|organization|organization_id|tenant|tenant_id|user|user_id)\"\\s*:\\s*\""
+    }
+  ],
+  "external_denylist_environment": "MYCRM_PRIVACY_DENYLIST_FILE"
+}

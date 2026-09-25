@@ -61,7 +61,7 @@ export function validateFederatedResult(value, description) {
   return structuredClone(result);
 }
 
-export function validateCreateResult(value, description = null) {
+export function validateCreateResult(value, description = null, expectedSource = null) {
   const result = object(value, "create result");
   const allowed = ["action", "complete", "contract_version", "correlation_id", "error", "observed_at", "receipt", "record", "retry_after_seconds", "source", "status"];
   for (const key of Object.keys(result)) if (!allowed.includes(key)) throw new TypeError(`create result contains unsupported field ${key}`);
@@ -70,7 +70,11 @@ export function validateCreateResult(value, description = null) {
   if (result.contract_version !== "lead-director-create/v1") throw new TypeError("create result contract, correlation, and freshness evidence are required");
   validateCorrelationId(result.correlation_id, "create result correlation_id");
   try { validateDateTime(result.observed_at, "create result observed_at"); } catch { throw new TypeError("create result contract, correlation, and freshness evidence are required"); }
-  validateSourceReference(result.source, "create result source");
+  const resultSource = validateSourceReference(result.source, "create result source");
+  if (expectedSource !== null) {
+    const requestedSource = validateSourceReference(expectedSource, "create request source");
+    if (!sameSource(resultSource, requestedSource)) throw new TypeError("create result source does not match the requested source");
+  }
   if (result.complete === false) {
     if (result.status !== "in_progress" || result.record !== null || result.receipt !== null || result.error !== null) throw new TypeError("create in-progress result has inconsistent public evidence");
     validateContinuation(result, "create in-progress result");

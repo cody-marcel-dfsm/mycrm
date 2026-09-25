@@ -6,7 +6,7 @@ description: Ground My CRM architecture guidance and repository review in this r
 # My CRM Oracle
 
 This Oracle is the project-local authority for
-`/Users/cody/Development/Projects/MyCRM`. It never substitutes for the Projects
+this repository. It never substitutes for the Projects
 Architecture Oracle or a BOS Service/BOS client Oracle.
 
 ## Mandatory sources
@@ -24,9 +24,9 @@ Before architecture guidance or review, read completely:
 For BOS Product Family membership, cross-project ownership, or shared
 public-contract guidance and review, also read completely:
 
-- `/Users/cody/Development/Projects/Vault/docs/architecture/bos-product-family.md`;
+- `../Vault/docs/architecture/bos-product-family.md`;
   and
-- `/Users/cody/Development/Projects/.agents/skills/oracle/SKILL.md`.
+- `../.agents/skills/oracle/SKILL.md`.
 
 These two Projects-level coordination authorities are explicitly readable
 despite the repository boundary. They authorize no access to sibling private
@@ -58,6 +58,25 @@ inspect sibling private source or use it as hidden implementation knowledge.
 - One host-managed BOS connection authenticates every accessible MCP. The My
   CRM MCP delegates authentication to the BOS plugin and declares no separate
   login, OAuth binding, token, or credential lifecycle.
+- My CRM is customer-agnostic in every repository, build, package, and durable
+  development artifact. Reject any design, task, implementation, test, fixture,
+  example, prompt, log, Vault record, evidence, acceptance target, package, or
+  release artifact that names or embeds a real customer, organization, tenant,
+  user, email address, identifier, customer-specific operation, or customer
+  data. This applies equally to ignored and generated files. It does not
+  prohibit consumption of BOS's canonical authority-scoped runtime document
+  cache under the existing published shared-local-cache security and lifecycle
+  contract. Runtime cache contents never become My CRM fixtures, prompts,
+  evidence, build inputs, package contents, or release artifacts.
+- Conversation context and agent handoffs are project-scoped. A customer fact
+  learned in BOS Service, BOS Operations Center, another session, or another
+  agent must never enter My CRM. Cross-project coordination may provide only a
+  tenant-neutral published contract and generic behavioral requirement.
+- My CRM conformance uses generated synthetic identities in reserved
+  namespaces and BOS-advertised ephemeral test contexts. It never targets a
+  real organization to prove client behavior. Reject an imported BOS artifact
+  containing customer-specific knowledge and require the contract owner to
+  republish a tenant-neutral artifact.
 
 ## Authentication and authorization gate
 
@@ -83,12 +102,16 @@ mutation requires review of the actual complete diff after focused validation.
 1. Identify the requested outcome and owning My CRM concern.
 2. Read the mandatory sources and current evidence.
 3. Verify the hard repository boundary and provider-neutral public contract.
-4. Classify authentication impact explicitly.
-5. Run focused checks, `npm test` when executable behavior or package
+4. Trace every identity, organization, fixture, operation example, and
+   acceptance target to a synthetic generator or tenant-neutral published
+   contract. Reject customer facts supplied through the current conversation
+   or another project, even when work is coordinated by the same root agent.
+5. Classify authentication impact explicitly.
+6. Run focused checks, `npm test` when executable behavior or package
    conformance can be affected, `npm run vault:sync` for Vault changes, and
    `git diff --check` for tracked changes.
-6. Report findings first with exact absolute files and line numbers.
-7. End with exactly one verdict: `APPROVED` or `REJECTED`.
+7. Report findings first with exact absolute files and line numbers.
+8. End with exactly one verdict: `APPROVED` or `REJECTED`.
 
 Any correction invalidates the prior verdict and requires a fresh complete
 review. Loading this skill supplies review instructions; it is not itself an
@@ -98,9 +121,9 @@ approval.
 
 My CRM is the BOS Product Family's independent external CRM-domain client. The
 canonical family relationship is
-`/Users/cody/Development/Projects/Vault/docs/architecture/bos-product-family.md`,
+`../Vault/docs/architecture/bos-product-family.md`,
 and its Projects-level reviewer is
-`/Users/cody/Development/Projects/.agents/skills/oracle/SKILL.md`.
+`../.agents/skills/oracle/SKILL.md`.
 
 The Projects Architecture Oracle governs family membership, inter-project
 ownership, and shared public-contract alignment. This My CRM Oracle governs how

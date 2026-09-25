@@ -4,11 +4,13 @@ import path from "node:path";
 import process from "node:process";
 
 import {readJson, repositoryRoot, sha256, sha256File, stableJson, walkFiles} from "./release-utils.mjs";
+import {checkPrivacy} from "./check-privacy.mjs";
 
 export const releaseDirectory = path.join(repositoryRoot, "dist/my-crm");
-const COPY_ENTRIES = ["contracts", "examples", "src", "LICENSE", "NOTICE", "README.md"];
+const COPY_ENTRIES = ["examples", "src", "LICENSE", "NOTICE", "README.md"];
 
 export async function buildRelease({destination = releaseDirectory} = {}) {
+  await checkPrivacy({root: repositoryRoot, includeDist: false});
   const packageJson = await readJson(path.join(repositoryRoot, "package.json"));
   await rm(destination, {recursive: true, force: true});
   await mkdir(destination, {recursive: true});
@@ -23,11 +25,11 @@ export async function buildRelease({destination = releaseDirectory} = {}) {
     schema: "my-crm.release/v1",
     name: packageJson.name,
     version: packageJson.version,
-    bos_contract_bundle_sha256: (await readJson(path.join(repositoryRoot, "contracts/bos/lead-director/v1/manifest.json"))).bundle_sha256,
     files: inventory,
     content_sha256: sha256(inventory.map(({path: relative, sha256: digest}) => `${relative}\0${digest}\n`).join(""))
   };
   await writeFile(path.join(destination, "release-manifest.json"), stableJson(release));
+  await checkPrivacy({root: destination, includeDist: true});
   return release;
 }
 

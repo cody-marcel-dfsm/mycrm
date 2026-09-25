@@ -33,7 +33,7 @@ Ordinary work invokes its operation directly. For an explicit explain, preview, 
 
 Preserve every source record, opaque selector, provenance item, observation time, coverage statement, limit, guarantee, receipt, pending outcome, and sanitized public error. Recognize likely representations of one conceptual customer only as client reasoning with evidence, confidence, conflicts, and uncertainty. Create no global customer identity.
 
-Use the public shared cache exposed by installed `bos-mcp-client`. Create no My CRM cache. Label output `live` or `cached`, render freshness in the user's local time, and report supplied usage as measured, estimated, or unavailable. Read [CRM contract consumption](references/crm-contract-consumption.md), [cache and presentation](references/cache-and-presentation.md), and [journey participation](references/journey-participation.md).
+Discover any cache capability from the configured BOS discovery URL and use only its advertised schema and execution contact. Create no My CRM cache or frozen cache contract. Label output `live` or `cached` when the returned result supplies that distinction, render freshness in the user's local time, and report supplied usage as measured, estimated, or unavailable. Read [CRM contract consumption](references/crm-contract-consumption.md), [cache and presentation](references/cache-and-presentation.md), and [journey participation](references/journey-participation.md).
 
 ## Safety
 

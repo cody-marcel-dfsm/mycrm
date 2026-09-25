@@ -64,7 +64,8 @@ export async function installLocal({runCommand = defaultRun, installedDirectoryF
   }
   const currentListing = await jsonCommand(runCommand, ["plugin", "list"]);
   const compatibilityBefore = compatibilitySnapshot(currentListing.installed ?? []);
-  if (!compatibilityBefore.some(({name}) => name === "bos")) throw new Error("The installed, enabled BOS dependency is required before My CRM can be installed");
+  const bos = installedProduct(currentListing.installed ?? [], "bos");
+  if (!bos) throw new Error("The installed, enabled BOS dependency is required before My CRM can be installed");
   const current = (currentListing.installed ?? []).find(({pluginId}) => pluginId === PLUGIN_ID);
   if (current?.version === packageVersion) {
     const codexHome = process.env.CODEX_HOME ?? path.join(os.homedir(), ".codex");

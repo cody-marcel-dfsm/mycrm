@@ -1,12 +1,9 @@
 import assert from "node:assert/strict";
-import {readFile} from "node:fs/promises";
 import test from "node:test";
 
 import {OperationStateActionClient, ReturnedActionClient, validateOperationStateAction} from "../src/bos/action-client.mjs";
 import {BosContractClient} from "../src/bos/client.mjs";
-
-const published = async (name) => JSON.parse(await readFile(new URL(`../contracts/bos/lead-director/v1/${name}`, import.meta.url), "utf8"));
-const selectDescribe = (response, operationIds) => ({...structuredClone(response), operations: response.operations.filter(({operation}) => operationIds.includes(operation))});
+import {startSyntheticBosService} from "./support/synthetic-bos-service.mjs";
 
 test("a returned action is validated and delegated unchanged to the BOS adapter", async () => {
   const calls = [];
@@ -40,26 +37,24 @@ test("in-progress state action is physically bodyless and cannot replay mutation
   ]) assert.throws(() => validateOperationStateAction(invalid), /returned|state action|origin-relative|fragment/);
 });
 
-test("runtime public failures require correlation evidence, advertised codes, and sanitized details", async () => {
-  const discovery = await published("app.describe.example.json");
-  const describe = await published("describe.response.example.json");
+test("runtime public failures require correlation evidence, advertised codes, and sanitized details", async (context) => {
+  const service = await startSyntheticBosService();
+  context.after(service.close);
   const client = new BosContractClient({
-    discovery: {read: async () => discovery, refresh: async () => discovery},
-    http: {request: async ({uri, body}) => uri === discovery.describe.uri ? {status: 200, body: selectDescribe(describe, body.operations)} : {status: 400, body: {error: {code: "INVALID_REQUEST", message: "SQLSTATE 999 stack trace", retryable: false, correlation_id: "corr", details: []}}}},
-    bos: {recoverAuthentication: async () => ({status: "READY"})}
+    discovery: service.discovery,
+    bos: {...service.bos, invokeDiscoveredOperation: async () => ({status: 400, body: {error: {code: "VALIDATION_FAILED", message: "SQLSTATE 999 stack trace", retryable: false, correlation_id: "corr", details: []}}})}
   });
   await client.describe(["search"]);
   await assert.rejects(client.execute("search", {text: "person"}), (error) => error.code === "INVALID_PUBLIC_ERROR");
 });
 
-test("public recovery instructions use a bounded allowlist and validated returned actions", async () => {
-  const discovery = await published("app.describe.example.json");
-  const describe = await published("describe.response.example.json");
+test("public recovery instructions use a bounded allowlist and validated returned actions", async (context) => {
+  const service = await startSyntheticBosService();
+  context.after(service.close);
   let instruction = {redirect_uri: "https://evil.invalid/phish"};
   const client = new BosContractClient({
-    discovery: {read: async () => discovery, refresh: async () => discovery},
-    http: {request: async ({uri, body}) => uri === discovery.describe.uri ? {status: 200, body: selectDescribe(describe, body.operations)} : {status: 400, body: {error: {code: "INVALID_REQUEST", message: "The request needs review.", retryable: false, correlation_id: "corr", details: []}, instruction}}},
-    bos: {recoverAuthentication: async () => ({status: "READY"})}
+    discovery: service.discovery,
+    bos: {...service.bos, invokeDiscoveredOperation: async () => ({status: 400, body: {error: {code: "VALIDATION_FAILED", message: "The request needs review.", retryable: false, correlation_id: "corr", details: []}, instruction}})}
   });
   await client.describe(["search"]);
   await assert.rejects(client.execute("search", {text: "person"}), (error) => error.code === "INVALID_PUBLIC_INSTRUCTION" && error.instruction === null);
@@ -70,7 +65,7 @@ test("public recovery instructions use a bounded allowlist and validated returne
     approval_schema: {type: "object", additionalProperties: false, required: ["approved"], properties: {approved: {const: true}}},
     action: {verb: "step", method: "POST", href: "/action/approve", payload_schema: {type: "object"}}
   };
-  await assert.rejects(client.execute("search", {text: "person"}), (error) => error.code === "INVALID_REQUEST" && error.instruction.action.method === "POST");
+  await assert.rejects(client.execute("search", {text: "person"}), (error) => error.code === "VALIDATION_FAILED" && error.instruction.action.method === "POST");
   instruction.action.href = "javascript:alert(1)";
   await assert.rejects(client.execute("search", {text: "person"}), (error) => error.code === "INVALID_PUBLIC_INSTRUCTION");
   instruction = {effect: "delete_record", approval_schema: {type: "object", properties: {access_token: {type: "string"}}}};

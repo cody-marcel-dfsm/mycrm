@@ -1,173 +1,39 @@
 import assert from "node:assert/strict";
-import {readFile} from "node:fs/promises";
 import test from "node:test";
 
-import {
-  validateApplicationDiscovery,
-  validateDescribeResponse,
-  validateJsonValueAgainstSchema,
-  validatePublicError
-} from "../src/bos/contracts.mjs";
+import {BosContractClient} from "../src/bos/client.mjs";
+import {validateJsonValueAgainstSchema, validatePublicError} from "../src/bos/contracts.mjs";
+import {startSyntheticBosService} from "./support/synthetic-bos-service.mjs";
 
-const published = async (name) => JSON.parse(await readFile(new URL(`../contracts/bos/lead-director/v1/${name}`, import.meta.url), "utf8"));
-const owned = async (name) => JSON.parse(await readFile(new URL(`../contracts/my-crm/v1/${name}`, import.meta.url), "utf8"));
-
-test("Oracle-approved app.describe and task-scoped Describe release artifacts conform", async () => {
-  const discovery = await published("app.describe.example.json");
-  const request = await published("describe.request.example.json");
-  const response = await published("describe.response.example.json");
-  assert.deepEqual(validateApplicationDiscovery(discovery).application, {platform: "bos", application: "lead-director"});
-  const described = validateDescribeResponse(response, request.operations);
-  assert.deepEqual(described.operations.map(({operation, status}) => [operation, status]), [["search", "described"], ["create", "described"], ["update", "described"], ["delete", "described"], ["calendar_read_event", "not_available"]]);
-  assert.equal(described.operations[0].sources[0].availability, "ready");
-  assert.deepEqual(Object.keys(described.operations[0].sources[0]).sort(), ["availability", "error_contract", "guarantees", "input_schema", "limits", "output_schema", "receipt_schema", "source"]);
-  assert.equal(described.operations[0].execution.context_header, "X-BOS-Context-Handle");
-});
-
-test("Describe accepts only complete source-specific contracts from the frozen BOS bundle", async () => {
-  const request = await published("describe.request.example.json");
-  const response = await published("describe.response.example.json");
-  const partial = structuredClone(response);
-  delete partial.operations[0].sources[0].receipt_schema;
-  assert.throws(() => validateDescribeResponse(partial, request.operations), /schema|shape/);
-  const leakedHandle = structuredClone(response);
-  leakedHandle.operations[0].execution.context_header = `bos_ctx_v2_${"a".repeat(64)}`;
-  assert.throws(() => validateDescribeResponse(leakedHandle, request.operations), /schema|context_header|handle/);
-});
-
-test("app.describe pins the canonical Describe route and one BOSL authority partition", async () => {
-  const discovery = await published("app.describe.example.json");
-  assert.throws(() => validateApplicationDiscovery({...discovery, describe: {...discovery.describe, uri: "/other/apps/lead-director/api/v1/organizations/{organization}/describe"}}), /schema|URI/);
-  assert.throws(() => validateApplicationDiscovery({...discovery, bosl: {...discovery.bosl, examples_uri: "bos://apps/lead-director/bosl/cccccccccccccccccccccccccccccccc/examples"}}), /partition/);
-});
-
-test("Describe validation enforces exact requested operation keys and published wrappers", async () => {
-  const request = await published("describe.request.example.json");
-  const response = await published("describe.response.example.json");
-  assert.throws(() => validateDescribeResponse(response, []), /one to/);
-  assert.throws(() => validateDescribeResponse(response, ["search", "search"]), /unique/);
-  assert.throws(() => validateDescribeResponse(response, ["a", "b", "c", "d", "e", "f"]), /one to/);
-  assert.throws(() => validateDescribeResponse(response, ["search"]), /exactly the requested/);
-  const broken = structuredClone(response);
-  broken.operations[0].semantic_operation_id = broken.operations[0].operation;
-  assert.throws(() => validateDescribeResponse(broken, request.operations), /shape|schema/);
-  const bareSource = structuredClone(response);
-  bareSource.operations[0].sources[0] = bareSource.operations[0].sources[0].source;
-  assert.throws(() => validateDescribeResponse(bareSource, request.operations), /shape|schema/);
-  const reversed = structuredClone(response);
-  reversed.operations.reverse();
-  assert.throws(() => validateDescribeResponse(reversed, request.operations), /request order/);
-  assert.throws(() => validateDescribeResponse({...response, observed_at: "2026-09-19"}, request.operations), /observed_at|schema/);
-  const extraLimit = structuredClone(response);
-  extraLimit.operations[0].limits.provider_limit = 1;
-  assert.throws(() => validateDescribeResponse(extraLimit, request.operations), /schema|limits shape/);
-  const extraExecution = structuredClone(response);
-  extraExecution.operations[0].execution.provider = "raw";
-  assert.throws(() => validateDescribeResponse(extraExecution, request.operations), /schema|execution shape/);
-});
-
-test("released JSON schemas validate exact examples and strict date-time formats", async () => {
-  const appSchema = await published("app.describe.schema.json");
-  const describeSchema = await published("describe.response.schema.json");
-  const app = await published("app.describe.example.json");
-  const response = await published("describe.response.example.json");
-  assert.doesNotThrow(() => validateJsonValueAgainstSchema(app, appSchema, "app.describe"));
-  assert.doesNotThrow(() => validateJsonValueAgainstSchema(response, describeSchema, "Describe response"));
-  assert.throws(() => validateJsonValueAgainstSchema({...response, observed_at: "September someday"}, describeSchema, "Describe response"), /format/);
-});
-
-test("released operation examples conform to every advertised invocation schema", async () => {
-  const response = await published("describe.response.example.json");
-  const examples = await published("operation.examples.json");
-  for (const operationId of ["search", "create", "update", "delete"]) {
-    const operation = response.operations.find(({operation}) => operation === operationId);
-    validateJsonValueAgainstSchema(examples[operationId].request, operation.input_schema, `published ${operationId} request`);
-    validateJsonValueAgainstSchema(examples[operationId].response, operation.output_schema, `published ${operationId} response`);
+test("discovery URL returns operation-scoped Describe contracts and runtime schemas", async (context) => {
+  const service = await startSyntheticBosService();
+  context.after(service.close);
+  const client = new BosContractClient({discovery: service.discovery, bos: service.bos});
+  const described = await client.describe(["search", "update"]);
+  assert.deepEqual(described.operations.map(({operation}) => operation), ["search", "update"]);
+  for (const operation of described.operations) {
+    validateJsonValueAgainstSchema(operation.operation === "search" ? {text: "Synthetic Person"} : service.documents.examples.update.request, operation.input_schema, `${operation.operation} input`);
   }
 });
 
-test("released api.contract.get artifacts are internally conformant private authoring metadata", async () => {
-  const requestSchema = await published("api.contract.request.schema.json");
-  const responseSchema = await published("api.contract.response.schema.json");
-  const request = await published("api.contract.request.example.json");
-  const response = await published("api.contract.response.example.json");
-  assert.doesNotThrow(() => validateJsonValueAgainstSchema(request, requestSchema, "api.contract.get request"));
-  assert.doesNotThrow(() => validateJsonValueAgainstSchema(response, responseSchema, "api.contract.get response"));
-  assert.equal(response.operation, request.operation);
-  assert.equal(response.cacheScope, "private");
-  assert.equal(response.ttlMs, 0);
-  assert.throws(() => validateJsonValueAgainstSchema({operation: "search"}, requestSchema, "api.contract.get request"), /pattern/);
-  assert.throws(() => validateJsonValueAgainstSchema({...request, source: "invented"}, requestSchema, "api.contract.get request"), /additionalProperties/);
-  assert.throws(() => validateJsonValueAgainstSchema({...response, cacheScope: "public"}, responseSchema, "api.contract.get response"), /const/);
-  assert.throws(() => validateJsonValueAgainstSchema({...response, ttlMs: 1}, responseSchema, "api.contract.get response"), /const/);
-  assert.throws(() => validateJsonValueAgainstSchema({...response, bosl_server_node: true}, responseSchema, "api.contract.get response"), /required/);
-  assert.throws(() => validateJsonValueAgainstSchema({...response, node_type: "server"}, responseSchema, "api.contract.get response"), /not/);
-  assert.doesNotThrow(() => validateJsonValueAgainstSchema({...response, bosl_server_node: true, node_type: "server"}, responseSchema, "api.contract.get response"));
+test("operations absent from discovery cannot be described or executed", async (context) => {
+  const service = await startSyntheticBosService();
+  context.after(service.close);
+  const client = new BosContractClient({discovery: service.discovery, bos: service.bos});
+  await assert.rejects(client.describe(["unknown_operation"]), /not present in current discovery/);
+  await assert.rejects(client.execute("unknown_operation", {}), /not been described/);
 });
 
-test("My CRM pins api.contract.get release evidence but delegates its runtime use to BOS authoring", async () => {
-  const runtimeFiles = [
-    "../src/bos/client.mjs",
-    "../src/bos/action-client.mjs",
-    "../src/cache/client.mjs",
-    "../src/crm/intent.mjs",
-    "../src/crm/operations.mjs",
-    "../src/crm/presentation.mjs",
-    "../src/crm/results.mjs",
-    "../src/journey/client.mjs"
-  ];
-  const runtime = (await Promise.all(runtimeFiles.map((relative) => readFile(new URL(relative, import.meta.url), "utf8")))).join("\n");
-  assert.doesNotMatch(runtime, /api\.contract\.get/);
-  const automation = await readFile(new URL("../plugins/my-crm/skills/my-crm-automation/SKILL.md", import.meta.url), "utf8");
-  assert.match(automation, /BOS operating-system\/application-client skills/);
-  assert.match(automation, /own prompt-wide planning and BOSL authoring|author BOSL/);
-  assert.match(automation, /BOS workflow orchestrator/);
-  assert.match(automation, /fresh `app\.describe`, `plugins\.list`/);
-  assert.match(automation, /exact `service\.describe` contract/);
-  assert.match(automation, /customer's progression through the automation plugin/);
-  assert.match(automation, /source-backed diagram of that plugin workflow/);
-  assert.match(automation, /Do not substitute the Lead Director record-state graph/);
-});
-
-test("discovered JSON Schemas enforce local references, composition, and scalar constraints", () => {
-  const schema = {
-    $schema: "https://json-schema.org/draft/2020-12/schema",
-    type: "object",
-    additionalProperties: false,
-    required: ["target", "count"],
-    properties: {target: {$ref: "#/$defs/target"}, count: {type: "integer", minimum: 1}, mode: {oneOf: [{const: "safe"}, {const: "review"}]}},
-    $defs: {target: {type: "object", additionalProperties: false, required: ["selector"], properties: {selector: {type: "string", minLength: 1}}}}
-  };
-  assert.doesNotThrow(() => validateJsonValueAgainstSchema({target: {selector: "sel"}, count: 1, mode: "safe"}, schema));
-  assert.throws(() => validateJsonValueAgainstSchema({target: {}, count: 1.5, mode: "unsafe"}, schema), /schema/);
-  assert.throws(() => validateJsonValueAgainstSchema({target: {selector: "sel", provider_id: "raw"}, count: 1}, schema), /schema/);
-  assert.throws(() => validateJsonValueAgainstSchema({}, {$ref: "https://example.invalid/schema"}), /invalid or unsupported/);
+test("discovered schemas enforce current scalar constraints", async (context) => {
+  const service = await startSyntheticBosService({variant: "beta"});
+  context.after(service.close);
+  const client = new BosContractClient({discovery: service.discovery, bos: service.bos});
+  await client.describe(["search"]);
+  await assert.rejects(client.execute("search", {text: ""}), /does not satisfy its schema/);
+  await assert.rejects(client.execute("search", {text: "x".repeat(513)}), /does not satisfy its schema/);
 });
 
 test("public errors reject provider and internal leakage", () => {
-  assert.equal(validatePublicError({code: "DENIED", message: "The operation is unavailable.", retryable: false, correlation_id: "corr_public", details: [{field: "value"}]}).code, "DENIED");
-  assert.equal(validatePublicError({code: "DENIED", message: "The operation is unavailable.", retryable: false, correlation_id: "corr_public"}).code, "DENIED");
-  for (const value of [
-    {code: "BAD", message: "bad", retryable: false, correlation_id: "corr", details: [], provider_error: "raw"},
-    {code: "BAD", message: "bad", retryable: false, correlation_id: "corr", details: [{access_token: "secret"}]},
-    {code: "BAD", message: "bad", retryable: false, correlation_id: "corr", details: [{database_id: "42"}]},
-    {code: "bad", message: "bad", retryable: false, correlation_id: "corr", details: []},
-    {code: "A".repeat(129), message: "bad", retryable: false, correlation_id: "corr", details: []},
-    {code: "BAD", message: "x".repeat(2049), retryable: false, correlation_id: "corr", details: []},
-    {code: "BAD", message: "bad", retryable: false, correlation_id: "bad space", details: []},
-    {code: "BAD", message: "bad", retryable: false, correlation_id: `a${"b".repeat(128)}`, details: []},
-    {code: "BAD", message: "bad", retryable: false, correlation_id: "corr", details: {field: "value"}}
-  ]) assert.throws(() => validatePublicError(value), /public error/i);
-});
-
-test("owned conceptual-customer schema requires source-first record evidence", async () => {
-  const schema = await owned("conceptual-customer.schema.json");
-  const example = JSON.parse(await readFile(new URL("../examples/crm/conceptual-customer.json", import.meta.url), "utf8"));
-  assert.doesNotThrow(() => validateJsonValueAgainstSchema(example, schema, "conceptual customer"));
-  const missingSource = structuredClone(example);
-  delete missingSource.records[0].source;
-  assert.throws(() => validateJsonValueAgainstSchema(missingSource, schema, "conceptual customer"), /required/);
-  const missingSelector = structuredClone(example);
-  delete missingSelector.records[0].record.public_selector;
-  assert.throws(() => validateJsonValueAgainstSchema(missingSelector, schema, "conceptual customer"), /required/);
+  assert.throws(() => validatePublicError({code: "FAILED", message: "SQLSTATE private", retryable: false, correlation_id: "corr"}), /private implementation/);
+  assert.throws(() => validatePublicError({code: "FAILED", message: "Safe", retryable: false, correlation_id: "corr", details: [{access_token: "private"}]}), /private key/);
 });

@@ -1,17 +1,12 @@
 import Ajv2020 from "ajv/dist/2020.js";
 import addFormats from "ajv-formats";
-import {createRequire} from "node:module";
-
-const require = createRequire(import.meta.url);
-const APPLICATION_DISCOVERY_SCHEMA = require("../../contracts/bos/lead-director/v1/app.describe.schema.json");
-const DESCRIBE_RESPONSE_SCHEMA = require("../../contracts/bos/lead-director/v1/describe.response.schema.json");
 
 const HTTP_METHODS = new Set(["DELETE", "GET", "PATCH", "POST", "PUT"]);
 const LIMIT_KEYS = ["max_targets", "max_results_per_source", "pagination_supported", "bulk_supported", "streaming_supported", "maximum_duration_seconds", "maximum_fan_out"];
 const REQUIRED_LIMIT_KEYS = ["pagination_supported", "bulk_supported", "streaming_supported"];
 const GUARANTEE_KEYS = ["read_consistency", "per_source_atomicity", "cross_source_atomicity", "convergence", "idempotency"];
 const PUBLIC_ERROR_KEYS = new Set(["code", "message", "retryable", "correlation_id", "details"]);
-const SAFE_PUBLIC_KEYS = new Set(["$id", "context_header", "correlation_id", "organization_name", "service_id"]);
+const SAFE_PUBLIC_KEYS = new Set(["$id", "context_header", "correlation_id", "descriptor_token", "organization_name", "service_id"]);
 const FORBIDDEN_PUBLIC_TOKENS = new Set([
   "accesstoken", "apikey", "authorization", "authority", "credential", "databaseid",
   "actionid", "appid", "applicationid", "approvalid", "clientid", "context", "executionid", "grant", "idempotencykey", "installationid", "internalid", "journeyid", "oauth", "organizationid", "principal",
@@ -101,7 +96,6 @@ export function validatePublicError(value, {definition = false} = {}) {
 
 export function validateApplicationDiscovery(value) {
   const discovery = clone(object(value, "application discovery"));
-  validateJsonValueAgainstSchema(discovery, APPLICATION_DISCOVERY_SCHEMA, "application discovery");
   if (JSON.stringify(Object.keys(discovery).sort()) !== JSON.stringify(["application", "bosl", "describe"])) throw new TypeError("application discovery must contain exactly application, describe, and bosl");
   const application = object(discovery.application, "application discovery application");
   if (JSON.stringify(Object.keys(application).sort()) !== JSON.stringify(["application", "platform"])) throw new TypeError("application discovery application reference is invalid");
@@ -236,7 +230,6 @@ export function validateOperationIds(operationIds, maximum = 5) {
 
 export function validateDescribeResponse(value, requestedOperationIds) {
   const response = clone(object(value, "Describe response"));
-  validateJsonValueAgainstSchema(response, DESCRIBE_RESPONSE_SCHEMA, "Describe response");
   if (JSON.stringify(Object.keys(response).sort()) !== JSON.stringify(["contract_version", "metadata_version", "observed_at", "operations"])) throw new TypeError("Describe response shape is invalid");
   if (response.contract_version !== "lead-director-describe/v1") throw new TypeError("Describe contract_version is invalid");
   nonEmpty(response.metadata_version, "Describe metadata_version");
@@ -260,7 +253,7 @@ export function validateDescribeResponse(value, requestedOperationIds) {
 function compileJsonSchema(schema, label) {
   if (!(typeof schema === "boolean" || (schema && typeof schema === "object" && !Array.isArray(schema)))) throw new TypeError(`${label} schema is invalid`);
   try {
-    const ajv = new Ajv2020({allErrors: true, strict: true, strictRequired: false});
+    const ajv = new Ajv2020({allErrors: true, strict: true, strictRequired: false, strictTypes: false});
     addFormats(ajv, {mode: "full"});
     ajv.addKeyword("x-bos-fields");
     return ajv.compile(schema);
