@@ -28,6 +28,7 @@
           "text",
           "operation",
           "effect",
+          "routing",
           "assertions"
         ],
         "properties": {
@@ -41,10 +42,26 @@
             "maxLength": 500
           },
           "operation": {
-            "const": "search"
+            "oneOf": [
+              {
+                "const": "search"
+              },
+              {
+                "type": "null"
+              }
+            ]
           },
           "effect": {
-            "const": "read"
+            "enum": [
+              "read",
+              "approval-gated-write"
+            ]
+          },
+          "routing": {
+            "enum": [
+              "direct",
+              "bos-journey"
+            ]
           },
           "assertions": {
             "type": "array",
@@ -53,11 +70,23 @@
             "items": {
               "enum": [
                 "described-operation",
+                "bos-owned-journey-orchestration",
                 "deterministic-https-execution",
                 "federated-result-validation",
                 "source-provenance-preservation",
                 "freshness-preservation",
                 "conceptual-customer-reconciliation",
+                "active-authenticated-scope",
+                "plugin-scoped-default",
+                "bos-authority-resolution",
+                "cross-context-data-isolation",
+                "current-discovery-only",
+                "no-additional-identifiers",
+                "calendar-derived-audience",
+                "stop-when-no-qualifying-attendee",
+                "no-initial-crm-lookup",
+                "approval-before-send",
+                "crm-only-on-returned-instruction",
                 "no-mutation"
               ]
             }

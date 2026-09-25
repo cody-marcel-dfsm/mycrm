@@ -29,7 +29,12 @@ if (pkg.license !== "Apache-2.0" || manifest.license !== "Apache-2.0") errors.pu
 if (pkg.version !== manifest.version || pkg.version !== product.version) errors.push("package, plugin, and product versions must match");
 if (manifest.name !== "my-crm" || manifest.interface?.displayName !== "My CRM") errors.push("plugin identity is invalid");
 if (JSON.stringify(manifest.interface?.defaultPrompt) !== JSON.stringify(marketplacePromptContracts.prompts?.map(({text}) => text))) errors.push("plugin starter prompts must exactly match their marketplace prompt contracts");
-if (manifest.interface?.defaultPrompt?.some((prompt) => /meeting that just ended/i.test(prompt))) errors.push("unaccepted meeting-follow-up workflow must not be advertised as a My CRM starter prompt");
+const canonicalJourneyPrompt = marketplacePromptContracts.prompts?.find(({id}) => id === "canonical-recent-meeting-follow-up");
+if (canonicalJourneyPrompt?.operation !== null || canonicalJourneyPrompt?.effect !== "approval-gated-write" || canonicalJourneyPrompt?.routing !== "bos-journey" || !canonicalJourneyPrompt?.assertions?.includes("no-initial-crm-lookup") || !canonicalJourneyPrompt?.assertions?.includes("approval-before-send") || !canonicalJourneyPrompt?.assertions?.includes("crm-only-on-returned-instruction")) errors.push("canonical recent-meeting starter prompt must retain BOS-owned journey routing and My CRM participation boundaries");
+for (const prompt of marketplacePromptContracts.prompts ?? []) {
+  const requiredAssertions = ["active-authenticated-scope", "plugin-scoped-default", "bos-authority-resolution", "cross-context-data-isolation", "current-discovery-only", "no-additional-identifiers", "calendar-derived-audience", "stop-when-no-qualifying-attendee"];
+  if (prompt.text.length > 500 || requiredAssertions.some((assertion) => !prompt.assertions?.includes(assertion))) errors.push(`${prompt.id} must be self-contained and preserve active authenticated scope`);
+}
 if (manifest.apps !== undefined || manifest.mcpServers !== undefined) errors.push("My CRM must not declare an app mapping or a second MCP connection");
 if (product.schema_version !== "2" || product.application_name !== "my-crm") errors.push("My CRM product identity is invalid");
 if (product.connection_owner !== "bos" || JSON.stringify(product.dependency_products) !== JSON.stringify(["bos"]) || product.authentication !== "bos_dependency") errors.push("My CRM must depend on the BOS-owned connection");
