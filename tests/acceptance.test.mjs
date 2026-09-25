@@ -68,12 +68,19 @@ test("every marketplace starter prompt follows its declared direct or BOS journe
       assert.equal(service.calls.length, callCount + 3);
     } else {
       assert.equal(prompt.routing, "bos-journey");
-      assert.equal(prompt.operation, null);
-      assert.equal(prompt.effect, "approval-gated-write");
       assert.equal(prompt.assertions.includes("bos-owned-journey-orchestration"), true);
-      assert.equal(prompt.assertions.includes("no-initial-crm-lookup"), true);
-      assert.equal(prompt.assertions.includes("approval-before-send"), true);
-      assert.equal(prompt.assertions.includes("crm-only-on-returned-instruction"), true);
+      assert.equal(prompt.assertions.includes("active-authenticated-scope"), true);
+      assert.equal(prompt.assertions.includes("no-additional-identifiers"), true);
+      if (prompt.effect === "approval-gated-write") {
+        assert.equal(prompt.operation, null);
+        assert.equal(prompt.assertions.includes("no-initial-crm-lookup"), true);
+        assert.equal(prompt.assertions.includes("approval-before-send"), true);
+        assert.equal(prompt.assertions.includes("crm-only-on-returned-instruction"), true);
+      } else {
+        assert.equal(prompt.effect, "read");
+        assert.equal(prompt.operation, "search");
+        assert.equal(prompt.assertions.includes("no-mutation"), true);
+      }
       assert.equal(service.calls.length, callCount);
     }
   }

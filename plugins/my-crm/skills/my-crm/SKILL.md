@@ -7,6 +7,14 @@ description: Interpret provider-neutral CRM requests, discover the current organ
 
 Require the installed BOS product and use its authenticated application-discovery and client skills. Delegate login, reauthentication, consent, source authorization, and connection recovery automatically to BOS. Preserve the exact affected protected resource and pass only the structured `{category, code, source}` recovery condition. Preserve the pending public CRM operation, refresh discovery after BOS reports `READY`, and resume once. Handle no credential, token, authority selector, client identifier, idempotency key, retry state, or execution identity.
 
+Before unscoped discovery, ask the installed BOS client to resolve context with
+the `my-crm` plugin preference namespace. An organization explicitly named for
+the current task replaces that saved matching intent for the task only. Require
+an exact match in fresh server-authorized contexts. Never inherit another
+plugin's default, select by list order, or treat a local preference as authority.
+If the configured default is absent or unavailable, request an authorized
+replacement instead of probing data in another context.
+
 ## Discover only what the request needs
 
 1. Interpret the user's natural-language CRM intent and select the focused My CRM skill.
@@ -29,7 +37,9 @@ Never construct an application or organization coordinate, route, source, provid
 
 Ordinary work invokes its operation directly. For an explicit explain, preview, or automation request, route to installed BOS operating-system/application-client skills; they own prompt-wide planning and BOSL authoring. Contribute only CRM goals, concepts, constraints, evidence, approvals, guarantees, presentation, and recovery guidance.
 
-Route the canonical request “Use the attendees from the meeting that just ended to prepare and send a follow-up” directly to the installed BOS workflow orchestrator. Calendar attendees supply the initial audience, so perform no CRM discovery or lookup merely to obtain their addresses. My CRM participates only if a later returned client instruction explicitly requests CRM expertise.
+Route all marketplace starter prompts to the installed BOS workflow orchestrator because they derive their audience or lookup identity from the latest completed meeting. Resolve My CRM's plugin-specific default first unless the user explicitly selected another authorized organization for the task. Use only the resulting BOS-authenticated organization, application, installation, user, and role scope. Never ask for organization data, a tenant identifier, or an authority selector. If the default is unavailable, or no qualifying meeting, external attendee, or CRM match exists in that scope, report that outcome and stop without probing another organization or requesting replacement input.
+
+For the follow-up starter, calendar attendees supply the initial audience, so perform no CRM discovery or lookup merely to obtain their addresses. Present exact recipients and content and require explicit user approval before send. My CRM participates only if a later returned client instruction explicitly requests CRM expertise. For the two read-only starters, use returned external-attendee identity only as search text for the currently discovered CRM search, preserve all source evidence, and perform no mutation.
 
 ## Present truthful results
 

@@ -1,6 +1,6 @@
 {
   "name": "my-crm",
-  "version": "0.2.18",
+  "version": "0.2.20",
   "description": "Independent provider-neutral CRM expertise that consumes discovered BOS application contracts",
   "author": {
     "name": "Infinite State Machines LLC",
@@ -26,9 +26,9 @@
       "Write"
     ],
     "defaultPrompt": [
-      "Find the latest matching customer records across my current CRM sources.",
-      "Use the attendees from the meeting that just ended to prepare and send a follow-up.",
-      "Compare this customer across sources and show conflicts without changing anything."
+      "Use My CRM's configured BOS default unless I explicitly selected another authorized organization. In this multi-tenant service, never inherit another plugin's default, construct authority selectors, or cross context boundaries. Search current CRM sources for external attendees from the last completed meeting. Preserve provenance, freshness, conflicts, coverage, and failures; summarize; make no changes. If the default is unavailable or none qualify, report and stop without asking for org data.",
+      "Use My CRM's configured BOS default unless I explicitly selected another authorized organization. In this multi-tenant service, never inherit another plugin's default, construct authority selectors, or cross context boundaries. Have BOS orchestrate a follow-up for external attendees from the last completed meeting. Show recipients and content; send only after my approval. Use CRM only if instructed. If the default is unavailable or none qualify, report and stop without asking for org data.",
+      "Use My CRM's configured BOS default unless I explicitly selected another authorized organization. In this multi-tenant service, never inherit another plugin's default, construct authority selectors, or cross context boundaries. Choose first external attendee from last completed meeting with CRM matches. Compare provenance, freshness, conflicts, confidence, uncertainty, coverage, and failures; no changes. If the default is unavailable or none qualify, report and stop without asking for org data."
     ],
     "websiteURL": "https://dfsm.ai",
     "brandColor": "#061638",

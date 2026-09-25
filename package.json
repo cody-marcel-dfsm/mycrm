@@ -1,6 +1,6 @@
 {
   "name": "my-crm",
-  "version": "0.2.18",
+  "version": "0.2.20",
   "description": "Independent native GPT plugin and reference implementation for building provider-neutral CRM automations on BOS",
   "license": "Apache-2.0",
   "type": "module",
