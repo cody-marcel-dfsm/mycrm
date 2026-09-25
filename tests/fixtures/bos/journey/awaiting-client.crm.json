@@ -8,7 +8,7 @@
   "instruction": {
     "goal": "Find current CRM evidence for the meeting attendee.",
     "message": "Resolve the attendee against the current CRM sources.",
-    "lookup_text": "cody.marcel@dfsm.ai",
+    "lookup_text": "fixture.attendee@example.invalid",
     "student_id": "student-public-42",
     "after_success": {
       "verb": "complete",

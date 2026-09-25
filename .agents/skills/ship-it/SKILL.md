@@ -6,7 +6,7 @@ description: Create the next MyCRM release version, validate and review the comp
 # Ship It
 
 Complete the MyCRM release loop inside
-`/Users/cody/Development/Projects/MyCRM`.
+the My CRM repository root.
 
 ## Invocation authorization
 

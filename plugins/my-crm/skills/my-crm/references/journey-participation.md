@@ -8,6 +8,14 @@ An `awaiting_client` CRM instruction contains graph-authored bounded `goal` and 
 
 `step` and `state` are top-level actions in later BOS Service responses, never members of a CRM instruction. Let BOS choose the next action.
 
-The canonical recent-meeting follow-up does not require CRM lookup merely to obtain attendee addresses. The controlled attendee fixture is `cody.marcel@dfsm.ai`. My CRM participates only when a later client instruction requests CRM expertise.
+A `client_action_required` response for a server-owned step contains a
+sanitized public error and a separate closed resolution with a bounded goal,
+instruction, optional semantic operation, approval requirement and scope, and
+one exact bodyless `step` action. Resolve only that goal through fresh
+discovery, obtain the declared approval when required, and pass the returned
+step action unchanged to BOS. Do not convert the public error into a provider
+diagnosis or invent a lifecycle request.
+
+The canonical recent-meeting follow-up does not require CRM lookup merely to obtain attendee addresses. Acceptance uses generated synthetic attendees under the reserved `example.invalid` domain. My CRM participates only when a later client instruction requests CRM expertise.
 
 For CRM audience repair, interpret only the returned sanitized recipient failure. Discover the minimum current CRM operation, recommend a correction or regenerated audience that fits the original request, and obtain user permission before persisting any CRM change. Invoke the returned lifecycle `complete` action with only its compiler-approved acknowledgment. Never attach recipients or a server-held list reference. The following server nodes re-query and rematerialize the audience. A changed audience requires campaign reprepare and fresh approval before another send; previously proven successful deliveries stay excluded from any resend.

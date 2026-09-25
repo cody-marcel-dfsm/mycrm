@@ -4,6 +4,7 @@ import path from "node:path";
 import process from "node:process";
 
 import {releaseDirectory} from "./build-release.mjs";
+import {checkPrivacy} from "./check-privacy.mjs";
 import {readJson, repositoryRoot, sha256, sha256File, walkFiles} from "./release-utils.mjs";
 
 const COPY_ROOTS = ["contracts", "examples", "src"];
@@ -24,6 +25,7 @@ async function canonicalInventory() {
 }
 
 export async function checkRelease({directory = releaseDirectory} = {}) {
+  await checkPrivacy({root: directory, includeDist: true});
   const release = await readJson(path.join(directory, "release-manifest.json"));
   const packageJson = await readJson(path.join(repositoryRoot, "package.json"));
   const plugin = await readJson(path.join(directory, ".codex-plugin/plugin.json"));
@@ -59,6 +61,10 @@ export async function checkRelease({directory = releaseDirectory} = {}) {
   if (release.content_sha256 !== contentSha256) throw new Error("Release content digest is invalid");
   const bosManifest = await readJson(path.join(directory, "contracts/bos/lead-director/v1/manifest.json"));
   if (release.bos_contract_bundle_sha256 !== bosManifest.bundle_sha256) throw new Error("Release BOS contract bundle digest is invalid");
+  const bosServiceProvenance = await readJson(path.join(directory, "contracts/bos/service-journey/import-provenance.json"));
+  if (release.bos_service_consumer_archive_sha256 !== bosServiceProvenance.archive_sha256) throw new Error("Release BOS Service consumer archive digest is invalid");
+  const bocClientManifest = await readJson(path.join(directory, "contracts/bos-operations-center/bos-client-dependency/v1/manifest.json"));
+  if (release.boc_client_dependency_bundle_sha256 !== bocClientManifest.bundle_sha256) throw new Error("Release BOC client dependency bundle digest is invalid");
   JSON.parse(await readFile(path.join(directory, "release-manifest.json"), "utf8"));
   return release;
 }

@@ -11,10 +11,10 @@ Project-local Oracle: `.agents/skills/oracle/SKILL.md`.
 ## BOS Product Family coordination
 
 Projects-level family architecture:
-`/Users/cody/Development/Projects/Vault/docs/architecture/bos-product-family.md`.
+`../Vault/docs/architecture/bos-product-family.md`.
 
 Projects-level Oracle:
-`/Users/cody/Development/Projects/.agents/skills/oracle/SKILL.md`.
+`../.agents/skills/oracle/SKILL.md`.
 
 - My CRM is the BOS Product Family's independent external CRM-domain client.
   It contributes provider-neutral CRM expertise and consumes published BOS
@@ -50,6 +50,11 @@ Projects-level Oracle:
 
 ## Product invariants
 
+- My CRM source, tests, fixtures, prompts, documentation, Vault, evidence,
+  generated packages, and release gates contain no real customer,
+  organization, user, email address, tenant, context label, or customer ID.
+  Acceptance uses only generated synthetic values or server-advertised
+  ephemeral fixtures.
 - My CRM owns its independent plugin package, release, and host-specific thin
   integration.
 - My CRM requires the separately installed BOS product. Its MCP operates from

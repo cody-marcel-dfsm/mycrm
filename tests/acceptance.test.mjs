@@ -16,20 +16,17 @@ test("canonical search flows through exact app.describe and Describe contacts wi
   const examples = await published("operation.examples.json");
   const requests = [];
   const client = new BosContractClient({
-    discovery: {read: async () => discovery, refresh: async () => discovery},
-    http: {request: async (request) => {
-      requests.push(structuredClone(request));
-      if (request.uri === discovery.describe.uri) return {status: 200, body: selectDescribe(describe, request.body.operations)};
+    discovery: {read: async () => discovery, refresh: async () => discovery, describe: async ({operations}) => selectDescribe(describe, operations)},
+    bos: {recoverAuthentication: async () => ({status: "READY"}), invokeDiscoveredOperation: async (contact, payload) => {
+      requests.push({contact: structuredClone(contact), payload: structuredClone(payload)});
       return {status: 200, body: structuredClone(examples.search.response)};
-    }},
-    bos: {recoverAuthentication: async () => ({status: "READY"})}
+    }}
   });
   const described = await client.describe(["search"]);
-  const input = buildSearchRequest({text: "cody.marcel@dfsm.ai"});
+  const input = buildSearchRequest({text: "fixture.person@example.invalid"});
   assert.equal((await client.execute(described.operations[0].operation, input)).status, 200);
-  assert.deepEqual(requests.map(({uri}) => uri), [discovery.describe.uri, described.operations[0].execution.uri]);
-  assert.equal(requests.some(({headers}) => headers?.authorization), false);
-  assert.equal(requests.some(({body}) => body?.source !== undefined), false);
+  assert.deepEqual(requests.map(({contact}) => contact.operation), ["search"]);
+  assert.equal(requests.some(({payload}) => payload?.source !== undefined), false);
 });
 
 test("published operation examples drive source-first builders and client-owned conceptual reconciliation", async () => {
@@ -52,15 +49,13 @@ test("canonical create, update, and delete requests invoke only their discovered
   const examples = await published("operation.examples.json");
   const invoked = [];
   const client = new BosContractClient({
-    discovery: {read: async () => discovery, refresh: async () => discovery},
-    http: {request: async (request) => {
-      if (request.uri === discovery.describe.uri) return {status: 200, body: selectDescribe(describe, request.body.operations)};
-      const operation = describe.operations.find(({execution}) => execution?.uri === request.uri)?.operation;
+    discovery: {read: async () => discovery, refresh: async () => discovery, describe: async ({operations}) => selectDescribe(describe, operations)},
+    bos: {recoverAuthentication: async () => ({status: "READY"}), invokeDiscoveredOperation: async (contact) => {
+      const operation = contact.operation;
       if (!operation || !["create", "update", "delete"].includes(operation)) throw new Error("unexpected operation URI");
       invoked.push(operation);
       return {status: 200, body: structuredClone(examples[operation].response)};
-    }},
-    bos: {recoverAuthentication: async () => ({status: "READY"})}
+    }}
   });
   await client.describe(["create", "update", "delete"]);
   for (const operation of ["create", "update", "delete"]) await client.execute(operation, examples[operation].request);
@@ -69,7 +64,7 @@ test("canonical create, update, and delete requests invoke only their discovered
 
 test("canonical recent-meeting request does not trigger a CRM lookup solely for attendees", () => {
   const prompt = "Use the attendees from the meeting that just ended to prepare and send a follow-up.";
-  const attendee = "cody.marcel@dfsm.ai";
+  const attendee = "fixture.attendee@example.invalid";
   const crmCalls = [];
   const boundary = ({prompt: currentPrompt, attendees}) => {
     assert.equal(currentPrompt, prompt);
@@ -91,13 +86,11 @@ test("every marketplace starter prompt performs its exact published read contrac
   for (const promptContract of promptContracts.prompts) {
     const requests = [];
     const client = new BosContractClient({
-      discovery: {read: async () => discovery, refresh: async () => discovery},
-      http: {request: async (request) => {
-        requests.push(structuredClone(request));
-        if (request.uri === discovery.describe.uri) return {status: 200, body: selectDescribe(describe, request.body.operations)};
+      discovery: {read: async () => discovery, refresh: async () => discovery, describe: async ({operations}) => selectDescribe(describe, operations)},
+      bos: {recoverAuthentication: async () => ({status: "READY"}), invokeDiscoveredOperation: async (contact, payload) => {
+        requests.push({contact: structuredClone(contact), payload: structuredClone(payload)});
         return {status: 200, body: structuredClone(examples.search.response)};
-      }},
-      bos: {recoverAuthentication: async () => ({status: "READY"})}
+      }}
     });
     const described = await client.describe([promptContract.operation]);
     const description = described.operations[0];
@@ -107,7 +100,7 @@ test("every marketplace starter prompt performs its exact published read contrac
       (await client.execute(description.operation, buildSearchRequest(examples.search.request))).body,
       description
     );
-    assert.deepEqual(requests.map(({uri}) => uri), [discovery.describe.uri, description.execution.uri]);
+    assert.deepEqual(requests.map(({contact}) => contact.operation), ["search"]);
     assert.ok(result.observed_at);
     assert.ok(result.source_results.every(({source, observed_at}) => source && observed_at));
 
@@ -134,6 +127,6 @@ test("every marketplace starter prompt performs its exact published read contrac
       performed.add("conceptual-customer-reconciliation");
     }
     assert.deepEqual([...performed].sort(), [...promptContract.assertions].sort());
-    assert.equal(requests.some(({method}) => ![undefined, "GET", "POST"].includes(method)), false);
+    assert.equal(requests.every(({contact}) => contact.execution.method === "POST"), true);
   }
 });

@@ -1,0 +1,9 @@
+{
+  "schema": "my-crm.boc-client-dependency-import/v1",
+  "status": "candidate_review",
+  "source_revision": "834ef228c698655773ffaf694390ab417ce182a2",
+  "boc_version": "0.4.118",
+  "archive_sha256": "29e24c473de273a21e4009facc32bdee3013f5353b7e337e416d7e3334ef4659",
+  "manifest_sha256": "d780e218f9748aa7d427e7bcf5f89ce84762fad196dd0bf849b4228e8ce4f1f3",
+  "bundle_sha256": "591749079a54656c5c8b6ef9c96ce4aa9968cda8ec41b45a17155729eba68fb0"
+}

@@ -11,7 +11,7 @@ const LIMIT_KEYS = ["max_targets", "max_results_per_source", "pagination_support
 const REQUIRED_LIMIT_KEYS = ["pagination_supported", "bulk_supported", "streaming_supported"];
 const GUARANTEE_KEYS = ["read_consistency", "per_source_atomicity", "cross_source_atomicity", "convergence", "idempotency"];
 const PUBLIC_ERROR_KEYS = new Set(["code", "message", "retryable", "correlation_id", "details"]);
-const SAFE_PUBLIC_KEYS = new Set(["$id", "context_header", "correlation_id", "organization_name", "service_id"]);
+const SAFE_PUBLIC_KEYS = new Set(["$id", "context_header", "correlation_id", "descriptor_token", "organization_name", "service_id"]);
 const FORBIDDEN_PUBLIC_TOKENS = new Set([
   "accesstoken", "apikey", "authorization", "authority", "credential", "databaseid",
   "actionid", "appid", "applicationid", "approvalid", "clientid", "context", "executionid", "grant", "idempotencykey", "installationid", "internalid", "journeyid", "oauth", "organizationid", "principal",
@@ -260,7 +260,7 @@ export function validateDescribeResponse(value, requestedOperationIds) {
 function compileJsonSchema(schema, label) {
   if (!(typeof schema === "boolean" || (schema && typeof schema === "object" && !Array.isArray(schema)))) throw new TypeError(`${label} schema is invalid`);
   try {
-    const ajv = new Ajv2020({allErrors: true, strict: true, strictRequired: false});
+    const ajv = new Ajv2020({allErrors: true, strict: true, strictRequired: false, strictTypes: false});
     addFormats(ajv, {mode: "full"});
     ajv.addKeyword("x-bos-fields");
     return ajv.compile(schema);

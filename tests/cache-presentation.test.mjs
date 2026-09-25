@@ -1,119 +1,166 @@
 import assert from "node:assert/strict";
 import test from "node:test";
 
-import { CrmCacheClient } from "../src/cache/client.mjs";
-import { presentResult } from "../src/crm/presentation.mjs";
+import {CrmCacheClient} from "../src/cache/client.mjs";
+import {presentPublicFailure, presentResult} from "../src/crm/presentation.mjs";
 
-function adapter() {
-  const entries = new Map();
-  const calls = [];
+const source = {platform: "fixture-platform", application: "fixture-application", plugin: "fixture-source"};
+const scope = {
+  source,
+  operation: "search",
+  resource_kind: "crm-records",
+  selector: {text: "person"},
+  descriptor_token: "descriptor-a",
+  window: {from: "2026-09-24T15:00:00Z", through: "2026-09-24T16:00:00Z"},
+  refresh_through: "2026-09-24T16:00:00Z",
+  freshness_policy: {max_age_seconds: 300, allow_stale_on_error: false}
+};
+
+function plan(state = "current", extra = {}) {
+  const refreshing = ["cold", "catch_up", "refresh_required"].includes(state);
   return {
-    calls,
-    read: async (key) => { calls.push(["read", key]); return entries.get(key) ?? null; },
-    publish: async (key, value) => { calls.push(["publish", key]); entries.set(key, structuredClone(value)); },
-    inspect: async (partition) => [...entries.entries()].filter(([key]) => key.startsWith(`${partition}:`)),
-    invalidate: async (request) => { calls.push(["invalidate", request]); for (const key of [...entries.keys()]) if (key.startsWith(`${request.partition}:`)) entries.delete(key); }
+    state,
+    authority_key: "private-authority-digest",
+    source_key: "private-source-digest",
+    query_key: "private-query-digest",
+    coverage_gaps: refreshing ? [scope.window] : [],
+    change_gap: refreshing ? {after: null, through: scope.refresh_through} : null,
+    cursor: null,
+    cached_resource_count: refreshing ? 0 : 1,
+    sync_completed_at: refreshing ? null : scope.refresh_through,
+    origin: refreshing ? null : "cache",
+    freshness_status: refreshing ? "missing" : "fresh",
+    age_seconds: refreshing ? null : 0,
+    max_age_seconds: 300,
+    allow_stale_on_error: false,
+    stale: false,
+    ...(refreshing ? {lease_token: "lease-private", lease_expires_at: "2026-09-24T16:01:00Z"} : {}),
+    ...extra
   };
 }
 
-test("cache delegates storage to shared BOS cache and partitions by opaque current authority", async () => {
-  const shared = adapter();
-  let now = Date.parse("2026-09-19T16:00:00Z");
-  const cache = new CrmCacheClient({adapter: shared, now: () => now, maxAgeMs: 60_000});
-  const scope = {partition: "partition-a", descriptor: "descriptor-a", operation: "search", source: null, parameters: {text: "person"}};
-  await cache.publish(scope, {complete: true, source_results: []});
-  assert.equal((await cache.read(scope)).origin, "cached");
-  assert.equal((await cache.read({...scope, partition: "partition-b"})), null);
-  now += 60_001;
-  assert.equal(await cache.read(scope), null);
-  assert.ok(shared.calls.some(([method]) => method === "publish"));
-  assert.ok(shared.calls.some(([method, request]) => method === "invalidate" && request.scope === "query"));
+function readPlan(state = "current", extra = {}) {
+  const value = plan(state, extra);
+  delete value.lease_token;
+  delete value.lease_expires_at;
+  return value;
+}
+
+function consumer(overrides = {}) {
+  const calls = [];
+  const methods = {};
+  for (const name of ["begin", "commit", "abort", "read", "inspect", "invalidateExact", "invalidateDataset", "invalidateSource", "invalidateCurrentAuthority"]) {
+    methods[name] = async (request) => {
+      calls.push([name, structuredClone(request)]);
+      if (name === "begin") return plan();
+      if (name === "read") return {...readPlan(), documents: [{resource_id: "public-record", version: "v1", modified_at: "2026-09-24T16:00:00Z", payload: {complete: true}}]};
+      if (name === "inspect") return {...readPlan(), document_count: 1};
+      if (name === "commit") return {state: "committed", authority_key: "private-authority-digest", query_key: "private-query-digest", document_count: 1, tombstone_count: 0, cached_resource_count: 1, sync_completed_at: scope.refresh_through};
+      if (name === "abort") return {state: "aborted", authority_key: "private-authority-digest", query_key: "private-query-digest"};
+      if (name === "invalidateExact") return {state: "invalidated", authority_key: "private-authority-digest", source_key: "private-source-digest", query_key: "private-query-digest"};
+      if (name === "invalidateDataset") return {state: "invalidated", scope: "dataset", authority_key: "private-authority-digest", source_key: "private-source-digest", invalidated_query_count: 1};
+      if (name === "invalidateSource") return {state: "invalidated", scope: "source", authority_key: "private-authority-digest", invalidated_query_count: 1};
+      if (name === "invalidateCurrentAuthority") return {state: "invalidated", scope: "current_authority", authority_key: "private-authority-digest"};
+      throw new Error(`unexpected method ${name}`);
+    };
+  }
+  return {calls, ...methods, ...overrides};
+}
+
+test("cache sends only public Describe scope and BOS privately owns authority binding", async () => {
+  const shared = consumer();
+  const cache = new CrmCacheClient({consumer: shared});
+  const result = await cache.read(scope);
+  assert.equal(result.origin, "cache");
+  assert.equal(result.documents[0].payload.complete, true);
+  assert.equal(result.authority_key, undefined);
+  const sent = shared.calls[0][1];
+  assert.deepEqual(sent.source, source);
+  assert.deepEqual(sent.query, {operation: "search", resource_kind: "crm-records", selector: {text: "person"}, descriptor_token: "descriptor-a"});
+  assert.equal(JSON.stringify(sent).includes("authority"), false);
+  assert.equal(JSON.stringify(sent).includes("partition"), false);
 });
 
-test("cache load uses a fresh shared entry and automatically refreshes a miss", async () => {
-  const shared = adapter();
-  const cache = new CrmCacheClient({adapter: shared, now: () => 1, maxAgeMs: 100});
-  const scope = {partition: "p", descriptor: "d", operation: "o", source: null, parameters: {text: "person"}};
+test("cache freshness policy is optional and applies the published default when omitted", async () => {
+  const shared = consumer();
+  const cache = new CrmCacheClient({consumer: shared});
+  await cache.read({...scope, freshness_policy: undefined});
+  assert.equal(Object.hasOwn(shared.calls[0][1], "freshness_policy"), false);
+  await cache.read({...scope, freshness_policy: {max_age_seconds: 31536000}});
+  assert.deepEqual(shared.calls[1][1].freshness_policy, {max_age_seconds: 31536000});
+  await assert.rejects(cache.read({...scope, freshness_policy: {max_age_seconds: 31536001}}), /at most 31536000/);
+});
+
+test("cache refresh uses one BOS lease and commits complete documents before reading", async () => {
+  const shared = consumer({
+    begin: async (request) => { shared.calls.push(["begin", request]); return plan("refresh_required", {stale: true, freshness_status: "stale"}); }
+  });
+  const cache = new CrmCacheClient({consumer: shared});
+  const result = await cache.refresh(scope, async (plan) => {
+    assert.equal(plan.state, "refresh_required");
+    assert.equal(plan.lease_token, undefined);
+    return {documents: [{resource_id: "public-record", version: "v2", modified_at: "2026-09-24T16:00:00Z", payload: {complete: true}}], covered_intervals: [scope.window], next_cursor: null};
+  });
+  assert.equal(result.state, "current");
+  assert.deepEqual(shared.calls.map(([name]) => name), ["begin", "commit", "read"]);
+  assert.equal(shared.calls[1][1].lease_token, "lease-private");
+});
+
+test("failed refresh aborts its BOS lease and preserves the prior complete cache value", async () => {
+  const shared = consumer({
+    begin: async (request) => { shared.calls.push(["begin", request]); return plan("cold"); }
+  });
+  const cache = new CrmCacheClient({consumer: shared});
+  await assert.rejects(cache.refresh(scope, async () => { throw new Error("source refresh failed"); }), /source refresh failed/);
+  assert.deepEqual(shared.calls.map(([name]) => name), ["begin", "abort"]);
+  assert.equal(shared.calls[1][1].lease_token, "lease-private");
+});
+
+test("cache maintenance delegates exact, dataset, source, and current-authority invalidation without private keys", async () => {
+  const shared = consumer();
+  const cache = new CrmCacheClient({consumer: shared});
+  await cache.inspect(scope);
+  await cache.invalidateQuery(scope);
+  await cache.invalidateDataset(scope);
+  await cache.invalidateSource(scope);
+  await cache.invalidateCurrentAuthority(scope);
+  await cache.invalidateAfterMutation([scope, structuredClone(scope)]);
+  assert.deepEqual(shared.calls.map(([name]) => name), ["inspect", "invalidateExact", "invalidateDataset", "invalidateSource", "invalidateCurrentAuthority", "invalidateSource"]);
+  assert.equal(shared.calls.every(([, request]) => !JSON.stringify(request).includes("authority")), true);
+});
+
+test("cache requests and documents reject private state, malformed sources, and incomplete refresh material", async () => {
+  const shared = consumer();
+  const cache = new CrmCacheClient({consumer: shared});
+  await assert.rejects(cache.read({...scope, source: {plugin: "fixture-source"}}), /source/);
+  await assert.rejects(cache.read({...scope, selector: {access_token: "private"}}), /forbidden private key/);
+  await assert.rejects(cache.commit(scope, {lease_token: "lease", documents: [{resource_id: "r", version: "v", modified_at: "2026-09-24T16:00:00Z"}]}), /payload or a deleted tombstone/);
+  await assert.rejects(cache.commit(scope, {lease_token: "lease", documents: [{resource_id: "r", version: "v", modified_at: "2026-09-24T16:00:00Z", deleted: true, payload: {}}]}), /payload or a deleted tombstone/);
+  await cache.commit(scope, {lease_token: "lease", documents: [{resource_id: "r", version: "v", modified_at: "2026-09-24T16:00:00Z", deleted: true}]});
+});
+
+test("load uses a fresh BOS read and refreshes only a stale or missing entry", async () => {
+  const shared = consumer();
+  const cache = new CrmCacheClient({consumer: shared});
   let loads = 0;
-  const first = await cache.load(scope, async () => { loads += 1; return {complete: true, source_results: []}; });
-  const second = await cache.load(scope, async () => { loads += 1; return {complete: true, source_results: []}; });
-  assert.equal(first.origin, "live");
-  assert.equal(second.origin, "cached");
+  assert.equal((await cache.load(scope, async () => { loads += 1; return {documents: []}; })).origin, "cache");
+  assert.equal(loads, 0);
+  shared.read = async (request) => { shared.calls.push(["read", request]); return {...readPlan("cold"), documents: []}; };
+  shared.begin = async (request) => { shared.calls.push(["begin", request]); return plan("cold"); };
+  await cache.load(scope, async () => { loads += 1; return {documents: [{resource_id: "r", version: "v", modified_at: "2026-09-24T16:00:00Z", payload: {complete: true}}]}; });
   assert.equal(loads, 1);
 });
 
-test("partial refresh cannot replace a complete cache entry", async () => {
-  const shared = adapter();
-  const cache = new CrmCacheClient({adapter: shared, now: () => 1, maxAgeMs: 100});
-  const scope = {partition: "p", descriptor: "d", operation: "o", source: null, parameters: {}};
-  await cache.publish(scope, {complete: true, source_results: []});
-  await assert.rejects(cache.publish(scope, {complete: false, source_results: []}), /complete/);
-  assert.equal((await cache.read(scope)).value.complete, true);
-  await assert.rejects(cache.refresh(scope, async () => ({complete: false, source_results: []})), /complete/);
-  assert.equal((await cache.read(scope)).value.complete, true);
-});
-
-test("cache maintenance exposes bounded query, source, dataset, and current-authority invalidation", async () => {
-  const shared = adapter();
-  const cache = new CrmCacheClient({adapter: shared, now: () => 1, maxAgeMs: 100});
-  const scope = {partition: "p", descriptor: "d", operation: "o", source: null, parameters: {text: "person"}};
-  await cache.invalidateQuery(scope);
-  await cache.invalidateSource({partition: "p", source: {platform: "fixture-platform", application: "fixture-application", plugin: "fixture-source"}});
-  assert.throws(() => cache.invalidateSource({partition: "p", source: {plugin: "fixture-source"}}), /source/);
-  await cache.invalidateDataset({partition: "p", dataset: "crm-records"});
-  await cache.invalidateCurrentAuthority("p");
-  await cache.invalidateAfterMutation({
-    partition: "p",
-    sources: [
-      {platform: "fixture-platform", application: "fixture-application", plugin: "fixture-source"},
-      {platform: "fixture-platform", application: "fixture-application", plugin: "fixture-source"}
-    ],
-    datasets: ["crm-records", "crm-records"]
+test("load uses stale public documents after a failed refresh only when current policy permits it", async () => {
+  const stale = {...readPlan(), freshness_status: "stale", stale: true, documents: [{resource_id: "r", version: "v", modified_at: "2026-09-24T16:00:00Z", payload: {complete: true}}]};
+  const shared = consumer({
+    read: async (request) => { shared.calls.push(["read", request]); return stale; },
+    begin: async (request) => { shared.calls.push(["begin", request]); return plan("refresh_required"); }
   });
-  assert.deepEqual(shared.calls.filter(([method]) => method === "invalidate").map(([, request]) => request.scope), ["query", "source", "dataset", "authority", "source", "dataset"]);
-});
-
-test("cache keys accept only complete structured source references", async () => {
-  const shared = adapter();
-  const cache = new CrmCacheClient({adapter: shared, now: () => 1, maxAgeMs: 100});
-  const invalid = {partition: "p", descriptor: "d", operation: "search", source: {plugin: "fixture-source"}, parameters: {text: "person"}};
-  await assert.rejects(cache.publish(invalid, {complete: true}), /source/);
-  await assert.rejects(cache.read(invalid), /source/);
-  assert.throws(() => cache.invalidateQuery(invalid), /source/);
-});
-
-test("cache keys and values reject nested credentials, authority, and internal identifiers", async () => {
-  const shared = adapter();
-  const cache = new CrmCacheClient({adapter: shared, now: () => 1, maxAgeMs: 100});
-  const base = {partition: "p", descriptor: "d", operation: "search", source: null, parameters: {text: "person"}};
-  await assert.rejects(cache.publish({...base, parameters: {text: "person", access_token: "secret"}}, {complete: true}), /forbidden private key/);
-  await assert.rejects(cache.publish({...base, coverage: {principal_context: "hidden"}}, {complete: true}), /forbidden private key/);
-  await assert.rejects(cache.publish(base, {complete: true, nested: {internal_id: "hidden"}}), /forbidden private key/);
-  assert.equal((await cache.publish(base, {complete: true, nested: {student_id: "student-public-42"}})).value.nested.student_id, "student-public-42");
-  const unsafe = adapter();
-  unsafe.read = async () => ({status: "complete", retrieved_at: "1970-01-01T00:00:00.001Z", retrieved_at_ms: 1, value: {complete: true, provider_error: "hidden"}});
-  const unsafeCache = new CrmCacheClient({adapter: unsafe, now: () => 1, maxAgeMs: 100});
-  assert.equal(await unsafeCache.read(base), null);
-  assert.ok(unsafe.calls.some(([method, request]) => method === "invalidate" && request.scope === "query"));
-});
-
-test("cache reads reject malformed, inconsistent, or future freshness evidence", async () => {
-  const scope = {partition: "p", descriptor: "d", operation: "search", source: null, parameters: {}};
-  const entry = {status: "complete", retrieved_at: "not-a-date", retrieved_at_ms: 100, value: {complete: true}};
-  const shared = adapter();
-  shared.read = async () => structuredClone(entry);
-  const cache = new CrmCacheClient({adapter: shared, now: () => 100, maxAgeMs: 100});
-  assert.equal(await cache.read(scope), null);
-  entry.retrieved_at = "1970-01-01T00:00:00.100Z";
-  entry.retrieved_at_ms = 200;
-  assert.equal(await cache.read(scope), null);
-  entry.retrieved_at = "1970-01-01T00:00:00.200Z";
-  assert.equal(await cache.read(scope), null);
-  entry.retrieved_at = "1970-01-01T00:00:00.100Z";
-  entry.retrieved_at_ms = 100;
-  assert.equal((await cache.read(scope)).origin, "cached");
-  shared.inspect = async () => [{value: {access_token: "hidden"}}];
-  await assert.rejects(cache.inspect("p"), /forbidden private key/);
+  const cache = new CrmCacheClient({consumer: shared});
+  const permissive = {...scope, freshness_policy: {...scope.freshness_policy, allow_stale_on_error: true}};
+  assert.equal((await cache.load(permissive, async () => { throw new Error("offline"); })).stale, true);
+  await assert.rejects(cache.load(scope, async () => { throw new Error("offline"); }), /offline/);
 });
 
 test("presentation labels origin, local freshness, provenance, coverage, conflicts, and usage truthfully", () => {
@@ -125,4 +172,16 @@ test("presentation labels origin, local freshness, provenance, coverage, conflic
   assert.equal(organizationField.source_results[0].records[0].student_id, "student-public-42");
   assert.throws(() => presentResult({complete: true, observed_at: "2026-09-19", source_results: []}, {origin: "live", locale: "en-US", timeZone: "America/Denver"}), /timestamp/);
   assert.throws(() => presentResult({complete: true, observed_at: "2026-09-19T16:00:00Z", source_results: [{records: [{internal_id: "hidden"}]}]}, {origin: "live", locale: "en-US", timeZone: "America/Denver"}), /forbidden private key/);
+});
+
+test("public failure presentation preserves actionable sanitized recovery without inventing provider detail", () => {
+  const failure = {code: "CRM_EVIDENCE_REQUIRED", message: "Current CRM evidence is required.", retryable: false, correlation_id: "corr_public", details: [{field: "email"}]};
+  const instruction = {message: "Correct the current CRM evidence and continue.", effect: "update"};
+  const view = presentPublicFailure(failure, {operation: "crm.records.update", instruction});
+  assert.equal(view.code, "CRM_EVIDENCE_REQUIRED");
+  assert.equal(view.correlation_id, "corr_public");
+  assert.deepEqual(view.recovery, instruction);
+  assert.equal(JSON.stringify(view).includes("provider"), false);
+  assert.throws(() => presentPublicFailure({...failure, message: "SQLSTATE 23505"}), /private implementation detail/);
+  assert.throws(() => presentPublicFailure(failure, {instruction: {access_token: "private"}}), /forbidden private key/);
 });

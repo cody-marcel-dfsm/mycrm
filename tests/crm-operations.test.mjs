@@ -13,7 +13,7 @@ const sourceA = {platform: "fixture-platform", application: "fixture-application
 const sourceB = {platform: "fixture-platform", application: "fixture-application", plugin: "fixture-source-b"};
 
 test("request builders preserve complete discovered source references", () => {
-  assert.deepEqual(buildSearchRequest({text: "cody.marcel@dfsm.ai"}), {text: "cody.marcel@dfsm.ai"});
+  assert.deepEqual(buildSearchRequest({text: "fixture.person@example.invalid"}), {text: "fixture.person@example.invalid"});
   assert.deepEqual(buildSearchRequest({text: "person", source: sourceA}).source, sourceA);
   assert.deepEqual(buildCreateRequest({source: sourceA, changes: {custom_field: "value", student_id: "student-public-42"}}), {source: sourceA, changes: {custom_field: "value", student_id: "student-public-42"}});
 });

@@ -7,6 +7,9 @@
   "required": [
     "status",
     "bos_connection_reused",
+    "synthetic_context_verified",
+    "synthetic_query_used",
+    "real_customer_targeted",
     "application_discovered",
     "search_described",
     "search_executed",
@@ -29,6 +32,16 @@
     },
     "bos_connection_reused": {
       "type": "boolean"
+    },
+    "synthetic_context_verified": {
+      "type": "boolean"
+    },
+    "synthetic_query_used": {
+      "type": "boolean"
+    },
+    "real_customer_targeted": {
+      "type": "boolean",
+      "const": false
     },
     "application_discovered": {
       "type": "boolean"

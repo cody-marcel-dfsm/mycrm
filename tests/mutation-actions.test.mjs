@@ -44,9 +44,8 @@ test("runtime public failures require correlation evidence, advertised codes, an
   const discovery = await published("app.describe.example.json");
   const describe = await published("describe.response.example.json");
   const client = new BosContractClient({
-    discovery: {read: async () => discovery, refresh: async () => discovery},
-    http: {request: async ({uri, body}) => uri === discovery.describe.uri ? {status: 200, body: selectDescribe(describe, body.operations)} : {status: 400, body: {error: {code: "INVALID_REQUEST", message: "SQLSTATE 999 stack trace", retryable: false, correlation_id: "corr", details: []}}}},
-    bos: {recoverAuthentication: async () => ({status: "READY"})}
+    discovery: {read: async () => discovery, refresh: async () => discovery, describe: async ({operations}) => selectDescribe(describe, operations)},
+    bos: {recoverAuthentication: async () => ({status: "READY"}), invokeDiscoveredOperation: async () => ({status: 400, body: {error: {code: "INVALID_REQUEST", message: "SQLSTATE 999 stack trace", retryable: false, correlation_id: "corr", details: []}}})}
   });
   await client.describe(["search"]);
   await assert.rejects(client.execute("search", {text: "person"}), (error) => error.code === "INVALID_PUBLIC_ERROR");
@@ -57,9 +56,8 @@ test("public recovery instructions use a bounded allowlist and validated returne
   const describe = await published("describe.response.example.json");
   let instruction = {redirect_uri: "https://evil.invalid/phish"};
   const client = new BosContractClient({
-    discovery: {read: async () => discovery, refresh: async () => discovery},
-    http: {request: async ({uri, body}) => uri === discovery.describe.uri ? {status: 200, body: selectDescribe(describe, body.operations)} : {status: 400, body: {error: {code: "INVALID_REQUEST", message: "The request needs review.", retryable: false, correlation_id: "corr", details: []}, instruction}}},
-    bos: {recoverAuthentication: async () => ({status: "READY"})}
+    discovery: {read: async () => discovery, refresh: async () => discovery, describe: async ({operations}) => selectDescribe(describe, operations)},
+    bos: {recoverAuthentication: async () => ({status: "READY"}), invokeDiscoveredOperation: async () => ({status: 400, body: {error: {code: "INVALID_REQUEST", message: "The request needs review.", retryable: false, correlation_id: "corr", details: []}, instruction}})}
   });
   await client.describe(["search"]);
   await assert.rejects(client.execute("search", {text: "person"}), (error) => error.code === "INVALID_PUBLIC_INSTRUCTION" && error.instruction === null);

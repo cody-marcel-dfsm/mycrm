@@ -10,12 +10,12 @@
     {
       "id": "public-bos-client-cache-package",
       "owner": "bos-client-product",
-      "required_evidence": "A supported versioned bos-mcp-client cache adapter supplies opaque authority partitions, reads, atomic publication, inspection, and invalidation."
+      "required_evidence": "A supported versioned bos-mcp-client shared-cache consumer privately resolves the current authority binding and supplies reads, leases, atomic commit or abort, inspection, and bounded invalidation from public source and query scope."
     },
     {
       "id": "published-lead-director-contracts",
       "owner": "bos-service",
-      "required_evidence": "The Oracle-approved versioned public bundle is internally cross-conformant, and authenticated discovery, Describe, CRM operations, journey actions, and compatibility contacts are mounted and reachable."
+      "required_evidence": "The deployed immutable public bundle and client_action_required consumer contract are internally cross-conformant, and authenticated discovery, Describe, CRM operations, journey actions, and compatibility contacts are mounted and reachable."
     },
     {
       "id": "authorized-live-acceptance",

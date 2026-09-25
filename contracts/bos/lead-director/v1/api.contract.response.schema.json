@@ -21,7 +21,8 @@
           "required": [
             "method",
             "uri",
-            "context_header"
+            "context_header",
+            "transport"
           ]
         },
         {
@@ -122,6 +123,7 @@
         "status": {
           "enum": [
             "ready",
+            "not_reported",
             "authorization_required",
             "configuration_required",
             "temporarily_unavailable"

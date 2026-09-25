@@ -5,6 +5,7 @@ import {fileURLToPath} from "node:url";
 import path from "node:path";
 import process from "node:process";
 
+import {checkPrivacy} from "./check-privacy.mjs";
 import {assertSafeRelativePath, readJson, repositoryRoot, sha256, sha256File, stableJson} from "./release-utils.mjs";
 
 const run = promisify(execFile);
@@ -24,6 +25,9 @@ const EXPECTED_FILES = [
   "describe.request.example.json",
   "describe.response.example.json",
   "describe.response.schema.json",
+  "JOURNEY-CLIENT-CONTRACT.md",
+  "journey.client-action-required.example.json",
+  "journey.client-action-required.schema.json",
   "operation.examples.json"
 ];
 
@@ -73,7 +77,7 @@ async function inspectArchive(archive) {
   const relativeFiles = fileNames.map((name) => prefix ? name.slice(prefix.length + 1) : name);
   const expected = [...EXPECTED_FILES, "manifest.json"].sort();
   if (JSON.stringify([...relativeFiles].sort()) !== JSON.stringify(expected)) {
-    throw new Error("Contract archive must contain the exact eleven-file Lead Director public bundle");
+    throw new Error("Contract archive must contain the exact Lead Director public bundle");
   }
   return prefix;
 }
@@ -96,7 +100,7 @@ async function validateCandidate(directory) {
     if (!/^[a-f0-9]{64}$/.test(entry.sha256) || await sha256File(path.join(directory, entry.path)) !== entry.sha256) {
       throw new Error(`Contract file digest mismatch: ${entry.path}`);
     }
-    JSON.parse(await readFile(path.join(directory, entry.path), "utf8"));
+    if (entry.path.endsWith(".json")) JSON.parse(await readFile(path.join(directory, entry.path), "utf8"));
   }
   if (!/^[a-f0-9]{64}$/.test(manifest.bundle_sha256)) throw new Error("Manifest bundle digest is invalid");
   return {manifest, manifestSha256: await sha256File(manifestFile)};
@@ -126,6 +130,7 @@ export async function importBosContract({archive, archiveSha256, sourceRevision,
       await mkdir(candidate);
       for (const name of [...EXPECTED_FILES, "manifest.json"]) await rename(path.join(temporary, name), path.join(candidate, name));
     }
+    await checkPrivacy({root: candidate, includeDist: true});
     const {manifest, manifestSha256} = await validateCandidate(candidate);
     const provenance = {
       schema: "my-crm.bos-contract-import/v1",

@@ -1,105 +1,203 @@
-import {createHash} from "node:crypto";
-import {assertNoPrivateKeys, validateDateTime, validateSourceReference} from "../bos/contracts.mjs";
+import {createRequire} from "node:module";
 
-function stable(value) {
-  if (Array.isArray(value)) return value.map(stable);
-  if (value && typeof value === "object") return Object.fromEntries(Object.keys(value).sort().map((key) => [key, stable(value[key])]));
-  return value;
+import {assertNoPrivateKeys, validateDateTime, validateJsonValueAgainstSchema, validateSourceReference} from "../bos/contracts.mjs";
+
+const require = createRequire(import.meta.url);
+const CACHE_REQUEST_SCHEMA = require("../../contracts/bos-operations-center/bos-client-dependency/v1/shared-cache.request.schema.json");
+const CACHE_RESULTS_SCHEMA = require("../../contracts/bos-operations-center/bos-client-dependency/v1/shared-cache.results.schema.json");
+
+const SCHEMA_VERSION = "bos.shared-cache-consumer/v1";
+const REFRESH_STATES = new Set(["cold", "catch_up", "refresh_required"]);
+
+function requireMethod(owner, name) {
+  if (typeof owner?.[name] !== "function") throw new TypeError(`shared cache consumer.${name} is required`);
 }
+
 function requireString(value, label) {
-  if (typeof value !== "string" || value === "") throw new TypeError(`${label} is required`);
+  if (typeof value !== "string" || value.trim() === "") throw new TypeError(`${label} is required`);
   return value;
 }
-function key(scope) {
-  const partition = requireString(scope?.partition, "opaque cache partition");
-  const source = scope.source === null || scope.source === undefined ? null : validateSourceReference(scope.source, "cache source");
-  const parameters = scope.parameters ?? {};
-  const coverage = scope.coverage ?? null;
-  assertNoPrivateKeys(parameters, "cache parameters");
-  assertNoPrivateKeys(coverage, "cache coverage");
-  const contract = {descriptor: requireString(scope.descriptor, "descriptor"), operation: requireString(scope.operation, "operation"), source, parameters, coverage};
-  return `${partition}:${createHash("sha256").update(JSON.stringify(stable(contract))).digest("hex")}`;
+
+function nonNegativeInteger(value, label) {
+  if (!Number.isInteger(value) || value < 0) throw new TypeError(`${label} must be a non-negative integer`);
+  return value;
+}
+
+function validateWindow(value) {
+  if (!value || typeof value !== "object" || Array.isArray(value)) throw new TypeError("cache window is required");
+  validateDateTime(value.from, "cache window.from");
+  validateDateTime(value.through, "cache window.through");
+  if (Date.parse(value.from) > Date.parse(value.through)) throw new TypeError("cache window must be ordered");
+  return {from: value.from, through: value.through};
+}
+
+function validateFreshnessPolicy(value) {
+  if (!value || typeof value !== "object" || Array.isArray(value)) throw new TypeError("cache freshness_policy must be an object");
+  const maxAgeSeconds = nonNegativeInteger(value.max_age_seconds, "cache freshness_policy.max_age_seconds");
+  if (maxAgeSeconds > 31536000) throw new TypeError("cache freshness_policy.max_age_seconds must be at most 31536000");
+  const policy = {
+    max_age_seconds: maxAgeSeconds
+  };
+  if (value.allow_stale_on_error !== undefined) {
+    if (typeof value.allow_stale_on_error !== "boolean") throw new TypeError("cache freshness_policy.allow_stale_on_error must be boolean");
+    policy.allow_stale_on_error = value.allow_stale_on_error;
+  }
+  return policy;
+}
+
+function request(scope) {
+  if (!scope || typeof scope !== "object" || Array.isArray(scope)) throw new TypeError("cache scope is required");
+  const selector = structuredClone(scope.selector);
+  if (selector === undefined) throw new TypeError("cache selector is required");
+  assertNoPrivateKeys(selector, "cache selector");
+  const result = {
+    schema_version: SCHEMA_VERSION,
+    source: validateSourceReference(scope.source, "cache source"),
+    query: {
+      operation: requireString(scope.operation, "cache operation"),
+      resource_kind: requireString(scope.resource_kind, "cache resource_kind"),
+      selector,
+      descriptor_token: requireString(scope.descriptor_token, "cache descriptor_token")
+    },
+    window: validateWindow(scope.window),
+    refresh_through: validateDateTime(scope.refresh_through, "cache refresh_through")
+  };
+  if (scope.freshness_policy !== undefined) result.freshness_policy = validateFreshnessPolicy(scope.freshness_policy);
+  assertNoPrivateKeys(result, "shared cache request");
+  return validateJsonValueAgainstSchema(result, CACHE_REQUEST_SCHEMA, "shared cache request");
+}
+
+function validateRequest(value) {
+  return validateJsonValueAgainstSchema(value, CACHE_REQUEST_SCHEMA, "shared cache request");
+}
+
+function validateResult(method, value) {
+  const key = new Map([
+    ["begin", "begin"], ["commit", "commit"], ["abort", "abort"], ["read", "read"], ["inspect", "inspect"],
+    ["invalidateExact", "invalidate_exact"], ["invalidateDataset", "invalidate_dataset"],
+    ["invalidateSource", "invalidate_source"], ["invalidateCurrentAuthority", "invalidate_current_authority"]
+  ]).get(method);
+  if (!key) throw new TypeError(`unsupported shared cache result ${method}`);
+  validateJsonValueAgainstSchema({[key]: value}, CACHE_RESULTS_SCHEMA, `shared cache ${method} result`);
+  return value;
+}
+
+function publicResult(value, {documents = false} = {}) {
+  if (!value || typeof value !== "object" || Array.isArray(value)) throw new TypeError("shared cache result must be an object");
+  const result = {};
+  for (const key of ["state", "origin", "freshness_status", "stale", "age_seconds", "max_age_seconds", "allow_stale_on_error", "retry_after_ms", "cached_resource_count", "document_count", "tombstone_count", "invalidated_query_count", "sync_completed_at", "lease_expires_at", "scope", "coverage_gaps", "change_gap", "cursor"]) {
+    if (value[key] !== undefined) result[key] = structuredClone(value[key]);
+  }
+  if (documents && value.documents !== undefined) {
+    if (!Array.isArray(value.documents)) throw new TypeError("shared cache documents must be an array");
+    result.documents = structuredClone(value.documents);
+  }
+  assertNoPrivateKeys(result, "shared cache public result");
+  return result;
+}
+
+function validateDocuments(documents) {
+  if (!Array.isArray(documents)) throw new TypeError("cache documents must be an array");
+  return documents.map((value, index) => {
+    if (!value || typeof value !== "object" || Array.isArray(value)) throw new TypeError(`cache documents[${index}] must be an object`);
+    const document = {
+      resource_id: requireString(value.resource_id, `cache documents[${index}].resource_id`),
+      version: requireString(value.version, `cache documents[${index}].version`),
+      modified_at: validateDateTime(value.modified_at, `cache documents[${index}].modified_at`)
+    };
+    const keys = Object.keys(value).sort();
+    const payloadKeys = ["modified_at", "payload", "resource_id", "version"];
+    const tombstoneKeys = ["deleted", "modified_at", "resource_id", "version"];
+    const payloadWithDeletedKeys = ["deleted", ...payloadKeys].sort();
+    if (JSON.stringify(keys) === JSON.stringify(payloadKeys) || (JSON.stringify(keys) === JSON.stringify(payloadWithDeletedKeys) && value.deleted === false)) {
+      assertNoPrivateKeys(value.payload, `cache documents[${index}].payload`);
+      document.payload = structuredClone(value.payload);
+      if (value.deleted === false) document.deleted = false;
+    } else if (JSON.stringify(keys) === JSON.stringify(tombstoneKeys) && value.deleted === true) {
+      document.deleted = true;
+    } else throw new TypeError(`cache documents[${index}] must contain exactly one payload or a deleted tombstone`);
+    return document;
+  });
+}
+
+function validateCoveredIntervals(intervals) {
+  if (intervals === undefined) return undefined;
+  if (!Array.isArray(intervals)) throw new TypeError("cache covered_intervals must be an array");
+  return intervals.map(validateWindow);
 }
 
 export class CrmCacheClient {
-  constructor({adapter, now = Date.now, maxAgeMs}) {
-    for (const method of ["read", "publish", "inspect", "invalidate"]) if (typeof adapter?.[method] !== "function") throw new TypeError(`shared cache adapter.${method} is required`);
-    if (!Number.isFinite(maxAgeMs) || maxAgeMs < 0) throw new TypeError("maxAgeMs must be non-negative");
-    if (typeof now !== "function") throw new TypeError("now must be a function");
-    this.adapter = adapter;
-    this.now = now;
-    this.maxAgeMs = maxAgeMs;
+  constructor({consumer}) {
+    for (const method of ["begin", "commit", "abort", "read", "inspect", "invalidateExact", "invalidateDataset", "invalidateSource", "invalidateCurrentAuthority"]) requireMethod(consumer, method);
+    this.consumer = consumer;
   }
+
+  async begin(scope) {
+    const value = validateResult("begin", await this.consumer.begin(request(scope)));
+    return publicResult(value);
+  }
+
   async read(scope) {
-    const cacheKey = key(scope);
-    const entry = await this.adapter.read(cacheKey);
-    if (!entry) return null;
-    if (entry.status !== "complete" || !Number.isFinite(entry.retrieved_at_ms)) {
-      await this.adapter.invalidate({partition: requireString(scope?.partition, "opaque cache partition"), scope: "query", key: cacheKey});
-      return null;
-    }
-    try { validateDateTime(entry.retrieved_at, "cache retrieved_at"); } catch {
-      await this.adapter.invalidate({partition: requireString(scope?.partition, "opaque cache partition"), scope: "query", key: cacheKey});
-      return null;
-    }
-    if (Date.parse(entry.retrieved_at) !== entry.retrieved_at_ms) {
-      await this.adapter.invalidate({partition: requireString(scope?.partition, "opaque cache partition"), scope: "query", key: cacheKey});
-      return null;
-    }
-    const age = this.now() - entry.retrieved_at_ms;
-    if (!Number.isFinite(age) || age < 0 || age > this.maxAgeMs) {
-      await this.adapter.invalidate({partition: requireString(scope?.partition, "opaque cache partition"), scope: "query", key: cacheKey});
-      return null;
-    }
-    try { assertNoPrivateKeys(entry.value, "cached public result"); } catch {
-      await this.adapter.invalidate({partition: requireString(scope?.partition, "opaque cache partition"), scope: "query", key: cacheKey});
-      return null;
-    }
-    return {origin: "cached", retrieved_at: entry.retrieved_at, value: structuredClone(entry.value)};
+    const value = validateResult("read", await this.consumer.read(request(scope)));
+    return publicResult(value, {documents: true});
   }
-  async publish(scope, value) {
-    if (value?.complete !== true) throw new TypeError("Only a complete result can replace a complete cache entry");
-    assertNoPrivateKeys(value, "cached public result");
-    const retrievedAtMs = this.now();
-    const retrieved = new Date(retrievedAtMs).toISOString();
-    await this.adapter.publish(key(scope), {status: "complete", retrieved_at: retrieved, retrieved_at_ms: retrievedAtMs, value: structuredClone(value)});
-    return {origin: "live", retrieved_at: retrieved, value: structuredClone(value)};
+
+  async inspect(scope) {
+    return publicResult(validateResult("inspect", await this.consumer.inspect(request(scope))));
   }
+
+  async commit(scope, {lease_token, documents, covered_intervals, next_cursor} = {}) {
+    const input = {...request(scope), lease_token: requireString(lease_token, "cache lease_token"), documents: validateDocuments(documents)};
+    const intervals = validateCoveredIntervals(covered_intervals);
+    if (intervals !== undefined) input.covered_intervals = intervals;
+    if (next_cursor !== undefined) {
+      if (next_cursor !== null && (typeof next_cursor !== "string" || next_cursor === "")) throw new TypeError("cache next_cursor is invalid");
+      input.next_cursor = next_cursor;
+    }
+    return publicResult(validateResult("commit", await this.consumer.commit(validateRequest(input))));
+  }
+
+  async abort(scope, leaseToken) {
+    const input = validateRequest({...request(scope), lease_token: requireString(leaseToken, "cache lease_token")});
+    return publicResult(validateResult("abort", await this.consumer.abort(input)));
+  }
+
   async refresh(scope, loader) {
     if (typeof loader !== "function") throw new TypeError("cache refresh loader is required");
-    const value = await loader();
-    return this.publish(scope, value);
+    const plan = validateResult("begin", await this.consumer.begin(request(scope)));
+    if (plan?.state === "current") return this.read(scope);
+    if (plan?.state === "busy") return publicResult(plan);
+    if (!REFRESH_STATES.has(plan?.state) || typeof plan?.lease_token !== "string" || plan.lease_token === "") throw new TypeError("shared cache refresh plan is invalid");
+    let replacement;
+    try {
+      replacement = await loader(publicResult(plan));
+      await this.commit(scope, {...replacement, lease_token: plan.lease_token});
+    } catch (error) {
+      await this.abort(scope, plan.lease_token);
+      throw error;
+    }
+    return this.read(scope);
   }
+
   async load(scope, loader) {
     const cached = await this.read(scope);
-    if (cached) return cached;
-    return this.refresh(scope, loader);
-  }
-  async inspect(partition) {
-    const result = await this.adapter.inspect(requireString(partition, "opaque cache partition"));
-    assertNoPrivateKeys(result, "cache inspection");
-    return structuredClone(result);
-  }
-  invalidateCurrentAuthority(partition) { return this.adapter.invalidate({partition: requireString(partition, "opaque cache partition"), scope: "authority"}); }
-  invalidateQuery(scope) { return this.adapter.invalidate({partition: requireString(scope?.partition, "opaque cache partition"), scope: "query", key: key(scope)}); }
-  invalidateSource({partition, source}) {
-    return this.adapter.invalidate({partition: requireString(partition, "opaque cache partition"), scope: "source", source: validateSourceReference(source)});
-  }
-  invalidateDataset({partition, dataset}) {
-    return this.adapter.invalidate({partition: requireString(partition, "opaque cache partition"), scope: "dataset", dataset: requireString(dataset, "dataset")});
-  }
-  async invalidateAfterMutation({partition, sources = [], datasets = []}) {
-    requireString(partition, "opaque cache partition");
-    if (!Array.isArray(sources) || !Array.isArray(datasets)) throw new TypeError("mutation invalidation sources and datasets must be arrays");
-    const uniqueSources = new Map();
-    for (const source of sources) {
-      const current = validateSourceReference(source, "mutation invalidation source");
-      uniqueSources.set(JSON.stringify(current), current);
+    if (cached.state === "current" && cached.stale !== true) return cached;
+    try {
+      return await this.refresh(scope, loader);
+    } catch (error) {
+      if (scope?.freshness_policy?.allow_stale_on_error === true && Array.isArray(cached.documents) && cached.documents.length > 0) return cached;
+      throw error;
     }
-    const uniqueDatasets = new Set(datasets.map((dataset) => requireString(dataset, "mutation invalidation dataset")));
-    await Promise.all([
-      ...[...uniqueSources.values()].map((source) => this.invalidateSource({partition, source})),
-      ...[...uniqueDatasets].map((dataset) => this.invalidateDataset({partition, dataset}))
-    ]);
+  }
+
+  invalidateQuery(scope) { return this.consumer.invalidateExact(request(scope)).then((value) => publicResult(validateResult("invalidateExact", value))); }
+  invalidateDataset(scope) { return this.consumer.invalidateDataset(request(scope)).then((value) => publicResult(validateResult("invalidateDataset", value))); }
+  invalidateSource(scope) { return this.consumer.invalidateSource(request(scope)).then((value) => publicResult(validateResult("invalidateSource", value))); }
+  invalidateCurrentAuthority(scope) { return this.consumer.invalidateCurrentAuthority(request(scope)).then((value) => publicResult(validateResult("invalidateCurrentAuthority", value))); }
+
+  async invalidateAfterMutation(scopes) {
+    if (!Array.isArray(scopes) || scopes.length < 1) throw new TypeError("mutation invalidation scopes must be a non-empty array");
+    const unique = new Map(scopes.map((scope) => [JSON.stringify(request(scope)), scope]));
+    return Promise.all([...unique.values()].map((scope) => this.invalidateSource(scope)));
   }
 }

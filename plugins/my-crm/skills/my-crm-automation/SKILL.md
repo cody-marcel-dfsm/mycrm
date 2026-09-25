@@ -25,4 +25,12 @@ For a CRM-domain client instruction:
 
 Do not put `step` inside the CRM instruction. BOS selects every next and catch transition, and a later top-level service response may return a `step` action for the BOS client to invoke when ready. Do not transport CRM records, contact lists, files, source identities, transition names, or runtime state through lifecycle completion.
 
+When BOS returns `client_action_required` for a server-owned node, validate the
+sanitized public error and the separate closed resolution. Use the resolution's
+goal and optional semantic operation to discover the minimum current CRM
+capability. Respect its exact approval requirement and approval scope. After
+the resolution is satisfied, invoke only its returned bodyless `step` action
+through BOS. Supply no journey state, retry state, transition, or replacement
+action.
+
 When a returned CRM instruction reports invalid campaign recipients, reason from the sanitized failure and current CRM evidence. Recommend the smallest correction or regenerated audience that satisfies the user's original objective. Obtain user permission before any CRM mutation, invoke only the newly discovered CRM operation, and acknowledge completion with the exact returned lifecycle payload. Send no audience or server-held list reference through `complete`. BOS re-queries and rematerializes the audience. Any changed audience invalidates the prior campaign approval, so require campaign reprepare and fresh user approval before another send while preserving recipients already proven successfully delivered.

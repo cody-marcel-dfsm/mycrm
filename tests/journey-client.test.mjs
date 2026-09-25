@@ -2,9 +2,10 @@ import assert from "node:assert/strict";
 import {readFile} from "node:fs/promises";
 import test from "node:test";
 
-import { CrmJourneyClient, buildCrmContribution, createAudienceRepairGuidance, validateCrmInstructionEnvelope } from "../src/journey/client.mjs";
+import { CrmJourneyClient, buildCrmContribution, createAudienceRepairGuidance, validateCrmInstructionEnvelope, validateCrmResolutionEnvelope } from "../src/journey/client.mjs";
 
 const serviceFixture = JSON.parse(await readFile(new URL("./fixtures/bos/journey/awaiting-client.crm.json", import.meta.url), "utf8"));
+const actionRequiredFixture = JSON.parse(await readFile(new URL("../contracts/bos/service-journey/v1/journey.client-action-required.example.json", import.meta.url), "utf8"));
 
 test("journey client requires the BOS-authenticated action invoker", () => {
   assert.throws(() => new CrmJourneyClient({http: {request: async () => ({status: 200})}}), /bos\.invokeReturnedAction/);
@@ -25,7 +26,7 @@ test("published BOS awaiting_client CRM instruction is accepted and delegated un
   assert.equal(response.identity, "crm-attendee-evidence");
   assert.deepEqual(response.current_step, {code: "resolve_crm_evidence", type: "client"});
   const instruction = client.validateInstruction(response.instruction);
-  assert.equal(instruction.lookup_text, "cody.marcel@dfsm.ai");
+  assert.equal(instruction.lookup_text, "fixture.attendee@example.invalid");
   assert.equal(instruction.student_id, "student-public-42");
   await client.invokeInstructionAction(instruction, "after_success", {acknowledged: true});
   assert.deepEqual(calls, [{action: serviceFixture.instruction.after_success, payload: {acknowledged: true}}]);
@@ -88,4 +89,21 @@ test("CRM audience repair requires server rematerialization, campaign reprepare,
   assert.equal(guidance.server.require_fresh_campaign_approval, true);
   assert.equal(guidance.server.preserve_proven_successful_deliveries, true);
   assert.equal(JSON.stringify(guidance).includes("@"), false);
+});
+
+test("published client_action_required recovery is closed, sanitized, and delegated through its returned step", async () => {
+  const response = structuredClone(actionRequiredFixture);
+  const calls = [];
+  const client = new CrmJourneyClient({bos: {invokeReturnedAction: async (action, payload) => { calls.push({action, payload}); return {status: 200}; }}});
+  const validated = validateCrmResolutionEnvelope(response);
+  assert.equal(validated.resolution.operation, actionRequiredFixture.resolution.operation);
+  assert.match(validated.resolution.operation, /\.templates\.create$/);
+  assert.equal(validated.resolution.requires_user_approval, true);
+  await client.invokeResolutionAction(validated);
+  assert.deepEqual(calls, [{action: response.resolution.after_success, payload: undefined}]);
+  assert.throws(() => validateCrmResolutionEnvelope({...response, execution_id: "private"}), /schema|shape is invalid/);
+  assert.throws(() => validateCrmResolutionEnvelope({...response, current_step: {...response.current_step, type: "client"}}), /schema|server-owned/);
+  assert.throws(() => validateCrmResolutionEnvelope({...response, resolution: {...response.resolution, approval_scope: ["purpose", "purpose"]}}), /unique|approval_scope is invalid/);
+  assert.throws(() => validateCrmResolutionEnvelope({...response, resolution: {...response.resolution, after_success: {...response.resolution.after_success, verb: "complete"}}}), /schema|bodyless step/);
+  assert.throws(() => validateCrmResolutionEnvelope({...response, error: {...response.error, provider_error: "private"}}), /schema|unsupported field|private key/i);
 });
