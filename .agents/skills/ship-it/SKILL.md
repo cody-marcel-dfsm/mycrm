@@ -157,6 +157,11 @@ that approval.
    checkout, verify the release branch is merged, and delete only that local
    release branch with the safe merged-branch command.
 
+The repository shipment remains incomplete while any release commit exists
+only locally. Require local `main` and `origin/main` to resolve to the same
+commit and verify that the complete release branch is reachable from remote
+`main` before reporting completion.
+
 ## Verify the merged installation
 
 1. Build the merged release again and verify its manifest and content digest.
