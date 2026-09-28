@@ -6,23 +6,41 @@ only to public contracts and authenticated network endpoints.
 
 Governing constitution: `Vault/docs/CONSTITUTION.md`.
 
-Project-local Oracle: `.agents/skills/oracle/SKILL.md`.
+Project-local Oracle command: `npm run oracle:review`.
+Project-local proposal command: `npm run oracle:proposal -- "<proposal>"`.
+
+The Oracle is an independent approval process. Ordinary implementation,
+review, release, and shipping agents call the command; they never load, adopt,
+quote, or impersonate `.agents/skills/oracle/SKILL.md`. The command launches
+the isolated Oracle approver, which alone loads that skill, classifies
+authentication impact, emits protected-change warnings, and returns the
+verdict bound to the exact staged Git tree.
+
+Before mutation, submit the proposed Problem, Cause, and Recommended change to
+the proposal command. Continue automatically when the Oracle approves work
+within the user's existing task authorization. Stop and request the user's
+exact approval only when the Oracle flags a genuinely new architecture, public
+API, authentication, or authorization decision; keep each labeled section to
+three concise sentences. Proposal review writes a separate local record and
+never substitutes for the completed staged-tree receipt.
 
 ## BOS Product Family coordination
 
 Projects-level family architecture:
-`../Vault/docs/architecture/bos-product-family.md`.
+`/Users/cody/Development/Projects/Vault/docs/architecture/bos-product-family.md`.
 
-Projects-level Oracle:
-`../.agents/skills/oracle/SKILL.md`.
+Projects-level Oracle: request review only through
+`/Users/cody/Development/Projects/tools/projects_oracle.py`. My CRM agents
+never load the Projects approver skill directly.
 
 - My CRM is the BOS Product Family's independent external CRM-domain client.
   It contributes provider-neutral CRM expertise and consumes published BOS
   discovery and deterministic API contracts.
-- Read the family architecture and Projects Oracle for product-family
-  membership, cross-project ownership, or a shared public-contract question.
-  These two Projects-level coordination authorities are explicitly readable
-  from this repository despite the hard repository boundary below.
+- Read the family architecture and request a Projects Oracle decision through
+  `/Users/cody/Development/Projects/tools/projects_oracle.py` for product-family membership, cross-project ownership, or a
+  shared public-contract question. The family architecture is explicitly
+  readable from this repository despite the hard boundary below; the Projects
+  approver skill remains private to its Oracle process.
 - This repository's Vault and project-local Oracle remain authoritative for My
   CRM internals, implementation, package, tests, and release. The Projects
   Oracle never substitutes for project-local review.
@@ -53,8 +71,8 @@ Projects-level Oracle:
 - My CRM source, tests, fixtures, prompts, documentation, Vault, evidence,
   generated packages, and release gates contain no real customer,
   organization, user, email address, tenant, context label, or customer ID.
-  Acceptance uses only generated synthetic values or server-advertised
-  ephemeral fixtures.
+  Acceptance uses generated tenant-neutral synthetic values and persists no
+  identity-bearing fixture or response values.
 - My CRM owns its independent plugin package, release, and host-specific thin
   integration.
 - My CRM requires the separately installed BOS product. Its MCP operates from
@@ -119,6 +137,17 @@ Projects-level Oracle:
 
 Run `npm test` before completing any implementation change.
 
-Every repository mutation requires review of the complete actual diff by the
-project-local Oracle. A mutation is incomplete until that review ends with the
-literal verdict `APPROVED`; any correction requires a fresh review.
+Every repository mutation requires review of the complete staged tree through
+`npm run oracle:review`. A mutation is incomplete until the Oracle utility
+records the literal verdict `APPROVED` for that exact tree; any correction
+invalidates the receipt and requires a fresh review. `npm run oracle:verify`
+and the repository commit hooks reject a missing, rejected, or stale receipt.
+CI verifies that the receipt-derived commit stamp names its exact Git tree.
+Completed review requires an approved proposal record bound to the current
+base and verifies the candidate remains within its scope.
+
+The trust boundary is process separation: implementation agents obey this
+workflow and cannot wear the approver skill; the isolated Oracle subprocess
+alone evaluates the staged candidate and writes the receipt. This process does
+not model an implementation agent as a malicious same-OS adversary with direct
+access to `.git` or the ability to rewrite the gate itself.

@@ -1,11 +1,19 @@
 ---
 name: my-crm-automation
-description: Contribute CRM goals and constraints to BOS-owned explain planning and BOSL authoring, then consume returned journey instructions and actions.
+description: When required BOS authoring and runtime contracts are available, contribute CRM expertise to ad hoc dynamic workflows, then consume returned journey instructions and actions. Use after fixed-workflow precedence when a CRM objective has multiple dependent steps, crosses services, needs durable recovery, or explicitly requires custom composition.
 ---
 
 # My CRM Automation
 
 Route explicit explain, preview, and automation requests to installed BOS operating-system/application-client skills. They interpret the complete prompt, request current discovery and Describe, construct explain plans, author BOSL, and control lifecycle interaction. My CRM contributes only CRM goals, concepts, constraints, required evidence, source semantics, approvals, guarantees, presentation, and recovery guidance.
+
+First select a complete applicable focused CRM workflow when one covers the
+objective. Select ad hoc composition only when no complete fixed workflow
+covers the objective or the user explicitly requests custom composition. In
+that branch, a request that spans multiple dependent CRM or non-CRM steps,
+requires a durable human/automation handoff, or needs bounded recovery is an ad
+hoc workflow candidate. My CRM contributes the CRM portion and never creates a
+local graph, compiler, transition engine, or runtime.
 
 Route each marketplace starter through the installed BOS workflow orchestrator because its audience or lookup identity comes from the latest completed meeting. Ask BOS to resolve the `my-crm` plugin's configured default unless the user explicitly selected another authorized organization for this task. Stay within the resulting BOS-authenticated organization, application, installation, user, and role scope; never request organization data, tenant identifiers, or authority selectors. If the default is unavailable, or no qualifying meeting, external attendee, or CRM match exists, report that outcome and stop without probing another organization or requesting replacement input.
 

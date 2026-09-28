@@ -34,7 +34,7 @@ test("provider-neutral client composes discovery, exact requests, and public res
 test("provider-neutral client follows only returned bodyless mutation state actions", async () => {
   const bos = fixtureBos();
   const client = new ProviderNeutralCrmClient({bos});
-  const action = {verb: "state", method: "GET", href: "/state/public", payload_schema: null};
+  const action = {verb: "state", method: "GET", href: "/bos/state/public", payload_schema: null};
   const result = await client.observeUpdate(action, {targets: examples.update.request.targets});
   assert.deepEqual(result, examples.update.response);
   assert.deepEqual(bos.calls, [["state", action]]);
@@ -61,7 +61,7 @@ test("provider-neutral client sends one ordered mutation across several explicit
 test("provider-neutral client fails closed on transport and contract drift", async () => {
   const bos = fixtureBos();
   const client = new ProviderNeutralCrmClient({bos});
-  bos.execute = async () => ({status: 503, body: {error: {code: "SOURCE_TEMPORARILY_UNAVAILABLE"}}});
+  bos.execute = async () => ({status: 503, body: {error: {code: "source_temporarily_unavailable"}}});
   await assert.rejects(client.search(examples.search.request), /successful public response/);
   bos.execute = async () => ({status: 200, body: {...examples.search.response, internal_id: "private"}});
   await assert.rejects(client.search(examples.search.request), /schema|unsupported field|additionalProperties/);
@@ -76,6 +76,6 @@ test("provider-neutral client rejects create results from a different source bef
   const invalidations = [];
   const client = new ProviderNeutralCrmClient({bos, onMutationComplete: async (value) => invalidations.push(value)});
   await assert.rejects(client.create(examples.create.request), /does not match the requested source/);
-  await assert.rejects(client.observeCreate({verb: "state", method: "GET", href: "/state/public", payload_schema: null}, {source: examples.create.request.source}), /does not match the requested source/);
+  await assert.rejects(client.observeCreate({verb: "state", method: "GET", href: "/bos/state/public", payload_schema: null}, {source: examples.create.request.source}), /does not match the requested source/);
   assert.deepEqual(invalidations, []);
 });

@@ -5,6 +5,14 @@ description: Ground My CRM architecture guidance and repository review in this r
 
 # My CRM Oracle
 
+## Invocation boundary
+
+This approver skill is private to the project-local Oracle process. Ordinary
+implementation, review, release, and shipping agents must never wear or invoke
+it directly. They call `npm run oracle:review`; that utility launches the
+isolated read-only approver and supplies the exact staged Git tree. Only this
+Oracle process emits authentication warnings and the final approval verdict.
+
 This Oracle is the project-local authority for
 this repository. It never substitutes for the Projects
 Architecture Oracle or a BOS Service/BOS client Oracle.
@@ -22,16 +30,14 @@ Before architecture guidance or review, read completely:
 6. the public contracts and repository files actually consumed by the change.
 
 For BOS Product Family membership, cross-project ownership, or shared
-public-contract guidance and review, also read completely:
-
-- `../Vault/docs/architecture/bos-product-family.md`;
-  and
-- `../.agents/skills/oracle/SKILL.md`.
-
-These two Projects-level coordination authorities are explicitly readable
-despite the repository boundary. They authorize no access to sibling private
-source and create no filesystem, build, package, runtime, database, or release
-dependency.
+public-contract guidance and review, also read
+`/Users/cody/Development/Projects/Vault/docs/architecture/bos-product-family.md`
+completely and require the independent Projects Oracle verdict produced only
+through `/Users/cody/Development/Projects/tools/projects_oracle.py`. Never load
+or impersonate the Projects approver skill. The
+family architecture is explicitly readable despite the repository boundary;
+it authorizes no access to sibling private source and creates no filesystem,
+build, package, runtime, database, or release dependency.
 
 Run `npm run vault:sync` before knowledge-dependent guidance and after a Vault
 mutation. Use this repository's published contract fixtures and live endpoint
@@ -121,9 +127,9 @@ approval.
 
 My CRM is the BOS Product Family's independent external CRM-domain client. The
 canonical family relationship is
-`../Vault/docs/architecture/bos-product-family.md`,
-and its Projects-level reviewer is
-`../.agents/skills/oracle/SKILL.md`.
+`/Users/cody/Development/Projects/Vault/docs/architecture/bos-product-family.md`,
+and its Projects-level reviewer is the independent Oracle process invoked only
+through `/Users/cody/Development/Projects/tools/projects_oracle.py`.
 
 The Projects Architecture Oracle governs family membership, inter-project
 ownership, and shared public-contract alignment. This My CRM Oracle governs how

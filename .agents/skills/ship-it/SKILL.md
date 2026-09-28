@@ -5,6 +5,22 @@ description: Create the next MyCRM release version, validate and review the comp
 
 # Ship It
 
+## Protected-change approval gate
+
+This invocation authorizes release execution for already authorized work. It
+does not authorize architecture, public API-contract, authentication, or
+authorization changes, including compatibility work introduced during
+remediation. If the candidate contains one without the user's exact approval,
+stop and request approval under **Problem**, **Cause**, and **Recommended
+change**, with no more than three concise sentences per heading; require the
+local Oracle to reject it until approval is verified.
+
+Before release mutation, submit the concise Problem, Cause, and Recommended
+change through `npm run oracle:proposal -- "<proposal>"`. Continue approved
+in-scope work automatically. Escalate to the user only when the Oracle flags a
+genuinely new protected decision; proposal approval never replaces the
+completed staged-tree review.
+
 Complete the MyCRM release loop inside
 the My CRM repository root.
 
@@ -50,12 +66,12 @@ records and effects.
 
 ## Security gate
 
-If an in-scope correction changes authentication, authorization, OAuth,
-grants, tokens, sessions, protected-resource audiences, MCP binding topology,
-login recovery, credential behavior, or authority scope, stop before that
-implementation and emit the exact red warning required by
-`Vault/docs/CONSTITUTION.md`. The ship-it invocation does not replace the
-developer owner's direct approval of an exact protected security change.
+The shipping agent never classifies authentication impact and never emits an
+Oracle warning or verdict. It calls `npm run oracle:review`; the independent
+Oracle process alone applies the security gate in `Vault/docs/CONSTITUTION.md`,
+emits any protected-change warning, and returns the verdict for the exact
+staged tree. The ship-it invocation does not replace the developer owner's
+direct approval of an exact protected security change.
 
 Before staging or committing any payload that contains the authentication
 rollback governed by `MYCRM-AUTH-005`, locate the documented developer-owner
@@ -65,9 +81,10 @@ does not supply this protected-change approval.
 
 ## Preflight
 
-1. Read `AGENTS.md`, `Vault/docs/CONSTITUTION.md`, relevant Vault designs and
-   evidence, `.agents/skills/oracle/SKILL.md`, and the release instructions in
-   `README.md`.
+1. Read `AGENTS.md`, relevant Vault designs and evidence, and the release
+   instructions in `README.md`. Never read or adopt
+   `.agents/skills/oracle/SKILL.md`; invoke the Oracle command when directed
+   below.
 2. Resolve the current branch, default branch, upstream, remotes, and complete
    staged, unstaged, untracked, renamed, and deleted status. Require the push
    remote to resolve to `https://github.com/cody-marcel-dfsm/mycrm.git`.
@@ -107,45 +124,27 @@ git diff --check
 ```
 
 Use `npm run install:local` only after the versioned candidate is built and the
-installed BOS dependency is ready, then run `npm run install:verify`. Before
-commit, push, merge, or publication, complete the full supported-host and
-coexistence acceptance required by `MYCRM-JNY-702`, `MYCRM-JNY-703`,
-`MYCRM-JNY-704`, `MYCRM-AUTH-004`, and `MYCRM-AUTH-005`. This includes:
+installed BOS dependency is ready, then run `npm run install:verify`.
 
-- `MYCRM_LIVE_ACCEPTANCE=1 npm run test:live` with fresh sanitized evidence
-  written through `MYCRM_LIVE_EVIDENCE_OUT`;
-- live application discovery, operation-scoped Describe, exact advertised
-  deterministic HTTPS invocation, schema validation, provenance, and
-  freshness;
-- unchanged BOS-only and BOS-plus-Education-Center authentication acceptance;
-- BOS-plus-My-CRM and three-product coexistence, including clean install,
-  dependency order, restart, session resume, authentication recovery,
-  interrupted-request continuation, upgrade, uninstall/reinstall, and a clean
-  profile; and
-- every other applicable live/native scenario in the canonical acceptance
-  matrix.
-
-`HOST_ACTION_REQUIRED`, a timed-out or stalled runner, mock-only evidence, a
-zero-assertion inventory check, an incomplete coexistence matrix, or any
-unexecuted required scenario is incomplete acceptance and stops the release
-before commit and publication. Live destructive fixture scenarios require the
-separate explicit authorization defined by the canonical plan; absent that
-authorization, preserve the candidate and report the release as blocked.
-
-Submit the complete actual diff and validation evidence to the project-local
-Oracle. Require exact findings and a literal `APPROVED` or `REJECTED`. Resolve
-every rejection, rerun affected validation, sync the Vault after Vault changes,
-and request a fresh complete review. Every mutation after approval invalidates
-that approval.
+Install the repository hooks with `npm run hooks:install`, stage the complete
+candidate with `git add -A`, confirm no Vault or generated output is staged,
+then call `npm run oracle:review`. The utility submits the exact staged tree and
+repeatable `--validation` evidence to the independent project-local Oracle.
+When exact owner-approval evidence applies, pass it once through
+`--owner-approval`; the Oracle alone determines whether it covers the staged
+change. The utility records only a tree-bound `APPROVED` receipt. Resolve every rejection, rerun affected
+validation, restage, sync the Vault after Vault changes, and call the utility
+again. Every mutation after approval invalidates the receipt.
 
 ## Commit and publish
 
-1. Stage the complete Oracle-approved Git-visible payload with `git add -A`.
-   Confirm no Vault file or ignored build output is staged and no untracked or
-   unstaged release input remains.
+1. Run `npm run oracle:verify` against the complete Oracle-approved staged
+   payload. Confirm no Vault file or ignored build output is staged and no
+   untracked or unstaged release input remains.
 2. Inspect `git diff --cached --stat` and `git diff --cached --check`. Create one
-   concise release commit. Never amend, squash, rebase, force-push, skip hooks,
-   or create an empty commit.
+   concise release commit. The hooks append and validate the exact-tree Oracle
+   stamp. Never amend, squash, rebase, force-push, skip hooks, forge an Oracle
+   stamp, or create an empty commit.
 3. Push the release branch to `origin` and open a pull request into `main`.
    Include the version, behavior delivered, package digest, Oracle verdict, and
    validation evidence.
@@ -156,6 +155,11 @@ that approval.
 6. Switch to `main`, fast-forward from `origin/main`, confirm a clean synchronized
    checkout, verify the release branch is merged, and delete only that local
    release branch with the safe merged-branch command.
+
+The repository shipment remains incomplete while any release commit exists
+only locally. Require local `main` and `origin/main` to resolve to the same
+commit and verify that the complete release branch is reachable from remote
+`main` before reporting completion.
 
 ## Verify the merged installation
 
@@ -181,7 +185,7 @@ that approval.
 
 Report the previous and new versions, pull-request URL and number, release and
 merge commits, source/default branches, remote destination, included file count,
-package content digest, test/build/install/live-acceptance results, Oracle
+package content digest, test/build/install results, Oracle
 verdict, and confirmation that the workspace is clean on synchronized `main`
 with the merged local release branch removed. If stopped, report the exact
 blocker and preserve all work safely.

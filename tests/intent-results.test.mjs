@@ -26,7 +26,11 @@ test("published federated search results preserve source records and advertised 
   assert.equal(validateFederatedResult(examples.search.response, described.operations[0]).source_results.length, 1);
   const organizationField = structuredClone(examples.search.response);
   organizationField.source_results[0].records[0].student_id = "student-public-42";
+  organizationField.source_results[0].records[0].email = "generated@example.invalid";
+  organizationField.source_results[0].records[0].email_address = "generated@example.invalid";
   assert.equal(validateFederatedResult(organizationField, described.operations[0]).source_results[0].records[0].student_id, "student-public-42");
+  assert.equal(validateFederatedResult(organizationField, described.operations[0]).source_results[0].records[0].email, "generated@example.invalid");
+  assert.equal(validateFederatedResult(organizationField, described.operations[0]).source_results[0].records[0].email_address, "generated@example.invalid");
   const excessive = structuredClone(examples.search.response);
   excessive.source_results[0].records = Array.from({length: 6}, () => structuredClone(examples.search.response.source_results[0].records[0]));
   assert.throws(() => validateFederatedResult(excessive, described.operations[0]), /advertised result limit/);
@@ -38,17 +42,26 @@ test("published federated search results preserve source records and advertised 
   const createLeak = structuredClone(examples.create.response);
   createLeak.record.provider_id = "raw";
   assert.throws(() => validateCreateResult(createLeak), /forbidden private key/);
+  const unadvertised = {code: "service_unavailable", message: "The source is currently unavailable.", retryable: true, correlation_id: "corr-unadvertised-search", details: []};
+  const failedSource = structuredClone(examples.search.response);
+  failedSource.source_results[0] = {...failedSource.source_results[0], status: "failed", records: [], error: unadvertised};
+  assert.deepEqual(validateFederatedResult(failedSource, described.operations[0]).source_results[0].error, unadvertised);
+  const failedCreate = {...structuredClone(examples.create.response), status: "failed", record: null, receipt: null, error: {...unadvertised, correlation_id: "corr-unadvertised-create"}};
+  assert.equal(validateCreateResult(failedCreate, described.operations.find(({operation}) => operation === "create")).error.code, "service_unavailable");
 });
 
 test("mutation outcomes remain ordered and preserve public success/error evidence", async () => {
   const {examples} = synthetic();
   const {request, response} = examples.update;
-  const description = {effect: "update", error_contract: {codes: ["CONFLICT"]}};
+  const description = {effect: "update", error_contract: {codes: ["conflict"]}};
   assert.equal(validateOrderedMutationResult(response, request.targets, description).outcomes.length, 1);
   const source = request.targets[0].source;
   const second = {source, record: {selector: "opaque-2"}, changes: {display_name: "Second"}};
-  const partial = {...structuredClone(response), outcomes: [response.outcomes[0], {source, record: {selector: "opaque-2"}, status: "failed", observed_at: response.outcomes[0].observed_at, readback: null, receipt: null, error: {code: "CONFLICT", message: "The current value changed.", retryable: false, correlation_id: "corr-example", details: []}}]};
+  const partial = {...structuredClone(response), outcomes: [response.outcomes[0], {source, record: {selector: "opaque-2"}, status: "failed", observed_at: response.outcomes[0].observed_at, readback: null, receipt: null, error: {code: "conflict", message: "The current value changed.", retryable: false, correlation_id: "corr-example", details: []}}]};
   assert.equal(validateOrderedMutationResult(partial, [...request.targets, second], description).outcomes.length, 2);
+  const unadvertisedPartial = structuredClone(partial);
+  unadvertisedPartial.outcomes[1].error = {code: "service_unavailable", message: "The source is currently unavailable.", retryable: true, correlation_id: "corr-unadvertised-mutation", details: []};
+  assert.equal(validateOrderedMutationResult(unadvertisedPartial, [...request.targets, second], description).outcomes[1].error.code, "service_unavailable");
   const reorderedSourceKeys = structuredClone(response);
   reorderedSourceKeys.outcomes[0].source = {plugin: source.plugin, platform: source.platform, application: source.application};
   assert.equal(validateOrderedMutationResult(reorderedSourceKeys, request.targets, description).outcomes.length, 1);
@@ -67,11 +80,89 @@ test("mutation outcomes remain ordered and preserve public success/error evidenc
   assert.throws(() => validateOrderedMutationResult(bogus, request.targets, description), /contract_version/);
 });
 
+test("result validators preserve explicit canonical paths and ordinary business error fields", () => {
+  const {describe: descriptions, examples} = synthetic();
+  const contextHandle = `bos_ctx_v2_${"a".repeat(64)}`;
+  const nestedError = (message, suffix) => ({
+    code: "source_temporarily_unavailable",
+    message,
+    retryable: true,
+    correlation_id: `corr-nested-${suffix}`,
+    details: []
+  });
+  const description = (operation) => descriptions.operations.find((candidate) => candidate.operation === operation);
+
+  const search = structuredClone(examples.search.response);
+  search.source_results[0].error = nestedError("The source is temporarily unavailable.", "search-source");
+  search.source_results[0].readback = {error: nestedError("Bearer is exact source readback text.", "search-readback")};
+  search.source_results[0].receipt = {error: nestedError("First source receipt line.\nSecond source receipt line.", "search-receipt")};
+  search.source_results[0].records[0].error = nestedError("https://support.example.invalid/public/error-reference", "search-record");
+  const validatedSearch = validateFederatedResult(search, description("search"));
+  assert.equal(validatedSearch.source_results[0].error.message, "The source is temporarily unavailable.");
+  assert.equal(validatedSearch.source_results[0].readback.error.message, "Bearer is exact source readback text.");
+  assert.equal(validatedSearch.source_results[0].receipt.error.message, "First source receipt line.\nSecond source receipt line.");
+  assert.equal(validatedSearch.source_results[0].records[0].error.message, "https://support.example.invalid/public/error-reference");
+  for (const [evidence, message, suffix] of [
+    ["receipt", "https://support.example.invalid/public/source-receipt", "direct-url"],
+    ["readback", " \n\t ", "direct-whitespace"],
+    ["receipt", "😀".repeat(2048), "direct-astral"]
+  ]) {
+    const candidate = structuredClone(examples.search.response);
+    candidate.source_results[0][evidence] = {error: nestedError(message, suffix)};
+    assert.equal(validateFederatedResult(candidate, description("search")).source_results[0][evidence].error.message, message);
+  }
+  const protectedMessage = structuredClone(examples.search.response);
+  protectedMessage.source_results[0].readback = {error: nestedError(contextHandle, "direct-context")};
+  assert.throws(() => validateFederatedResult(protectedMessage, description("search")), /forbidden context handle/);
+  const unrelatedBusinessError = structuredClone(examples.search.response);
+  unrelatedBusinessError.source_results[0].records[0].metadata = {error: {message: "Organization-defined business status."}};
+  assert.deepEqual(
+    validateFederatedResult(unrelatedBusinessError, description("search")).source_results[0].records[0].metadata.error,
+    {message: "Organization-defined business status."}
+  );
+
+  const create = structuredClone(examples.create.response);
+  create.record.error = {message: "Organization-defined record status."};
+  create.receipt.error = {reason: "Organization-defined receipt status."};
+  const validatedCreate = validateCreateResult(create, description("create"));
+  assert.deepEqual(validatedCreate.record.error, {message: "Organization-defined record status."});
+  assert.deepEqual(validatedCreate.receipt.error, {reason: "Organization-defined receipt status."});
+
+  const update = structuredClone(examples.update.response);
+  update.outcomes[0].readback.error = nestedError("Bearer is part of this exact customer-visible message.", "update-readback");
+  update.outcomes[0].receipt.error = nestedError("First exact line.\nSecond exact line.", "update-receipt");
+  const validatedUpdate = validateOrderedMutationResult(update, examples.update.request.targets, description("update"));
+  assert.equal(validatedUpdate.outcomes[0].readback.error.message, "Bearer is part of this exact customer-visible message.");
+  assert.equal(validatedUpdate.outcomes[0].receipt.error.message, "First exact line.\nSecond exact line.");
+
+  const deleteResult = structuredClone(examples.delete.response);
+  const astralMessage = "😀".repeat(2048);
+  deleteResult.outcomes[0].receipt.error = nestedError(astralMessage, "delete-receipt");
+  assert.equal(validateOrderedMutationResult(deleteResult, examples.delete.request.targets, description("delete")).outcomes[0].receipt.error.message, astralMessage);
+
+  const malformed = structuredClone(search);
+  delete malformed.source_results[0].records[0].error.details;
+  assert.throws(() => validateFederatedResult(malformed, description("search")), /public error shape is invalid/);
+  for (const evidence of ["readback", "receipt"]) {
+    const malformedSourceEvidence = structuredClone(search);
+    malformedSourceEvidence.source_results[0][evidence].error = {message: "Malformed direct source evidence error."};
+    assert.throws(() => validateFederatedResult(malformedSourceEvidence, description("search")), /public error shape is invalid/);
+  }
+  const unsafeDetails = structuredClone(update);
+  unsafeDetails.outcomes[0].receipt.error.details = [{access_token: "private"}];
+  assert.throws(() => validateOrderedMutationResult(unsafeDetails, examples.update.request.targets, description("update")), /forbidden private key/);
+  const unsafeContext = structuredClone(create);
+  unsafeContext.record.error.details = [{value: contextHandle}];
+  assert.throws(() => validateCreateResult(unsafeContext, description("create")), /forbidden context handle/);
+  assert.equal(validateFederatedResult(examples.search.response, description("search")).source_results[0].error, null);
+  assert.equal(validateOrderedMutationResult(examples.update.response, examples.update.request.targets, description("update")).outcomes[0].error, null);
+});
+
 test("mutation result validators consume canonical in-progress state actions and terminal null recovery", async () => {
   const {examples, describe: descriptions} = synthetic();
   const createDescription = descriptions.operations.find(({operation}) => operation === "create");
   const updateDescription = descriptions.operations.find(({operation}) => operation === "update");
-  const stateAction = {verb: "state", method: "GET", href: "/operations/corr-example", payload_schema: null};
+  const stateAction = {verb: "state", method: "GET", href: "/bos/operations/corr-example", payload_schema: null};
   const inProgressCreate = {...structuredClone(examples.create.response), complete: false, status: "in_progress", record: null, receipt: null, error: null, retry_after_seconds: 2, action: stateAction};
   assert.equal(validateCreateResult(inProgressCreate, createDescription).action.verb, "state");
   assert.equal(validateCreateResult({...examples.create.response, retry_after_seconds: null, action: null}, createDescription).complete, true);

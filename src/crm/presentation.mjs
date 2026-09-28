@@ -1,4 +1,4 @@
-import {assertNoPrivateKeys, validateDateTime, validatePublicError} from "../bos/contracts.mjs";
+import {assertNoPrivateKeys, assertNoPrivateKeysPreservingCanonicalErrors, validateDateTime, validatePublicError} from "../bos/contracts.mjs";
 
 export function presentResult(result, {origin, locale, timeZone, conflicts = [], uncertainty = []} = {}) {
   if (!["cached", "live"].includes(origin)) throw new TypeError("Result origin must be live or cached");
@@ -6,7 +6,7 @@ export function presentResult(result, {origin, locale, timeZone, conflicts = [],
   try { validateDateTime(observed, "result freshness"); } catch { throw new TypeError("Result freshness timestamp is required"); }
   const lastUpdated = new Intl.DateTimeFormat(locale, {dateStyle: "medium", timeStyle: "short", timeZone}).format(new Date(observed));
   const view = {origin, last_updated_local: lastUpdated, complete: result.complete, source_results: structuredClone(result.source_results ?? []), coverage: structuredClone(result.coverage ?? null), conflicts: structuredClone(conflicts), uncertainty: structuredClone(uncertainty), usage: structuredClone(result.usage ?? {status: "unavailable"})};
-  assertNoPrivateKeys(view, "CRM presentation");
+  assertNoPrivateKeysPreservingCanonicalErrors(view, "CRM presentation");
   return view;
 }
 
@@ -24,6 +24,7 @@ export function presentPublicFailure(failure, {operation = null, instruction = n
     details: structuredClone(error.details ?? []),
     recovery: instruction === null ? null : structuredClone(instruction)
   };
-  assertNoPrivateKeys({...view, correlation_id: undefined}, "CRM public failure presentation");
+  assertNoPrivateKeysPreservingCanonicalErrors({error}, "CRM public failure presentation");
+  assertNoPrivateKeys({operation, code: error.code, retryable: error.retryable, recovery: view.recovery}, "CRM public failure presentation");
   return view;
 }

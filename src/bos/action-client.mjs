@@ -1,13 +1,7 @@
 import {assertNoPrivateKeys, validateJsonSchema, validateJsonValueAgainstSchema} from "./contracts.mjs";
+import {validateSafeBosRoute} from "./safe-route.mjs";
 
 const ACTION_VERBS = new Set(["start", "complete", "step", "failed", "state"]);
-
-function originRelativeHref(value, label) {
-  if (typeof value !== "string" || !value.startsWith("/") || value.startsWith("//") || value.includes("#") || /(?:^|\/)\.\.(?:\/|$)/.test(value)) {
-    throw new TypeError(`${label} must be an origin-relative URI without traversal or fragment`);
-  }
-  return value;
-}
 
 export function validateResolvedAction(value) {
   if (!value || typeof value !== "object" || Array.isArray(value)) throw new TypeError("returned action must be an object");
@@ -16,7 +10,7 @@ export function validateResolvedAction(value) {
   if (!ACTION_VERBS.has(value.verb)) throw new TypeError("returned action verb is invalid");
   const expectedMethod = value.verb === "state" ? "GET" : "POST";
   if (value.method !== expectedMethod) throw new TypeError(`returned ${value.verb} action method must be ${expectedMethod}`);
-  originRelativeHref(value.href, "returned action href");
+  validateSafeBosRoute(value.href, "returned action href");
   if (!(value.payload_schema === null || (value.payload_schema && typeof value.payload_schema === "object" && !Array.isArray(value.payload_schema)))) throw new TypeError("returned action payload_schema must be an object or null");
   if (value.verb === "state" && value.payload_schema !== null) throw new TypeError("returned state action must be bodyless");
   if (value.payload_schema !== null) validateJsonSchema(value.payload_schema, "returned action payload");

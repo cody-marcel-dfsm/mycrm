@@ -11,11 +11,6 @@
       "id": "authenticated-bos-discovery",
       "owner": "bos-service",
       "required_evidence": "The configured BOS discovery URL exposes authenticated discovery, operation-scoped Describe, current schemas, CRM operations, journey actions, and compatibility contacts without requiring any copied server artifact in My CRM."
-    },
-    {
-      "id": "authorized-live-acceptance",
-      "owner": "release-operator",
-      "required_evidence": "Native-host recovery and isolated multi-source staging fixtures pass, with separate authorization for destructive cases."
     }
   ]
 }
