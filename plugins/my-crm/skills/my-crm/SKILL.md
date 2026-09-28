@@ -1,11 +1,11 @@
 ---
 name: my-crm
-description: Interpret provider-neutral CRM requests, discover the current organization-defined contract through installed BOS, invoke exact advertised HTTPS actions, and present source-preserving CRM results.
+description: Handle provider-neutral CRM work directly or, when required BOS authoring and runtime contracts are available, contribute CRM steps to ad hoc dynamic workflows. Use for CRM reads and mutations, multi-step or cross-service objectives, current contract discovery, and source-preserving results.
 ---
 
 # My CRM
 
-Require the installed BOS product and use its authenticated application-discovery and client skills. Delegate login, reauthentication, consent, source authorization, and connection recovery automatically to BOS. Preserve the exact affected protected resource and pass only the structured `{category, code, source}` recovery condition. Preserve the pending public CRM operation, refresh discovery after BOS reports `READY`, and resume once. Handle no credential, token, authority selector, client identifier, idempotency key, retry state, or execution identity.
+Require the installed BOS product and use its authenticated application-discovery and client skills. Delegate login, reauthentication, consent, source authorization, and connection recovery automatically to BOS. When an advertised operation returns an established uppercase handoff condition or challenged HTTP 401, ask BOS to recover through `READY`, refresh discovery, re-Describe the operation, and retry the exact preserved request once. Handle no credential, token, authority selector, client identifier, idempotency key, retry state, or execution identity.
 
 Before unscoped discovery, ask the installed BOS client to resolve context with
 the `my-crm` plugin preference namespace. An organization explicitly named for
@@ -35,7 +35,17 @@ Never construct an application or organization coordinate, route, source, provid
 - Use `my-crm-automation` to contribute CRM goals and constraints to BOS-owned explain planning, BOSL authoring, and journey interaction.
 - Use `my-crm-cache-maintenance` when the user asks to inspect, refresh, or invalidate shared CRM cache entries.
 
-Ordinary work invokes its operation directly. For an explicit explain, preview, or automation request, route to installed BOS operating-system/application-client skills; they own prompt-wide planning and BOSL authoring. Contribute only CRM goals, concepts, constraints, evidence, approvals, guarantees, presentation, and recovery guidance.
+Ordinary single-operation work invokes its operation directly. First select a
+complete applicable focused CRM workflow when one covers the objective. Select
+ad hoc composition only when no complete fixed workflow covers the objective
+or the user explicitly requests custom composition. In that branch, route
+through `my-crm-automation` and the installed BOS workflow orchestrator when
+the task requires multiple dependent steps, crosses skills or services, or
+needs durable handoffs or recovery, even when the user never says automation,
+BOSL, custom journey, or workflow. BOS owns
+prompt-wide planning, BOSL authoring, and runtime state. Contribute only CRM
+goals, concepts, constraints, evidence, approvals, guarantees, presentation,
+client-owned work, and recovery guidance.
 
 Route all marketplace starter prompts to the installed BOS workflow orchestrator because they derive their audience or lookup identity from the latest completed meeting. Resolve My CRM's plugin-specific default first unless the user explicitly selected another authorized organization for the task. Use only the resulting BOS-authenticated organization, application, installation, user, and role scope. Never ask for organization data, a tenant identifier, or an authority selector. If the default is unavailable, or no qualifying meeting, external attendee, or CRM match exists in that scope, report that outcome and stop without probing another organization or requesting replacement input.
 

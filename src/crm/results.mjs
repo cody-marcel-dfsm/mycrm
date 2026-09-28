@@ -1,4 +1,4 @@
-import {assertNoPrivateKeys, validateDateTime, validatePublicError, validateSourceReference} from "../bos/contracts.mjs";
+import {assertNoPrivateKeysPreservingCanonicalErrors, validateDateTime, validatePublicError, validateSourceReference} from "../bos/contracts.mjs";
 import {validateOperationStateAction} from "../bos/action-client.mjs";
 
 function object(value, label) {
@@ -41,7 +41,7 @@ export function validateFederatedResult(value, description) {
   try { validateDateTime(result.observed_at, "federated result observed_at"); } catch { throw new TypeError("federated result contract, correlation, and freshness evidence are required"); }
   const maximum = description?.limits?.max_results_per_source;
   for (const [index, sourceResult] of result.source_results.entries()) {
-    for (const key of Object.keys(sourceResult)) if (!["error", "observed_at", "records", "source", "status"].includes(key)) throw new TypeError(`source_results[${index}] contains unsupported field ${key}`);
+    for (const key of Object.keys(sourceResult)) if (!["error", "observed_at", "readback", "receipt", "records", "source", "status"].includes(key)) throw new TypeError(`source_results[${index}] contains unsupported field ${key}`);
     validateSourceReference(sourceResult.source, `source_results[${index}].source`);
     if (typeof sourceResult.status !== "string" || sourceResult.status === "") throw new TypeError(`source_results[${index}].status is required`);
     if (!Array.isArray(sourceResult.records)) throw new TypeError(`source_results[${index}].records must be an array`);
@@ -49,15 +49,18 @@ export function validateFederatedResult(value, description) {
     for (const [recordIndex, record] of sourceResult.records.entries()) {
       object(record, `source_results[${index}].records[${recordIndex}]`);
       if (typeof record.public_selector !== "string" || record.public_selector === "") throw new TypeError("source record public_selector is required");
-      assertNoPrivateKeys(record, `source_results[${index}].records[${recordIndex}]`);
     }
     try { validateDateTime(sourceResult.observed_at, `source_results[${index}].observed_at`); } catch { throw new TypeError("source result freshness is required"); }
     if (sourceResult.error !== null && sourceResult.error !== undefined) {
-      const error = validatePublicError(sourceResult.error);
-      const advertised = new Set(description?.error_contract?.codes ?? []);
-      if (!advertised.has(error.code)) throw new TypeError(`source_results[${index}] returned an unadvertised public error`);
+      validatePublicError(sourceResult.error);
+    }
+    for (const evidence of ["readback", "receipt"]) {
+      if (sourceResult[evidence] !== null && sourceResult[evidence] !== undefined) {
+        object(sourceResult[evidence], `source_results[${index}].${evidence}`);
+      }
     }
   }
+  assertNoPrivateKeysPreservingCanonicalErrors(result, "federated result");
   return structuredClone(result);
 }
 
@@ -87,16 +90,14 @@ export function validateCreateResult(value, description = null, expectedSource =
   if (result.record) {
     object(result.record, "create result record");
     if (typeof result.record.public_selector !== "string" || result.record.public_selector === "") throw new TypeError("create result public_selector is required");
-    assertNoPrivateKeys(result.record, "create result record");
   }
   if (result.receipt) {
     object(result.receipt, "create result receipt");
-    assertNoPrivateKeys(result.receipt, "create result receipt");
   }
   if (result.error) {
-    const error = validatePublicError(result.error);
-    if (description && !(description.error_contract?.codes ?? []).includes(error.code)) throw new TypeError("create result returned an unadvertised public error");
+    validatePublicError(result.error);
   }
+  assertNoPrivateKeysPreservingCanonicalErrors(result, "create result");
   return structuredClone(result);
 }
 
@@ -130,17 +131,15 @@ export function validateOrderedMutationResult(value, targets, description) {
       if (outcome.readback != null || outcome.receipt !== null || outcome.error === null) throw new TypeError(`mutation outcome ${index} failure evidence is invalid`);
     } else if (outcome.receipt === null || outcome.error !== null) throw new TypeError(`mutation outcome ${index} success evidence is invalid`);
     if (outcome.error) {
-      const error = validatePublicError(outcome.error);
-      if (!description.error_contract.codes.includes(error.code)) throw new TypeError(`mutation outcome ${index} returned an unadvertised public error`);
+      validatePublicError(outcome.error);
     }
     if (outcome.readback) {
       object(outcome.readback, `mutation outcome ${index} readback`);
-      assertNoPrivateKeys(outcome.readback, `mutation outcome ${index} readback`);
     }
     if (outcome.receipt) {
       object(outcome.receipt, `mutation outcome ${index} receipt`);
-      assertNoPrivateKeys(outcome.receipt, `mutation outcome ${index} receipt`);
     }
   });
+  assertNoPrivateKeysPreservingCanonicalErrors(result, "mutation result");
   return structuredClone(result);
 }

@@ -33,7 +33,7 @@ const canonicalJourneyPrompt = marketplacePromptContracts.prompts?.find(({id}) =
 if (canonicalJourneyPrompt?.operation !== null || canonicalJourneyPrompt?.effect !== "approval-gated-write" || canonicalJourneyPrompt?.routing !== "bos-journey" || !canonicalJourneyPrompt?.assertions?.includes("no-initial-crm-lookup") || !canonicalJourneyPrompt?.assertions?.includes("approval-before-send") || !canonicalJourneyPrompt?.assertions?.includes("crm-only-on-returned-instruction")) errors.push("canonical recent-meeting starter prompt must retain BOS-owned journey routing and My CRM participation boundaries");
 for (const prompt of marketplacePromptContracts.prompts ?? []) {
   const requiredAssertions = ["active-authenticated-scope", "plugin-scoped-default", "bos-authority-resolution", "cross-context-data-isolation", "current-discovery-only", "no-additional-identifiers", "calendar-derived-audience", "stop-when-no-qualifying-attendee"];
-  if (prompt.text.length > 500 || requiredAssertions.some((assertion) => !prompt.assertions?.includes(assertion))) errors.push(`${prompt.id} must be self-contained and preserve active authenticated scope`);
+  if (prompt.text.length > 128 || requiredAssertions.some((assertion) => !prompt.assertions?.includes(assertion))) errors.push(`${prompt.id} must fit the native host limit and preserve active authenticated scope`);
 }
 if (manifest.apps !== undefined || manifest.mcpServers !== undefined) errors.push("My CRM must not declare an app mapping or a second MCP connection");
 if (product.schema_version !== "2" || product.application_name !== "my-crm") errors.push("My CRM product identity is invalid");
@@ -43,6 +43,8 @@ for (const key of ["resource_url", "oauth", "token", "grant", "session", "creden
 
 const handoff = product.authentication_handoff;
 if (handoff?.authentication_manager !== "bos" || handoff?.credential_lifecycle_owner !== "host" || handoff?.authorization_enforcement_owner !== "bos-service" || handoff?.delegation_policy !== "AUTOMATIC") errors.push("BOS authentication delegation metadata is invalid");
+const authenticationConditions = ["MISSING_GRANT", "EXPIRED_TOKEN", "REVOKED_GRANT", "INVALID_CLIENT", "INVALID_GRANT", "RESOURCE_MISMATCH", "REAUTHENTICATION_REQUIRED", "AUTHORIZATION_REQUIRED", "MCP_WWW_AUTHENTICATE", "MCP_SESSION_CLOSED", "PROVIDER_AUTHORIZATION_REQUIRED"];
+if (handoff?.recognized_condition_codes !== undefined || JSON.stringify(handoff?.recognized_condition_categories) !== JSON.stringify(authenticationConditions)) errors.push("BOS authentication delegation must declare the established uppercase recognized_condition_categories");
 if (handoff?.readiness_result?.representation !== "AUTHENTICATION_READINESS_ONLY" || handoff?.readiness_result?.authority_data !== "EXCLUDED") errors.push("Authentication handoff must return readiness without authority data");
 
 if (marketplace.name !== "my-crm-local" || marketplace.plugins?.length !== 1) errors.push("Local marketplace identity is invalid");
@@ -56,7 +58,6 @@ try {
   buildUpdateRequest(await readJson("examples/crm/targeted-update.json"));
   createConceptualCustomer(conceptualCustomer);
   buildCrmContribution(journeyContribution);
-  validateJsonSchema(await readJson("contracts/my-crm/v1/live-acceptance-response.schema.json"), "live acceptance response schema");
   const marketplacePromptSchema = await readJson("contracts/my-crm/v1/marketplace-prompt-contracts.schema.json");
   validateJsonSchema(marketplacePromptSchema, "marketplace prompt contracts schema");
   validateJsonValueAgainstSchema(marketplacePromptContracts, marketplacePromptSchema, "marketplace prompt contracts");
@@ -69,7 +70,6 @@ for (const relative of [
   "contracts/my-crm/v1/conceptual-customer.schema.json",
   "contracts/my-crm/v1/crm-journey-contribution.schema.json",
   "contracts/my-crm/v1/release-dependencies.json",
-  "contracts/my-crm/v1/live-acceptance-response.schema.json",
   "contracts/my-crm/v1/marketplace-prompt-contracts.json",
   "contracts/my-crm/v1/marketplace-prompt-contracts.schema.json"
 ]) {

@@ -1,5 +1,6 @@
 import Ajv2020 from "ajv/dist/2020.js";
 import addFormats from "ajv-formats";
+import {validateSafeBosRoute} from "./safe-route.mjs";
 
 const HTTP_METHODS = new Set(["DELETE", "GET", "PATCH", "POST", "PUT"]);
 const LIMIT_KEYS = ["max_targets", "max_results_per_source", "pagination_supported", "bulk_supported", "streaming_supported", "maximum_duration_seconds", "maximum_fan_out"];
@@ -10,10 +11,53 @@ const SAFE_PUBLIC_KEYS = new Set(["$id", "context_header", "correlation_id", "de
 const FORBIDDEN_PUBLIC_TOKENS = new Set([
   "accesstoken", "apikey", "authorization", "authority", "credential", "databaseid",
   "actionid", "appid", "applicationid", "approvalid", "clientid", "context", "executionid", "grant", "idempotencykey", "installationid", "internalid", "journeyid", "oauth", "organizationid", "principal",
-  "providererror", "providerid", "refreshtoken", "requestfingerprint", "retrycount", "retryid", "roleid",
+  "providererror", "providerid", "providerpayload", "refreshtoken", "requestfingerprint", "retrycount", "retryid", "roleid",
+  "graphid", "handler", "orgid", "password", "pluginid", "providermessage", "sql", "stacktrace",
   "secret", "sessionid", "sourceid", "tenant", "token", "userid"
 ]);
 const AUTHORITY_QUALIFIERS = new Set(["context", "id", "name", "role", "scope", "selector", "type"]);
+export const PUBLIC_ERROR_PRIVATE_DETAIL_KEYS = Object.freeze([
+  "access_token", "action_id", "actor_id", "actor_role_id", "actor_user_id",
+  "agent_installation_id", "api_key", "app_code", "app_id", "application_id",
+  "approval_id", "artifact_ref", "attendee", "attendees", "authority",
+  "authority_context", "authority_epoch", "authorization", "authorization_header",
+  "bearer_token", "caller_key", "client_id", "client_idempotency_key", "client_key",
+  "compiled_fingerprint", "compiled_snapshot", "connection_id", "context_handle",
+  "context_id", "cookie", "credential", "credential_id", "database_id",
+  "delegated_role_id", "digest", "email", "email_address", "email_addresses",
+  "emails", "execution_id", "grant", "grant_id", "graph_id", "handler",
+  "idempotency_key", "implementation", "installation_id", "installed_app_id",
+  "internal_id", "journey_id", "membership_id", "node_occurrence", "oauth_grant_id",
+  "oauth_token", "oauth_token_id", "object_name", "occurrence", "opaque_context",
+  "operation_id", "org_id", "organization_id", "owner_user_id", "plugin_id",
+  "principal", "principal_context", "provider", "provider_account_id",
+  "provider_error", "provider_id", "provider_message", "provider_payload",
+  "provider_response", "public_operation_id", "recipient", "recipients",
+  "refresh_token", "request_fingerprint", "resource_group_id", "retry_count",
+  "retry_id", "retry_state", "revision", "role_id", "secret",
+  "semantic_operation_id", "service_account", "session_id", "snapshot_id",
+  "source_id", "sql", "stack_trace", "state_version", "tenant_id",
+  "tenant_selector", "token", "user_id"
+]);
+export const PUBLIC_ERROR_DETAIL_KEY_ALLOWLIST = Object.freeze([
+  "application", "availability", "correlation_id", "context_header",
+  "location_context", "ownership_context", "platform", "plugin",
+  "public_selector", "selector", "service_id", "source", "source_reference"
+]);
+const PUBLIC_ERROR_PRIVATE_KEY_SET = new Set(PUBLIC_ERROR_PRIVATE_DETAIL_KEYS);
+const PUBLIC_ERROR_DETAIL_KEY_ALLOWLIST_SET = new Set(PUBLIC_ERROR_DETAIL_KEY_ALLOWLIST);
+const PUBLIC_ERROR_PRIVATE_KEY_TOKENS = new Set([
+  "authorization", "authority", "bearer", "context", "cookie", "credential",
+  "credentials", "email", "grant", "oauth", "password", "principal", "secret",
+  "secrets", "tenant", "token", "tokens"
+]);
+const PUBLIC_ERROR_SENSITIVE_KEY_PARENTS = new Set([
+  "access", "api", "caller", "client", "encryption", "idempotency", "private", "signing"
+]);
+const PUBLIC_ERROR_COMPACT_PRIVATE_KEYS = new Set(PUBLIC_ERROR_PRIVATE_DETAIL_KEYS.map((value) => value.replaceAll("_", "")));
+const PUBLIC_ERROR_PRIVATE_TEXT = /(?:\bselect\b.+\bfrom\b|\binsert\s+into\b|\bupdate\b.+\bset\b|\bdelete\s+from\b|\b(?:create|alter|drop)\s+table\b|traceback\s*\(most recent call last\)|^Bearer\s+|bos_ctx_v2_[a-f0-9]{64})/isu;
+const PUBLIC_ERROR_PRIVATE_MESSAGE = /(?:sqlstate|traceback|stack trace|password\s*=|token\s*=|secret\s*=)/iu;
+const PUBLIC_ERROR_CONTEXT_HANDLE = /bos_ctx_v2_[a-f0-9]{64}/iu;
 
 function clone(value) { return value === undefined ? undefined : structuredClone(value); }
 function object(value, label) {
@@ -26,8 +70,7 @@ function nonEmpty(value, label) {
 }
 function publicRoute(value, label) {
   nonEmpty(value, label);
-  if (!value.startsWith("/") || !value.includes("/{organization}/") || value.includes("..") || value.includes("://")) throw new TypeError(`${label} must be a public organization route template`);
-  return value;
+  return validateSafeBosRoute(value, label, {organizationTemplate: true});
 }
 function exactKeys(value, expected, label) {
   if (JSON.stringify(Object.keys(object(value, label)).sort()) !== JSON.stringify([...expected].sort())) throw new TypeError(`${label} shape is invalid`);
@@ -39,6 +82,39 @@ function operationId(value, label) {
 }
 function tokens(key) {
   return String(key).replace(/([a-z0-9])([A-Z])/g, "$1 $2").toLowerCase().split(/[^a-z0-9]+/).filter(Boolean);
+}
+function normalizePublicErrorDetailKey(key) {
+  return String(key)
+    .replace(/([a-z0-9])([A-Z])/g, "$1_$2")
+    .replace(/[^A-Za-z0-9]+/g, "_")
+    .replace(/^_+|_+$/g, "")
+    .toLowerCase();
+}
+function publicErrorDetailKeyIsPrivate(key) {
+  const normalized = normalizePublicErrorDetailKey(key);
+  if (PUBLIC_ERROR_DETAIL_KEY_ALLOWLIST_SET.has(normalized)) return false;
+  const parts = normalized.split("_").filter(Boolean);
+  const compact = parts.join("");
+  return PUBLIC_ERROR_PRIVATE_KEY_SET.has(normalized)
+    || PUBLIC_ERROR_COMPACT_PRIVATE_KEYS.has(compact)
+    || parts.some((part) => PUBLIC_ERROR_PRIVATE_KEY_TOKENS.has(part))
+    || (parts.includes("key") && parts.some((part) => PUBLIC_ERROR_SENSITIVE_KEY_PARENTS.has(part)))
+    || (parts.includes("provider") && parts.some((part) => ["error", "exception", "message", "payload", "response", "text"].includes(part)));
+}
+function assertPublicErrorDetailSafe(value, path = []) {
+  if (typeof value === "string") {
+    if (PUBLIC_ERROR_PRIVATE_TEXT.test(value)) throw new TypeError(`public error contains private implementation text at ${path.join(".") || "details"}`);
+    return;
+  }
+  if (Array.isArray(value)) {
+    value.forEach((item, index) => assertPublicErrorDetailSafe(item, [...path, String(index)]));
+    return;
+  }
+  if (!value || typeof value !== "object") return;
+  for (const [key, nested] of Object.entries(value)) {
+    if (publicErrorDetailKeyIsPrivate(key)) throw new TypeError(`public error contains a forbidden private key at ${[...path, key].join(".")}`);
+    assertPublicErrorDetailSafe(nested, [...path, key]);
+  }
 }
 function forbiddenKey(key) {
   if (SAFE_PUBLIC_KEYS.has(String(key))) return false;
@@ -63,6 +139,50 @@ export function assertNoPrivateKeys(value, label = "public contract", path = [])
   }
 }
 
+function sanctionedCanonicalErrorPath(path) {
+  const index = (value) => /^\d+$/.test(value ?? "");
+  if (path.length === 1) return path[0] === "error";
+  if (path.length === 3 && ["source_results", "outcomes", "records"].includes(path[0])) {
+    return index(path[1]) && path[2] === "error";
+  }
+  if (path.length === 4 && path[0] === "source_results" && index(path[1])) {
+    return ["readback", "receipt"].includes(path[2]) && path[3] === "error";
+  }
+  if (path.length === 4 && path[0] === "outcomes" && index(path[1])) {
+    return ["readback", "receipt"].includes(path[2]) && path[3] === "error";
+  }
+  if (path.length === 4 && path[0] === "records" && index(path[1])) {
+    return ["readback", "receipt"].includes(path[2]) && path[3] === "error";
+  }
+  if (path.length === 5 && ["source_results", "outcomes"].includes(path[0]) && index(path[1]) && path[2] === "records" && index(path[3])) {
+    return path[4] === "error";
+  }
+  if (path.length === 6 && ["source_results", "outcomes"].includes(path[0]) && index(path[1]) && path[2] === "records" && index(path[3])) {
+    return ["readback", "receipt"].includes(path[4]) && path[5] === "error";
+  }
+  return false;
+}
+
+export function assertNoPrivateKeysPreservingCanonicalErrors(value, label = "public contract", path = []) {
+  if (sanctionedCanonicalErrorPath(path) && value !== null && value !== undefined) {
+    const error = validatePublicError(value);
+    assertNoPrivateKeys({...error, message: undefined, details: undefined}, label, path);
+    return;
+  }
+  if (Array.isArray(value)) {
+    value.forEach((item, index) => assertNoPrivateKeysPreservingCanonicalErrors(item, label, [...path, String(index)]));
+    return;
+  }
+  if (!value || typeof value !== "object") {
+    assertNoPrivateKeys(value, label, path);
+    return;
+  }
+  for (const [key, nested] of Object.entries(value)) {
+    if (forbiddenKey(key)) throw new TypeError(`${label} contains a forbidden private key at ${[...path, key].join(".")}`);
+    assertNoPrivateKeysPreservingCanonicalErrors(nested, label, [...path, key]);
+  }
+}
+
 export function validateSourceReference(value, label = "source") {
   const source = object(value, label);
   const keys = Object.keys(source).sort();
@@ -74,29 +194,31 @@ export function validateSourceReference(value, label = "source") {
 
 export function validatePublicError(value, {definition = false} = {}) {
   const error = object(value, "public error");
-  for (const key of Object.keys(error)) if (!PUBLIC_ERROR_KEYS.has(key)) throw new TypeError(`public error contains unsupported field ${key}`);
+  exactKeys(error, PUBLIC_ERROR_KEYS, "public error");
   nonEmpty(error.code, "public error code");
-  if (!/^[A-Z][A-Z0-9_]{0,127}$/.test(error.code)) throw new TypeError("public error code is invalid");
-  nonEmpty(error.message, "public error message");
-  if (error.message.length > 2048) throw new TypeError("public error message is too long");
-  if (/sqlstate|traceback|stack trace|password\s*=|token\s*=|secret\s*=/i.test(error.message)) throw new TypeError("public error message contains private implementation detail");
+  if (!/^[a-z][a-z0-9_]{0,127}$/.test(error.code)) throw new TypeError("public error code is invalid");
+  if (typeof error.message !== "string" || Array.from(error.message).length === 0) throw new TypeError("public error message must be a non-empty string");
+  if (Array.from(error.message).length > 2048) throw new TypeError("public error message is too long");
+  if (PUBLIC_ERROR_CONTEXT_HANDLE.test(error.message)) throw new TypeError("public error message contains a forbidden context handle");
+  if (PUBLIC_ERROR_PRIVATE_MESSAGE.test(error.message)) throw new TypeError("public error message contains private implementation detail");
   if (typeof error.retryable !== "boolean") throw new TypeError("public error retryable must be boolean");
   if (!definition) nonEmpty(error.correlation_id, "public correlation_id");
   else if (error.correlation_id !== undefined && error.correlation_id !== null) nonEmpty(error.correlation_id, "public correlation_id");
   if (error.correlation_id !== undefined && error.correlation_id !== null && !/^[A-Za-z0-9][A-Za-z0-9._-]{0,127}$/.test(error.correlation_id)) throw new TypeError("public error correlation_id is invalid");
-  if (error.details !== undefined && error.details !== null) {
-    if (!Array.isArray(error.details)) throw new TypeError("public error details must be an array");
-    error.details.forEach((detail, index) => {
-      object(detail, `public error details[${index}]`);
-      assertNoPrivateKeys(detail, "public error");
-    });
-  }
+  if (!Array.isArray(error.details)) throw new TypeError("public error details must be an array");
+  error.details.forEach((detail, index) => {
+    object(detail, `public error details[${index}]`);
+    assertPublicErrorDetailSafe(detail, ["details", String(index)]);
+  });
   return clone(error);
 }
 
 export function validateApplicationDiscovery(value) {
   const discovery = clone(object(value, "application discovery"));
-  if (JSON.stringify(Object.keys(discovery).sort()) !== JSON.stringify(["application", "bosl", "describe"])) throw new TypeError("application discovery must contain exactly application, describe, and bosl");
+  const discoveryKeys = Object.keys(discovery).sort();
+  const expectedDiscoveryKeys = ["application", "bosl", "describe"];
+  if (Object.hasOwn(discovery, "journey_registration")) expectedDiscoveryKeys.push("journey_registration");
+  if (JSON.stringify(discoveryKeys) !== JSON.stringify(expectedDiscoveryKeys.sort())) throw new TypeError("application discovery contains unsupported fields");
   const application = object(discovery.application, "application discovery application");
   if (JSON.stringify(Object.keys(application).sort()) !== JSON.stringify(["application", "platform"])) throw new TypeError("application discovery application reference is invalid");
   if (application.platform !== "bos" || application.application !== "lead-director") throw new TypeError("application discovery reference is invalid");
@@ -109,6 +231,16 @@ export function validateApplicationDiscovery(value) {
   if (!Array.isArray(describe.operations)) throw new TypeError("application discovery operations must be an array");
   const ids = describe.operations.map((operation, index) => operationId(operation, `operations[${index}]`));
   if (new Set(ids).size !== ids.length) throw new TypeError("application discovery operation identities must be unique");
+  if (Object.hasOwn(discovery, "journey_registration")) {
+    const journeyRegistration = object(discovery.journey_registration, "application discovery journey_registration");
+    exactKeys(journeyRegistration, ["contract"], "application discovery journey_registration");
+    const registrationContract = object(journeyRegistration.contract, "application discovery journey_registration.contract");
+    exactKeys(registrationContract, ["capability", "input"], "application discovery journey_registration.contract");
+    if (registrationContract.capability !== "api.contract.get") throw new TypeError("application discovery journey_registration capability is invalid");
+    const registrationInput = object(registrationContract.input, "application discovery journey_registration.contract.input");
+    exactKeys(registrationInput, ["operation"], "application discovery journey_registration.contract.input");
+    if (registrationInput.operation !== "lead-director.journeys.register") throw new TypeError("application discovery journey_registration operation is invalid");
+  }
   const bosl = object(discovery.bosl, "application discovery BOSL resources");
   if (JSON.stringify(Object.keys(bosl).sort()) !== JSON.stringify(["descriptor_etag", "examples_uri", "reference_uri", "schema_uri"])) throw new TypeError("application discovery BOSL resources are invalid");
   const partitions = [];
@@ -189,7 +321,7 @@ export function validateOperationDescription(value, label = "operation") {
     const hasSourceContract = contractKeys.some((key) => key in source);
     const expected = [...baseKeys, ...(hasSourceContract ? contractKeys : [])].sort();
     if (JSON.stringify(keys) !== JSON.stringify(expected)) throw new TypeError(`${label}.sources[${index}] shape is invalid`);
-    if (!new Set(["ready", "authorization_required", "configuration_required", "temporarily_unavailable"]).has(source.availability)) throw new TypeError(`${label}.sources[${index}] availability is invalid`);
+    if (!new Set(["ready", "provider_authorization_required", "source_not_available", "source_temporarily_unavailable"]).has(source.availability)) throw new TypeError(`${label}.sources[${index}] availability is invalid`);
     const validated = {source: validateSourceReference(source.source, `${label}.sources[${index}].source`), availability: source.availability};
     if (hasSourceContract) {
       for (const schemaName of ["input_schema", "output_schema", "receipt_schema"]) {
@@ -202,7 +334,10 @@ export function validateOperationDescription(value, label = "operation") {
       const sourceErrorContract = object(source.error_contract, `${label}.sources[${index}].error_contract`);
       if (JSON.stringify(Object.keys(sourceErrorContract).sort()) !== JSON.stringify(["codes", "schema"])) throw new TypeError(`${label}.sources[${index}].error_contract shape is invalid`);
       if (sourceErrorContract.schema !== "lead-director-public-error/v1" || !Array.isArray(sourceErrorContract.codes) || sourceErrorContract.codes.length < 1 || new Set(sourceErrorContract.codes).size !== sourceErrorContract.codes.length) throw new TypeError(`${label}.sources[${index}].error_contract is invalid`);
-      sourceErrorContract.codes.forEach((code, codeIndex) => nonEmpty(code, `${label}.sources[${index}].error_contract.codes[${codeIndex}]`));
+      sourceErrorContract.codes.forEach((code, codeIndex) => {
+        nonEmpty(code, `${label}.sources[${index}].error_contract.codes[${codeIndex}]`);
+        if (!/^[a-z][a-z0-9_]{0,127}$/.test(code)) throw new TypeError(`${label}.sources[${index}].error_contract.codes[${codeIndex}] is invalid`);
+      });
       validated.limits = clone(source.limits);
       validated.guarantees = clone(source.guarantees);
       validated.error_contract = clone(sourceErrorContract);
@@ -215,7 +350,10 @@ export function validateOperationDescription(value, label = "operation") {
   if (JSON.stringify(Object.keys(errorContract).sort()) !== JSON.stringify(["codes", "schema"])) throw new TypeError(`${label} error_contract shape is invalid`);
   if (errorContract.schema !== "lead-director-public-error/v1") throw new TypeError(`${label} error_contract schema is invalid`);
   if (!Array.isArray(errorContract.codes) || errorContract.codes.length < 1 || new Set(errorContract.codes).size !== errorContract.codes.length) throw new TypeError(`${label} error_contract codes are invalid`);
-  errorContract.codes.forEach((code, index) => nonEmpty(code, `${label} error_contract.codes[${index}]`));
+  errorContract.codes.forEach((code, index) => {
+    nonEmpty(code, `${label} error_contract.codes[${index}]`);
+    if (!/^[a-z][a-z0-9_]{0,127}$/.test(code)) throw new TypeError(`${label} error_contract.codes[${index}] is invalid`);
+  });
   const envelope = {...operation, input_schema: {}, output_schema: {}};
   assertNoPrivateKeys(envelope, label);
   return clone(operation);

@@ -12,22 +12,22 @@ const serviceFixture = {
     message: "Resolve the attendee against current CRM sources.",
     lookup_text: "synthetic.attendee@example.invalid",
     student_id: "student-synthetic-42",
-    after_success: {verb: "complete", method: "POST", href: "/actions/complete?capability=synthetic_complete", payload_schema: {type: "object", additionalProperties: false, required: ["acknowledged"], properties: {acknowledged: {const: true}}}},
-    on_failure: {verb: "failed", method: "POST", href: "/actions/failed?capability=synthetic_failed", payload_schema: {type: "object", additionalProperties: false, required: ["code", "message"], properties: {code: {type: "string"}, message: {type: "string"}}}}
+    after_success: {verb: "complete", method: "POST", href: "/bos/actions/complete?capability=synthetic_complete", payload_schema: {type: "object", additionalProperties: false, required: ["acknowledged"], properties: {acknowledged: {const: true}}}},
+    on_failure: {verb: "failed", method: "POST", href: "/bos/actions/failed?capability=synthetic_failed", payload_schema: {type: "object", additionalProperties: false, required: ["code", "message"], properties: {code: {type: "string"}, message: {type: "string"}}}}
   }
 };
 const actionRequiredFixture = {
   identity: "synthetic-follow-up",
   status: "client_action_required",
   current_step: {code: "resolve_template", type: "server", operation: "automation.templates.resolve"},
-  error: {code: "AUTOMATION_TEMPLATE_NOT_FOUND", message: "No email template is configured for the requested follow-up.", retryable: false, correlation_id: "corr_synthetic", details: [{purpose: "meeting_follow_up", channel: "email"}]},
+  error: {code: "automation_template_not_found", message: "No email template is configured for the requested follow-up.", retryable: false, correlation_id: "corr_synthetic", details: [{purpose: "meeting_follow_up", channel: "email"}]},
   resolution: {
     goal: "create_automation_template",
     instruction: "Recommend a follow-up email template and obtain permission before creating it.",
     operation: "automation.templates.create",
     requires_user_approval: true,
     approval_scope: ["purpose", "channel", "subject", "content", "configured_storage_target"],
-    after_success: {verb: "step", method: "POST", href: "/synthetic/journeys/follow-up/step?capability=synthetic_step", payload_schema: null}
+    after_success: {verb: "step", method: "POST", href: "/bos/synthetic/journeys/follow-up/step?capability=synthetic_step", payload_schema: null}
   }
 };
 
@@ -75,7 +75,7 @@ test("CRM instructions are bounded and server transitions remain opaque", () => 
   }
   assert.throws(() => client.validateInstruction({...instruction, after_success: {...instruction.after_success, method: "post"}}), /method/);
   assert.throws(() => client.validateInstruction({...instruction, after_success: {...instruction.after_success, href: "//fixture.invalid/action"}}), /origin-relative/);
-  assert.throws(() => client.validateInstruction({...instruction, after_success: {...instruction.after_success, href: "/action#ignored"}}), /fragment/);
+  assert.throws(() => client.validateInstruction({...instruction, after_success: {...instruction.after_success, href: "/bos/action#ignored"}}), /safe origin-relative/);
 });
 
 test("exact instruction actions are invoked without client IDs, keys, or state", async () => {
@@ -86,8 +86,8 @@ test("exact instruction actions are invoked without client IDs, keys, or state",
   assert.deepEqual(calls, [{action: instruction.after_success, payload: {acknowledged: true}}]);
   await assert.rejects(client.invokeInstructionAction(instruction, "after_success", {acknowledged: false}), /schema/);
   assert.equal(calls.length, 1);
-  await client.invokeInstructionAction(instruction, "on_failure", {code: "CRM_EVIDENCE_NOT_FOUND", message: "No matching CRM evidence was found."});
-  assert.deepEqual(calls[1], {action: instruction.on_failure, payload: {code: "CRM_EVIDENCE_NOT_FOUND", message: "No matching CRM evidence was found."}});
+  await client.invokeInstructionAction(instruction, "on_failure", {code: "source_not_available", message: "No matching CRM evidence was found."});
+  assert.deepEqual(calls[1], {action: instruction.on_failure, payload: {code: "source_not_available", message: "No matching CRM evidence was found."}});
   await assert.rejects(client.invokeInstructionAction(instruction, "step"), /unsupported/);
   await assert.rejects(client.invokeInstructionAction(instruction, "retry"), /unsupported/);
   assert.throws(() => client.validateInstruction({...instruction, after_success: {...instruction.after_success, verb: "step"}}), /must use verb complete/);
@@ -98,12 +98,12 @@ test("CRM audience repair requires server rematerialization, campaign reprepare,
   const instruction = {
     goal: "Correct invalid campaign recipients",
     message: "Correct the CRM evidence needed to regenerate the campaign audience.",
-    after_success: {verb: "complete", method: "POST", href: "/action/complete", payload_schema: null},
-    on_failure: {verb: "failed", method: "POST", href: "/action/failed", payload_schema: {type: "object"}}
+    after_success: {verb: "complete", method: "POST", href: "/bos/action/complete", payload_schema: null},
+    on_failure: {verb: "failed", method: "POST", href: "/bos/action/failed", payload_schema: {type: "object"}}
   };
   const guidance = createAudienceRepairGuidance({
     instruction,
-    failure: {code: "RECIPIENT_INVALID", message: "One recipient needs current CRM evidence.", retryable: false, correlation_id: "corr_public", details: []},
+    failure: {code: "recipient_invalid", message: "One recipient needs current CRM evidence.", retryable: false, correlation_id: "corr_public", details: []},
     audienceChanged: true
   });
   assert.equal(guidance.client.correct_or_regenerate_recipient_evidence, true);
@@ -129,5 +129,48 @@ test("published client_action_required recovery is closed, sanitized, and delega
   assert.throws(() => validateCrmResolutionEnvelope({...response, current_step: {...response.current_step, type: "client"}}), /schema|server-owned/);
   assert.throws(() => validateCrmResolutionEnvelope({...response, resolution: {...response.resolution, approval_scope: ["purpose", "purpose"]}}), /unique|approval_scope is invalid/);
   assert.throws(() => validateCrmResolutionEnvelope({...response, resolution: {...response.resolution, after_success: {...response.resolution.after_success, verb: "complete"}}}), /schema|bodyless step/);
-  assert.throws(() => validateCrmResolutionEnvelope({...response, error: {...response.error, provider_error: "private"}}), /schema|unsupported field|private key/i);
+  assert.throws(() => validateCrmResolutionEnvelope({...response, error: {...response.error, provider_error: "private"}}), /schema|shape is invalid|private key/i);
+});
+
+test("journey recovery preserves exact canonical messages and keeps every other field fail-closed", () => {
+  const contextHandle = `bos_ctx_v2_${"a".repeat(64)}`;
+  const messages = [
+    "https://support.example.invalid/public/error-reference",
+    "Bearer is part of this customer-visible service message.",
+    "The first exact line.\nThe second exact line.",
+    " \n\t ",
+    "😀".repeat(2048)
+  ];
+  for (const message of messages) {
+    const response = structuredClone(actionRequiredFixture);
+    response.error.message = message;
+    assert.equal(validateCrmResolutionEnvelope(response).error.message, message);
+  }
+  assert.throws(() => validateCrmResolutionEnvelope({
+    ...structuredClone(actionRequiredFixture),
+    error: {...actionRequiredFixture.error, message: contextHandle}
+  }), /forbidden context handle/);
+
+  for (const malformed of [
+    {code: "failed", message: "Missing fields"},
+    {...actionRequiredFixture.error, details: null},
+    {...actionRequiredFixture.error, message: ""},
+    {...actionRequiredFixture.error, message: "😀".repeat(2049)},
+    {...actionRequiredFixture.error, provider_error: "private"}
+  ]) {
+    assert.throws(() => validateCrmResolutionEnvelope({...structuredClone(actionRequiredFixture), error: malformed}));
+  }
+
+  assert.throws(() => validateCrmResolutionEnvelope({
+    ...structuredClone(actionRequiredFixture),
+    error: {...actionRequiredFixture.error, details: [{value: contextHandle}]}
+  }), /private implementation text/);
+  assert.throws(() => validateCrmResolutionEnvelope({
+    ...structuredClone(actionRequiredFixture),
+    error: {...actionRequiredFixture.error, details: [{access_token: "private"}]}
+  }), /forbidden private key/);
+  assert.throws(() => validateCrmResolutionEnvelope({
+    ...structuredClone(actionRequiredFixture),
+    resolution: {...actionRequiredFixture.resolution, instruction: contextHandle}
+  }), /forbidden context handle/);
 });

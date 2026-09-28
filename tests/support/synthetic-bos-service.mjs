@@ -30,7 +30,7 @@ const mutationOutput = {$schema: "https://json-schema.org/draft/2020-12/schema",
 
 const limits = Object.freeze({max_targets: 5, max_results_per_source: 5, pagination_supported: false, bulk_supported: false, streaming_supported: false, maximum_duration_seconds: 30, maximum_fan_out: 5});
 const guarantees = Object.freeze({read_consistency: "point_in_time", per_source_atomicity: "source_published", cross_source_atomicity: "eventually_consistent", convergence: "eventual", idempotency: "service_owned"});
-const error_contract = Object.freeze({schema: "lead-director-public-error/v1", codes: ["SOURCE_TEMPORARILY_UNAVAILABLE", "VALIDATION_FAILED"]});
+const error_contract = Object.freeze({schema: "lead-director-public-error/v1", codes: ["source_temporarily_unavailable", "invalid_request", "authorization_denied", "authentication_required", "mcp_session_closed", "provider_authorization_required"]});
 
 function operation(operation, effect, input_schema, output_schema, method = "POST") {
   return {
@@ -39,7 +39,7 @@ function operation(operation, effect, input_schema, output_schema, method = "POS
     effect,
     limits: structuredClone(limits),
     guarantees: structuredClone(guarantees),
-    execution: {context_header: "X-BOS-Context-Handle", method, uri: `/synthetic/organizations/{organization}/operations/${operation}`},
+    execution: {context_header: "X-BOS-Context-Handle", method, uri: `/bos/synthetic/organizations/{organization}/operations/${operation}`},
     input_schema: structuredClone(input_schema),
     output_schema: structuredClone(output_schema),
     sources: [{source: structuredClone(SOURCE), availability: "ready"}],
@@ -56,12 +56,18 @@ export function createSyntheticDocuments({variant = "alpha"} = {}) {
     operation("calendar_read_event", "read", objectSchema({}, []), mutationOutput)
   ];
   if (variant === "beta") {
-    operations[0].execution.uri = "/synthetic/organizations/{organization}/operations/search-v2";
+    operations[0].execution.uri = "/bos/synthetic/organizations/{organization}/operations/search-v2";
     operations[0].input_schema.properties.text.maxLength = 512;
   }
   const discovery = {
     application: {platform: "bos", application: "lead-director"},
-    describe: {contract_version: "lead-director-describe/v1", method: "POST", uri: "/synthetic/organizations/{organization}/describe", max_operations: 5, operations: operations.map(({operation: id}) => id)},
+    describe: {contract_version: "lead-director-describe/v1", method: "POST", uri: "/bos/synthetic/organizations/{organization}/describe", max_operations: 5, operations: operations.map(({operation: id}) => id)},
+    journey_registration: {
+      contract: {
+        capability: "api.contract.get",
+        input: {operation: "lead-director.journeys.register"}
+      }
+    },
     bosl: {
       schema_uri: "bos://apps/lead-director/bosl/aaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaa/schema",
       reference_uri: "bos://apps/lead-director/bosl/aaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaa/reference",
@@ -95,11 +101,11 @@ export async function startSyntheticBosService(options = {}) {
     calls.push({method: request.method, url: request.url, body: structuredClone(body)});
     response.setHeader("content-type", "application/json");
     if (request.method === "GET" && request.url === "/discovery") return response.end(JSON.stringify(documents.discovery));
-    if (request.method === "POST" && request.url === "/synthetic/organizations/synthetic/describe") {
+    if (request.method === "POST" && request.url === "/bos/synthetic/organizations/synthetic/describe") {
       const requested = body?.operations ?? [];
       return response.end(JSON.stringify({...documents.describe, operations: requested.map((id) => documents.describe.operations.find(({operation: current}) => current === id) ?? {operation: id, status: "not_available"})}));
     }
-    const match = /^\/synthetic\/organizations\/synthetic\/operations\/(search(?:-v2)?|create|update|delete|calendar_read_event)$/.exec(request.url ?? "");
+    const match = /^\/bos\/synthetic\/organizations\/synthetic\/operations\/(search(?:-v2)?|create|update|delete|calendar_read_event)$/.exec(request.url ?? "");
     if (match) {
       const id = match[1] === "search-v2" ? "search" : match[1];
       const value = documents.examples[id]?.response ?? {};
@@ -121,6 +127,14 @@ export async function startSyntheticBosService(options = {}) {
     refresh: async () => fetchJson(discoveryUrl, {cache: "no-store"}),
     describe: async (payload) => fetchJson(expand(documents.discovery.describe.uri), {method: "POST", headers: {"content-type": "application/json"}, body: JSON.stringify(payload)})
   };
+  const http = {
+    request: async (request) => {
+      const init = {method: request.method, headers: structuredClone(request.headers)};
+      if (request.method !== "GET") init.body = JSON.stringify(request.body);
+      const result = await fetch(expand(request.uri), init);
+      return {status: result.status, headers: {"content-type": result.headers.get("content-type")}, body: await result.json()};
+    }
+  };
   const bos = {
     recoverAuthentication: async () => ({status: "READY"}),
     invokeDiscoveredOperation: async (contact, payload) => {
@@ -130,5 +144,5 @@ export async function startSyntheticBosService(options = {}) {
       return {status: result.status, headers: {"content-type": result.headers.get("content-type")}, body: await result.json()};
     }
   };
-  return {discoveryUrl, discovery, bos, calls, documents: structuredClone(documents), close: () => new Promise((resolve, reject) => server.close((error) => error ? reject(error) : resolve()))};
+  return {discoveryUrl, discovery, http, bos, calls, documents: structuredClone(documents), close: () => new Promise((resolve, reject) => server.close((error) => error ? reject(error) : resolve()))};
 }

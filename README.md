@@ -6,7 +6,7 @@ My CRM is the first independently built, Apache-2.0 CRM-expertise plugin for BOS
 
 My CRM interprets natural-language CRM intent, selects focused domain skills, consumes current organization-defined entity and operation metadata, and presents source-preserving results. It reasons when records may describe one conceptual customer while retaining every source record, provenance item, conflict, confidence statement, and uncertainty.
 
-The installed BOS product owns the authenticated connection, login and recovery, authority, discovery transport, source federation, deterministic execution, idempotency, retries, receipts, shared-cache binding, explain planning, BOSL authoring, and journey runtime. My CRM delegates the exact affected protected resource plus the bounded `{category, code, source}` recovery condition automatically, remains pending through BOS-owned host action, asks BOS to invalidate the current private cache authority, refreshes discovery when BOS reports ready, and resumes the same public operation once.
+The installed BOS product owns the authenticated connection, login and recovery, authority, discovery transport, source federation, deterministic execution, idempotency, receipts, shared-cache binding, explain planning, BOSL authoring, and journey runtime. My CRM invokes exact discovered operation contacts through the configured BOS-authenticated HTTPS transport. On an established uppercase handoff condition or challenged HTTP 401, My CRM asks BOS to recover through `READY`, refreshes discovery, re-Describes the operation, and retries the exact preserved request once.
 
 ## Public-contract flow
 
@@ -25,7 +25,7 @@ The distributable contains source-first record, pipeline, activity, federation, 
 
 `npm run build` creates a deterministic Codex plugin release candidate under `dist/my-crm`. The candidate includes the skills-only plugin, examples, My CRM client helpers, license, and notice. `npm run release:check` rebuilds it, runs the full suite, and verifies package-boundary conformance. The repository-local marketplace at `.agents/plugins/marketplace.json` points only to this built candidate. It adds no MCP or authentication binding and carries no frozen BOS server or client artifact.
 
-Local contract tests generate tenant-neutral synthetic discovery-service responses at test time. They exercise discovery, schema selection, advertised endpoint invocation, response validation, authentication recovery, and contract evolution without loading a frozen BOS Service or BOS Operations Center copy. Live acceptance uses authenticated, read-only discovery and the exact read endpoint advertised by that discovery; it never uses a customer context or mutation.
+Local contract tests generate tenant-neutral synthetic discovery-service responses at test time. They exercise discovery and Describe recovery through BOS readiness, fresh schema selection, exact advertised endpoint invocation, My CRM-owned bounded continuation, response validation, and contract evolution without loading a frozen BOS Service or BOS Operations Center copy.
 
 My CRM contributes CRM goals and constraints to BOS-owned explain planning and BOSL authoring. It validates structured CRM client instructions and invokes returned lifecycle actions through the configured authenticated BOS connection. Each action has exactly `{verb, method, href, payload_schema}`; My CRM adds no route, header, identity, or authority state. BOS owns protected invocation and authentication recovery. My CRM implements no local FSM/BOSL compiler or executor.
 
@@ -53,8 +53,8 @@ MYCRM_PRIVACY_DENYLIST_FILE=/absolute/path/outside/MyCRM/customer-identifiers.tx
 
 The denylist path must resolve outside this repository. Its values are never
 copied into source, logs, Vault, evidence, or the release package.
-Synthetic discovery responses and live acceptance evidence pass the same
-privacy audit before they are retained as My CRM test evidence.
+Synthetic discovery responses pass the same privacy audit before they are
+retained as My CRM test evidence.
 
 Install and verify the local release candidate through the supported Codex plugin CLI after BOS is installed and enabled:
 
@@ -70,14 +70,6 @@ Rollback removes only this local candidate through the native CLI; it leaves BOS
 ```bash
 codex plugin remove my-crm@my-crm-local
 ```
-
-Live staging conformance is a separate authorized gate because it uses the installed native Codex runtime and authenticated BOS connection. The entrypoint requires a server-advertised synthetic acceptance context, generates a unique `example.invalid` query, performs BOS application discovery, task-scoped Describe, and the exact discovered read-only CRM search, then validates the public contract, source attribution, freshness presentation, and conceptual-customer assessment. It refuses real-customer contexts and performs no business mutation or identity-bearing request:
-
-```bash
-MYCRM_LIVE_ACCEPTANCE=1 npm run test:live
-```
-
-When native BOS sign-in or a server-advertised synthetic acceptance context is required, the result is `HOST_ACTION_REQUIRED`; the BOS product and host retain authentication ownership. Set `MYCRM_LIVE_EVIDENCE_OUT` to a new file path to preserve sanitized machine-readable evidence. Local and live contract acceptance use only generated tenant-neutral fixtures under reserved invalid domains.
 
 ## License
 

@@ -1,7 +1,7 @@
 {
   "name": "my-crm",
-  "version": "0.2.20",
-  "description": "Independent provider-neutral CRM expertise that consumes discovered BOS application contracts",
+  "version": "0.2.25",
+  "description": "Provider-neutral CRM expertise; ad hoc dynamic workflows require live BOS contracts",
   "author": {
     "name": "Infinite State Machines LLC",
     "url": "https://dfsm.ai"
@@ -17,8 +17,8 @@
   "skills": "./skills/",
   "interface": {
     "displayName": "My CRM",
-    "shortDescription": "Use discovered CRM capabilities through BOS.",
-    "longDescription": "Use the installed BOS product to discover current organization-defined CRM sources, entities, fields, operations, limits, errors, and exact deterministic HTTPS actions. Preserve source records while applying provider-neutral CRM reasoning, freshness, recovery, and presentation.",
+    "shortDescription": "Use CRM directly; assess ad hoc workflows when BOS contracts are live.",
+    "longDescription": "Use the installed BOS product to discover current organization-defined CRM sources, entities, fields, operations, limits, errors, and exact deterministic HTTPS actions. My CRM can contribute provider-neutral CRM goals, constraints, evidence requirements, and client work to an ad hoc dynamic workflow when the required BOS authoring and runtime contracts are available; BOS owns composition and control. Preserve source records while applying provider-neutral CRM reasoning, freshness, recovery, and presentation.",
     "developerName": "Infinite State Machines LLC",
     "category": "Productivity",
     "capabilities": [
@@ -26,9 +26,9 @@
       "Write"
     ],
     "defaultPrompt": [
-      "Use My CRM's configured BOS default unless I explicitly selected another authorized organization. In this multi-tenant service, never inherit another plugin's default, construct authority selectors, or cross context boundaries. Search current CRM sources for external attendees from the last completed meeting. Preserve provenance, freshness, conflicts, coverage, and failures; summarize; make no changes. If the default is unavailable or none qualify, report and stop without asking for org data.",
-      "Use My CRM's configured BOS default unless I explicitly selected another authorized organization. In this multi-tenant service, never inherit another plugin's default, construct authority selectors, or cross context boundaries. Have BOS orchestrate a follow-up for external attendees from the last completed meeting. Show recipients and content; send only after my approval. Use CRM only if instructed. If the default is unavailable or none qualify, report and stop without asking for org data.",
-      "Use My CRM's configured BOS default unless I explicitly selected another authorized organization. In this multi-tenant service, never inherit another plugin's default, construct authority selectors, or cross context boundaries. Choose first external attendee from last completed meeting with CRM matches. Compare provenance, freshness, conflicts, confidence, uncertainty, coverage, and failures; no changes. If the default is unavailable or none qualify, report and stop without asking for org data."
+      "Using My CRM's configured BOS scope, find CRM matches for external attendees from my last completed meeting; read only.",
+      "Using My CRM's configured BOS scope, prepare a follow-up for external attendees from my last meeting; show it before sending.",
+      "Using My CRM's configured BOS scope, compare CRM records for the first matched attendee from my last meeting; read only."
     ],
     "websiteURL": "https://dfsm.ai",
     "brandColor": "#061638",

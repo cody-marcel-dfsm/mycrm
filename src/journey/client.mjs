@@ -1,5 +1,5 @@
 import {ReturnedActionClient, validateResolvedAction} from "../bos/action-client.mjs";
-import {assertNoPrivateKeys, validatePublicError} from "../bos/contracts.mjs";
+import {assertNoPrivateKeys, assertNoPrivateKeysPreservingCanonicalErrors, validatePublicError} from "../bos/contracts.mjs";
 
 const CONTRIBUTION_KEYS = new Set(["goal", "concepts", "constraints", "requiredEvidence", "approvals", "guarantees", "presentation", "recovery"]);
 const CLIENT_ENVELOPE_KEYS = ["current_step", "identity", "instruction", "status"];
@@ -115,7 +115,7 @@ export function validateCrmResolutionEnvelope(value) {
   const response = structuredClone(value);
   response.error = validatePublicError(value.error);
   response.resolution = validateCrmResolution(value.resolution);
-  assertNoPrivateKeys(response, "CRM client_action_required response");
+  assertNoPrivateKeysPreservingCanonicalErrors(response, "CRM client_action_required response");
   return response;
 }
 

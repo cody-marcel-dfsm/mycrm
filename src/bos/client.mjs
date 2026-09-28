@@ -1,5 +1,6 @@
 import {
   assertNoPrivateKeys,
+  assertNoPrivateKeysPreservingCanonicalErrors,
   validateApplicationDiscovery,
   validateDescribeResponse,
   validateJsonSchema,
@@ -33,13 +34,18 @@ function validatePublicInstruction(value) {
 }
 
 export class BosContractError extends Error {
-  constructor(message, {code = "CONTRACT_ERROR", status = null, operation = null, publicError = null, instruction = null} = {}) {
+  constructor(message, {code = null, status = null, operation = null, publicError = null, instruction = null} = {}) {
     super(message);
     this.name = "BosContractError";
-    this.code = code;
+    if (code !== null) this.code = code;
+    if (publicError !== null) {
+      this.retryable = publicError.retryable;
+      this.correlation_id = publicError.correlation_id;
+      this.details = structuredClone(publicError.details);
+    }
     this.status = status;
     this.operation = operation;
-    this.publicError = publicError;
+    this.publicError = publicError === null ? null : structuredClone(publicError);
     this.instruction = instruction;
   }
 }
@@ -48,10 +54,10 @@ function authenticationCondition(responseOrError) {
   const status = Number(responseOrError?.status ?? responseOrError?.details?.status);
   const code = String(responseOrError?.body?.error?.code ?? responseOrError?.code ?? "").toUpperCase();
   if (status === 401 || AUTHENTICATION_CODES.has(code)) {
-    const publicCode = AUTHENTICATION_CODES.has(code) ? code : "AUTHORIZATION_REQUIRED";
+    const conditionCode = AUTHENTICATION_CODES.has(code) ? code : "AUTHORIZATION_REQUIRED";
     return {
-      category: publicCode === "MCP_SESSION_CLOSED" ? "mcp_session" : "authentication",
-      code: publicCode,
+      category: conditionCode === "MCP_SESSION_CLOSED" ? "mcp_session" : "authentication",
+      code: conditionCode,
       source: "protected_resource"
     };
   }
@@ -66,41 +72,30 @@ function sameSource(left, right) {
   return left?.platform === right?.platform && left?.application === right?.application && left?.plugin === right?.plugin;
 }
 
-function validateAdapterRequest(contact, payload, label) {
-  if (!contact?.execution || contact.execution.transport != null || typeof contact.execution.method !== "string" || typeof contact.execution.uri !== "string") {
-    throw new TypeError(`${label} does not describe a deterministic HTTPS operation`);
-  }
-  if (contact.execution.context_header !== "X-BOS-Context-Handle") throw new TypeError(`${label} context header is invalid`);
-  if (contact.execution.method === "GET" && payload !== undefined) throw new TypeError(`${label} GET operation must be bodyless`);
-  if (contact.execution.method !== "GET" && payload === undefined) throw new TypeError(`${label} payload is required`);
-}
-
-function validateAdapterResponse(value, label) {
-  if (!value || typeof value !== "object" || Array.isArray(value)) throw new TypeError(`${label} must be an object`);
-  const allowed = new Set(["body", "headers", "status"]);
-  for (const key of Object.keys(value)) if (!allowed.has(key)) throw new TypeError(`${label} contains unsupported field ${key}`);
-  if (!Object.hasOwn(value, "body")) throw new TypeError(`${label}.body is required`);
-  if (!Number.isInteger(value.status) || value.status < 100 || value.status > 599) throw new TypeError(`${label}.status is invalid`);
-  if (value.headers !== undefined) {
-    if (!value.headers || typeof value.headers !== "object" || Array.isArray(value.headers)) throw new TypeError(`${label}.headers must be an object`);
-    const allowedHeaders = new Set(["content-type", "retry-after", "x-correlation-id"]);
-    for (const [key, header] of Object.entries(value.headers)) {
-      if (!allowedHeaders.has(key)) throw new TypeError(`${label}.headers contains unsupported field ${key}`);
-      if (typeof header !== "string") throw new TypeError(`${label}.headers.${key} must be a string`);
-    }
-  }
-  return value;
+export function buildDiscoveredExecutionRequest(contact, body) {
+  if (!contact || typeof contact !== "object" || Array.isArray(contact)) throw new TypeError("discovered HTTP contact is required");
+  if (typeof contact.method !== "string" || contact.method === "" || typeof contact.uri !== "string" || contact.uri === "") throw new TypeError("discovered HTTP method and URI are required");
+  if (contact.context_header !== undefined && contact.context_header !== "X-BOS-Context-Handle") throw new TypeError("discovered HTTP context_header is invalid");
+  assertNoPrivateKeys(body, "discovered HTTP request body");
+  const request = {
+    method: contact.method.toUpperCase(),
+    uri: contact.uri,
+    headers: {"content-type": "application/json"},
+    body: structuredClone(body)
+  };
+  if (contact.context_header !== undefined) request.context_header = contact.context_header;
+  return request;
 }
 
 export class BosContractClient {
-  constructor({discovery, bos, onAuthenticationReady = async () => {}}) {
+  constructor({discovery, http, bos, onAuthenticationReady = async () => {}}) {
     requireMethod(discovery, "read");
     requireMethod(discovery, "refresh");
-    requireMethod(discovery, "describe");
+    requireMethod(http, "request");
     requireMethod(bos, "recoverAuthentication");
-    requireMethod(bos, "invokeDiscoveredOperation");
     if (typeof onAuthenticationReady !== "function") throw new TypeError("onAuthenticationReady must be a function");
     this.discoveryTransport = discovery;
+    this.http = http;
     this.bos = bos;
     this.onAuthenticationReady = onAuthenticationReady;
     this.discovery = null;
@@ -119,59 +114,53 @@ export class BosContractClient {
     const requested = validateOperationIds(operationIds, discovery.describe.max_operations);
     for (const operationId of requested) {
       if (!discovery.describe.operations.includes(operationId)) {
-        throw new BosContractError(`Operation ${operationId} is not present in current discovery`, {code: "OPERATION_UNAVAILABLE", operation: operationId});
+        throw new BosContractError(`Operation ${operationId} is not present in current discovery`, {operation: operationId});
       }
     }
-    const described = validateDescribeResponse(await this.#describeWithRecovery(requested), requested);
+    const response = await this.#requestWithRecovery(
+      () => this.http.request(buildDiscoveredExecutionRequest(this.discovery.describe, {operations: requested})),
+      {operationIds: requested, operation: "app.describe"}
+    );
+    if (response.status !== 200) throw this.#publicFailure(response, "app.describe");
+    const described = validateDescribeResponse(response.body, requested);
     for (const operation of described.operations) this.descriptions.set(operation.operation, operation);
     return structuredClone(described);
   }
 
   getDescription(operationId) {
     const operation = this.descriptions.get(operationId);
-    if (!operation) throw new BosContractError(`Operation ${operationId} has not been described`, {code: "OPERATION_UNAVAILABLE", operation: operationId});
+    if (!operation) throw new BosContractError(`Operation ${operationId} has not been described`, {operation: operationId});
     return structuredClone(operation);
   }
 
   async execute(operationId, input) {
     const original = this.descriptions.get(operationId);
-    if (!original) throw new BosContractError(`Operation ${operationId} has not been described`, {code: "OPERATION_UNAVAILABLE", operation: operationId});
-    if (original.status !== "described") throw new BosContractError(`Operation ${operationId} is not available`, {code: "OPERATION_UNAVAILABLE", operation: operationId});
+    if (!original) throw new BosContractError(`Operation ${operationId} has not been described`, {operation: operationId});
+    if (original.status !== "described") throw new BosContractError(`Operation ${operationId} is not available`, {operation: operationId});
     validateJsonValueAgainstSchema(input, original.input_schema, `${operationId} input`);
     const perform = async () => {
       const current = this.descriptions.get(operationId);
-      if (!current) throw new BosContractError(`Operation ${operationId} is unavailable after discovery refresh`, {code: "OPERATION_UNAVAILABLE", operation: operationId});
-      if (current.status !== "described") throw new BosContractError(`Operation ${operationId} is not available`, {code: "OPERATION_UNAVAILABLE", operation: operationId});
+      if (!current) throw new BosContractError(`Operation ${operationId} is unavailable after discovery refresh`, {operation: operationId});
+      if (current.status !== "described") throw new BosContractError(`Operation ${operationId} is not available`, {operation: operationId});
       const selectedSources = input?.source ? [input.source] : Array.isArray(input?.targets) ? input.targets.map(({source}) => source) : [];
       const readySources = current.sources.filter(({availability}) => availability === "ready");
       if ((selectedSources.length === 0 && readySources.length === 0) || selectedSources.some((source) => !readySources.some((candidate) => sameSource(candidate.source, source)))) {
-        throw new BosContractError(`Operation ${operationId} has no ready selected source`, {code: "OPERATION_NOT_READY", operation: operationId});
+        throw new BosContractError(`Operation ${operationId} has no ready selected source`, {operation: operationId});
       }
       if (current.effect !== original.effect) throw new BosContractError(`Operation ${operationId} changed effect during recovery`, {code: "EFFECT_CHANGED", operation: operationId});
       validateJsonValueAgainstSchema(input, current.input_schema, `${operationId} refreshed input`);
-      const contact = structuredClone(current);
-      const payload = current.execution.method === "GET" ? undefined : structuredClone(input);
-      validateAdapterRequest(contact, payload, `${operationId} BOS dependency request`);
-      return current.execution.method === "GET"
-        ? this.bos.invokeDiscoveredOperation(contact)
-        : this.bos.invokeDiscoveredOperation(contact, payload);
+      return this.http.request(buildDiscoveredExecutionRequest(current.execution, input));
     };
-    let response;
-    try {
-      response = await perform();
-    } catch (error) {
-      if (error instanceof BosContractError) throw error;
-      const code = new Set(["AUTHENTICATION_RECOVERY_PENDING", "AUTHENTICATION_RECOVERY_FAILED", "CONTEXT_UNAVAILABLE"]).has(error?.code) ? error.code : "TRANSPORT_FAILURE";
-      throw new BosContractError("The BOS dependency adapter could not execute the discovered operation", {code, operation: operationId});
+    const response = await this.#requestWithRecovery(perform, {operationIds: [operationId], operation: operationId});
+    const hasTopLevelError = response.body && typeof response.body === "object" && !Array.isArray(response.body) && Object.hasOwn(response.body, "error");
+    if (hasTopLevelError && response.body.error !== null && response.body.error !== undefined) {
+      throw this.#publicFailure(response, operationId);
     }
-    try {
-      validateAdapterResponse(response, `${operationId} BOS dependency response`);
-    } catch {
-      throw new BosContractError("The BOS dependency adapter returned an invalid transport result", {code: "TRANSPORT_FAILURE", operation: operationId});
+    if (response.status >= 400) {
+      throw this.#publicFailure(response, operationId);
     }
-    if (response.status >= 400) throw this.#publicFailure(response, operationId);
     validateJsonValueAgainstSchema(response.body, this.descriptions.get(operationId).output_schema, `${operationId} output`);
-    assertNoPrivateKeys(response.body, `${operationId} output`);
+    assertNoPrivateKeysPreservingCanonicalErrors(response.body, `${operationId} output`);
     return structuredClone(response);
   }
 
@@ -189,13 +178,14 @@ export class BosContractClient {
       value = await this.discoveryTransport[refresh ? "refresh" : "read"]();
     } catch (error) {
       const condition = authenticationCondition(error);
-      if (!condition) throw new BosContractError("The BOS discovery transport failed", {code: "TRANSPORT_FAILURE"});
+      if (!condition) throw this.#transportFailure(error, null, "The BOS discovery transport failed");
       if (this.recoveryActive) throw new BosContractError("BOS authentication recovery did not restore discovery", {code: "AUTHENTICATION_RECOVERY_FAILED"});
       this.recoveryActive = true;
       try {
         await this.#recover(condition, error?.resource ?? null);
-        try { value = await this.discoveryTransport.refresh(); } catch {
-          throw new BosContractError("BOS authentication recovery did not restore discovery", {code: "AUTHENTICATION_RECOVERY_FAILED"});
+        try { value = await this.discoveryTransport.refresh(); } catch (retryError) {
+          if (authenticationCondition(retryError)) throw new BosContractError("BOS authentication recovery did not restore discovery", {code: "AUTHENTICATION_RECOVERY_FAILED"});
+          throw this.#transportFailure(retryError, null, "The BOS discovery transport failed after recovery");
         }
       } finally {
         this.recoveryActive = false;
@@ -205,30 +195,41 @@ export class BosContractClient {
     return this.discovery;
   }
 
-  async #describeWithRecovery(operationIds) {
-    try {
-      return await this.discoveryTransport.describe({operations: structuredClone(operationIds)});
-    } catch (error) {
+  async #requestWithRecovery(action, {operationIds, operation, redescribe = true}) {
+    let response;
+    try { response = await action(); } catch (error) {
+      if (error instanceof BosContractError) throw error;
       const condition = authenticationCondition(error);
-      if (!condition) throw new BosContractError("The BOS Describe transport failed", {code: "TRANSPORT_FAILURE", operation: "app.describe"});
-      if (this.recoveryActive) throw new BosContractError("BOS authentication recovery did not restore Describe", {code: "AUTHENTICATION_RECOVERY_FAILED", operation: "app.describe"});
-      this.recoveryActive = true;
-      try {
-        await this.#recover(condition, error?.resource ?? null);
-        await this.refreshDiscovery();
-        try {
-          return await this.discoveryTransport.describe({operations: structuredClone(operationIds)});
-        } catch (retryError) {
-          if (authenticationCondition(retryError)) throw new BosContractError("BOS authentication recovery did not restore Describe", {code: "AUTHENTICATION_RECOVERY_FAILED", operation: "app.describe"});
-          throw new BosContractError("The BOS Describe transport failed after recovery", {code: "TRANSPORT_FAILURE", operation: "app.describe"});
-        }
-      } finally {
-        this.recoveryActive = false;
+      if (!condition) throw this.#transportFailure(error, operation, "The discovered HTTPS transport failed");
+      return this.#recoverRefreshAndRetry(condition, action, {operationIds, operation, resource: error?.resource ?? null, redescribe});
+    }
+    const condition = authenticationCondition(response);
+    if (!condition) return response;
+    return this.#recoverRefreshAndRetry(condition, action, {operationIds, operation, resource: response?.resource ?? null, redescribe});
+  }
+
+  async #recoverRefreshAndRetry(condition, action, {operationIds, operation, resource, redescribe}) {
+    if (this.recoveryActive) throw new BosContractError("BOS authentication recovery did not restore the operation", {code: "AUTHENTICATION_RECOVERY_FAILED", operation});
+    this.recoveryActive = true;
+    try {
+      await this.#recover(condition, resource);
+      await this.refreshDiscovery();
+      if (operation !== "app.describe" && redescribe) await this.describe(operationIds);
+      let response;
+      try { response = await action(); } catch (error) {
+        if (error instanceof BosContractError) throw error;
+        if (authenticationCondition(error)) throw new BosContractError("BOS authentication recovery did not restore the operation", {code: "AUTHENTICATION_RECOVERY_FAILED", operation});
+        throw this.#transportFailure(error, operation, "The discovered HTTPS transport failed after recovery");
       }
+      if (authenticationCondition(response)) throw new BosContractError("BOS authentication recovery did not restore the operation", {code: "AUTHENTICATION_RECOVERY_FAILED", operation});
+      return response;
+    } finally {
+      this.recoveryActive = false;
     }
   }
 
   async #recover(condition, resource) {
+    requireMethod(this.bos, "recoverAuthentication");
     const request = () => ({resource, condition: structuredClone(condition)});
     let readiness = await this.bos.recoverAuthentication(request());
     if (readiness?.status === "HOST_ACTION_REQUIRED" || readiness?.status === "NOT_READY") {
@@ -241,23 +242,30 @@ export class BosContractClient {
     await this.onAuthenticationReady();
   }
 
+  #transportFailure(error, operation, fallbackMessage) {
+    let publicError;
+    try { publicError = validatePublicError(error?.body?.error); } catch {
+      return new BosContractError(fallbackMessage, {operation});
+    }
+    return new BosContractError(publicError.message, {
+      code: publicError.code,
+      status: Number.isInteger(error?.status) ? error.status : null,
+      operation,
+      publicError
+    });
+  }
+
   #publicFailure(response, operation) {
     let publicError;
     try { publicError = validatePublicError(response?.body?.error); } catch {
-      return new BosContractError("The server returned a nonconforming public error", {code: "INVALID_PUBLIC_ERROR", status: response?.status, operation});
-    }
-    const description = this.descriptions.get(operation);
-    if (description?.status === "described" && !description.error_contract.codes.includes(publicError.code)) {
-      return new BosContractError("The server returned an unadvertised public error", {code: "INVALID_PUBLIC_ERROR", status: response?.status, operation});
+      return new BosContractError("The server returned a nonconforming public error", {status: response?.status, operation});
     }
     let instruction = null;
     try {
       if (response.body?.instruction) {
         instruction = validatePublicInstruction(response.body.instruction);
       }
-    } catch {
-      return new BosContractError("The server returned a nonconforming public instruction", {code: "INVALID_PUBLIC_INSTRUCTION", status: response?.status, operation});
-    }
+    } catch { instruction = null; }
     return new BosContractError(publicError.message, {
       code: publicError.code,
       status: response.status,
