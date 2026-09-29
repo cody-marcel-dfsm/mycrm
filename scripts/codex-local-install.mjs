@@ -7,7 +7,7 @@ import path from "node:path";
 import process from "node:process";
 
 import {buildRelease} from "./build-release.mjs";
-import {checkRelease} from "./check-release.mjs";
+import {checkRelease, RUNTIME_VERIFICATION_TOOLS} from "./check-release.mjs";
 import {readJson, repositoryRoot} from "./release-utils.mjs";
 
 const exec = promisify(execFile);
@@ -47,8 +47,10 @@ export async function verifyNativeRuntime({runCommand = defaultRun, expectedDire
   const codexHome = process.env.CODEX_HOME ?? path.join(os.homedir(), ".codex");
   const installedPath = expectedDirectory ?? path.join(codexHome, "plugins/cache", MARKETPLACE, "my-crm", myCrm.version);
   const release = await checkRelease({directory: path.resolve(installedPath)});
+  const product = await readJson(path.join(path.resolve(installedPath), ".bos-product.json"));
+  if (JSON.stringify(product.runtime_verification_tools) !== JSON.stringify(RUNTIME_VERIFICATION_TOOLS)) throw new Error("Installed My CRM package has an invalid runtime-verification tool set");
   const educationCenter = installedProduct(installed, "education-center");
-  return {pluginId: myCrm.pluginId, bosPluginId: bos.pluginId, educationCenterPluginId: educationCenter?.pluginId ?? null, release};
+  return {pluginId: myCrm.pluginId, bosPluginId: bos.pluginId, educationCenterPluginId: educationCenter?.pluginId ?? null, runtimeVerificationTools: [...product.runtime_verification_tools], release};
 }
 
 export async function installLocal({runCommand = defaultRun, installedDirectoryFor} = {}) {
