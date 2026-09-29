@@ -38,6 +38,13 @@ test("plugin depends on the single BOS-owned connection and declares no authenti
   assert.equal(product.application_name, "my-crm");
   assert.equal(product.connection_owner, "bos");
   assert.deepEqual(product.dependency_products, ["bos"]);
+  assert.deepEqual(product.runtime_verification_tools, [
+    "lead_director_get_customer_journey",
+    "lead_director_create_lead",
+    "lead_director_search_leads",
+    "lead_director_update_lead"
+  ]);
+  assert.equal(product.runtime_verification_tools.some((name) => name.startsWith("education_center_")), false);
   assert.equal(product.authentication, "bos_dependency");
   assert.equal(product.authorization_scope_policy, "ONE_ORGANIZATION_APPLICATION_INSTALLATION_ROLE_PER_GRANT");
   for (const key of ["resource_url", "oauth", "token", "grant", "session", "credential", "mcp_group_name", "mcp_server_name", "codex_mcp_startup_timeout_sec", "codex_mcp_tool_timeout_sec"]) assert.equal(product[key], undefined);
@@ -59,6 +66,9 @@ test("plugin depends on the single BOS-owned connection and declares no authenti
 test("package contains source-first CRM expertise and no local runtime", async () => {
   const expected = ["my-crm", "my-crm-record-operations", "my-crm-pipeline-operations", "my-crm-activity-operations", "my-crm-federation-operations", "my-crm-customer-journey", "my-crm-automation", "my-crm-cache-maintenance"];
   for (const skill of expected) await access(path.join(root, `plugins/my-crm/skills/${skill}/SKILL.md`));
+  const router = await readFile(path.join(root, "plugins/my-crm/skills/my-crm/SKILL.md"), "utf8");
+  assert.match(router, /Use `my-crm-record-operations` for organization-described record search, read, create, update, and delete/);
+  assert.match(router, /Use `my-crm-customer-journey` for currently advertised application journey evidence/);
   await access(path.join(root, "examples/crm/README.md"));
   for (const retired of ["src/fsm", "contracts/fsm", "examples/fsm", "plugins/my-crm/.app.json"]) await assert.rejects(access(path.join(root, retired)));
 });

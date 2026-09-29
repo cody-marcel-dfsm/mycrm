@@ -38,6 +38,14 @@ for (const prompt of marketplacePromptContracts.prompts ?? []) {
 if (manifest.apps !== undefined || manifest.mcpServers !== undefined) errors.push("My CRM must not declare an app mapping or a second MCP connection");
 if (product.schema_version !== "2" || product.application_name !== "my-crm") errors.push("My CRM product identity is invalid");
 if (product.connection_owner !== "bos" || JSON.stringify(product.dependency_products) !== JSON.stringify(["bos"]) || product.authentication !== "bos_dependency") errors.push("My CRM must depend on the BOS-owned connection");
+const runtimeVerificationTools = [
+  "lead_director_get_customer_journey",
+  "lead_director_create_lead",
+  "lead_director_search_leads",
+  "lead_director_update_lead"
+];
+if ((product.runtime_verification_tools ?? []).some((name) => name.startsWith("education_center_"))) errors.push("My CRM must not claim Education Center runtime-verification ownership names");
+if (JSON.stringify(product.runtime_verification_tools) !== JSON.stringify(runtimeVerificationTools)) errors.push("My CRM must advertise the exact canonical Lead Director runtime-verification tool set");
 if (product.authorization_scope_policy !== "ONE_ORGANIZATION_APPLICATION_INSTALLATION_ROLE_PER_GRANT") errors.push("My CRM must preserve the approved BOS authorization scope policy");
 for (const key of ["resource_url", "oauth", "token", "grant", "session", "credential", "mcp_group_name", "mcp_server_name", "codex_mcp_startup_timeout_sec", "codex_mcp_tool_timeout_sec"]) if (product[key] !== undefined) errors.push(`My CRM product metadata must not declare ${key}`);
 

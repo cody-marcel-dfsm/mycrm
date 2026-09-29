@@ -9,6 +9,12 @@ import {readJson, repositoryRoot, sha256, sha256File, walkFiles} from "./release
 
 const COPY_ROOTS = ["examples", "src"];
 const COPY_FILES = ["LICENSE", "NOTICE", "README.md"];
+export const RUNTIME_VERIFICATION_TOOLS = Object.freeze([
+  "lead_director_get_customer_journey",
+  "lead_director_create_lead",
+  "lead_director_search_leads",
+  "lead_director_update_lead"
+]);
 
 async function canonicalInventory() {
   const entries = [];
@@ -35,6 +41,12 @@ export async function checkRelease({directory = releaseDirectory} = {}) {
   if (plugin.mcpServers !== undefined || plugin.apps !== undefined) throw new Error("My CRM release must not declare an MCP or app binding");
   if (product.connection_owner !== "bos" || product.authentication !== "bos_dependency" || JSON.stringify(product.dependency_products) !== JSON.stringify(["bos"])) {
     throw new Error("My CRM release must delegate through the one BOS-owned connection");
+  }
+  if ((product.runtime_verification_tools ?? []).some((name) => name.startsWith("education_center_"))) {
+    throw new Error("My CRM release must not claim Education Center runtime-verification ownership names");
+  }
+  if (JSON.stringify(product.runtime_verification_tools) !== JSON.stringify(RUNTIME_VERIFICATION_TOOLS)) {
+    throw new Error("My CRM release must advertise the exact canonical Lead Director runtime-verification tool set");
   }
   for (const forbidden of [".mcp.json", ".app.json", "Vault", ".env", "credentials.json"]) {
     try { await access(path.join(directory, forbidden)); throw new Error(`Forbidden release entry is present: ${forbidden}`); } catch (error) {
