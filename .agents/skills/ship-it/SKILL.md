@@ -5,6 +5,13 @@ description: Create the next MyCRM release version, validate and review the comp
 
 # Ship It
 
+## Model inheritance
+
+Spawn native agents without a model override so they inherit the current task's
+selected model. Oracle CLI launchers pass that model explicitly to isolated
+`codex exec` processes and stop if it is unknown. Do not silently select a
+different model during release recovery.
+
 ## Protected-change approval gate
 
 This invocation authorizes release execution for already authorized work. It

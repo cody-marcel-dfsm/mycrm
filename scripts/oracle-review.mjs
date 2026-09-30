@@ -6,14 +6,18 @@ import os from "node:os";
 import path from "node:path";
 import process from "node:process";
 import {promisify} from "node:util";
+import {selectedModel} from "./codex-child-model.mjs";
 
 const execFileAsync = promisify(execFile);
 const TRAILERS = Object.freeze({verdict: "Oracle-Verdict", tree: "Oracle-Reviewed-Tree", receipt: "Oracle-Receipt-SHA256"});
 
 function execOracle(args) {
+  const model = args[args.indexOf("--model") + 1];
+  if (!model) throw new Error("Oracle child model is required");
   return new Promise((resolve, reject) => {
     const child = spawn("codex", args, {
       cwd: process.cwd(),
+      env: {...process.env, CODEX_SELECTED_MODEL: model},
       stdio: ["ignore", "pipe", "pipe"],
     });
     const stdout = [];
@@ -175,7 +179,7 @@ async function review(args = []) {
     "Reject a protected change when exact approval is absent or mismatched. Include one blocking finding that flags the user under three concise labeled parts—Problem, Cause, Recommended change—with no more than three sentences in each part. Never convert an Oracle recommendation into an approved target or permit remediation toward it before approval.",
     "Verify that the completed candidate stays within the exact approved proposal scope. Proposal approval never substitutes for completed-tree review.", "Return APPROVED only when the entire staged candidate satisfies every applicable authority and validation requirement. Otherwise return REJECTED with actionable findings.", "Return only the response required by the supplied JSON schema."
   ].join("\n");
-  await execOracle(["exec", "--ephemeral", "--ignore-user-config", "--sandbox", "read-only", "--output-schema", schemaPath, "--output-last-message", outputPath, "--cd", process.cwd(), prompt]);
+  await execOracle(["exec", "--ephemeral", "--ignore-user-config", "--model", await selectedModel(), "--sandbox", "read-only", "--output-schema", schemaPath, "--output-last-message", outputPath, "--cd", process.cwd(), prompt]);
   const response = validateOracleResponse(JSON.parse(await readFile(outputPath, "utf8")));
   const receipt = {schema: "my-crm.oracle-approval/v1", repository: "my-crm", reviewed_tree: candidate.tree, base_commit: candidate.base, verdict: response.verdict, authentication_impact: response.authentication_impact, owner_approval_status: response.owner_approval_status, validation_evidence: validationEvidence, owner_approval_evidence: ownerApprovalEvidence, warning: response.warning, summary: response.summary, findings: response.findings};
   receipt.receipt_sha256 = receiptSha256(receipt);
@@ -204,7 +208,7 @@ async function reviewProposal(request, args = []) {
   ].join("\n");
   let response;
   try {
-    await execOracle(["exec", "--ephemeral", "--ignore-user-config", "--sandbox", "read-only", "--output-last-message", outputPath, "--cd", process.cwd(), prompt]);
+    await execOracle(["exec", "--ephemeral", "--ignore-user-config", "--model", await selectedModel(), "--sandbox", "read-only", "--output-last-message", outputPath, "--cd", process.cwd(), prompt]);
     const output = await readFile(outputPath, "utf8");
     const verdict = output.match(/(?:^|\n)ORACLE_VERDICT=(APPROVED|REJECTED)\s*$/)?.[1];
     const impact = output.match(/(?:^|\n)AUTHENTICATION_IMPACT=(NONE|AUTHENTICATION)\s*$/m)?.[1];
