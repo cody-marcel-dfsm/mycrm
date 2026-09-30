@@ -92,18 +92,28 @@ does not supply this protected-change approval.
    instructions in `README.md`. Never read or adopt
    `.agents/skills/oracle/SKILL.md`; invoke the Oracle command when directed
    below.
-2. Resolve the current branch, default branch, upstream, remotes, and complete
-   staged, unstaged, untracked, renamed, and deleted status. Require the push
-   remote to resolve to `https://github.com/cody-marcel-dfsm/mycrm.git`.
+2. Fetch the configured remote default branch, record its SHA, and resolve the
+   current branch, upstream, remotes, divergence from that default branch, and
+   complete staged, unstaged, untracked, renamed, and deleted status. Require
+   the push remote to resolve to
+   `https://github.com/cody-marcel-dfsm/mycrm.git`.
 3. Stop on merge, rebase, cherry-pick, conflicts, detached HEAD, ambiguous
    targets, missing credentials, or branch protection that prevents the
    governed workflow. Report the exact evidence and remedy declaratively.
 4. Treat every amended repository file as user-owned and in scope. Inspect all
    files and preserve intent. Block credentials, private data, accidental large
    artifacts, material correctness defects, and constitutional violations.
-5. Never discard, reset, stash, or overwrite user work. Resolve safe in-scope
+5. When a dirty checkout is behind the remote default branch, preserve it
+   intact and prepare the release in a suitable current-base checkout. Account
+   for every amended file while reconciling its intended behavior with current
+   code; retain newer remote safeguards and stop when an overlap cannot be
+   resolved safely. Rerun affected tests and Oracle review. Never publish an
+   old tree wholesale. Re-fetch and compare with the recorded base before
+   final review and publication; integrate any new remote changes through the
+   repository's governed workflow and repeat affected gates.
+6. Never discard, reset, stash, or overwrite user work. Resolve safe in-scope
    release failures and repeat the affected gates.
-6. When the payload includes `MYCRM-AUTH-005`, verify the documented direct
+7. When the payload includes `MYCRM-AUTH-005`, verify the documented direct
    owner approval covers the complete rollback diff before staging or commit.
 
 ## Create the immutable release
@@ -114,7 +124,8 @@ does not supply this protected-change approval.
 2. Default to a patch increment unless the user or compatibility policy calls
    for another semantic version.
 3. Update the version consistently in `package.json`, `package-lock.json`,
-   `plugins/my-crm/.codex-plugin/plugin.json`, and
+   `plugins/my-crm/.codex-plugin/plugin.json`,
+   `plugins/my-crm/.claude-plugin/plugin.json`, and
    `plugins/my-crm/.bos-product.json`.
 4. Run `npm run build`. Treat `dist/my-crm` as ignored deterministic output and
    never stage it.
