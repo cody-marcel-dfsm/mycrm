@@ -2,7 +2,7 @@ import {createHash} from 'node:crypto';
 import {compareBindings,verifiedApiResponses} from '../scripts/marketplace-outcome-evidence.mjs';
 import assert from 'node:assert/strict';
 import test from 'node:test';
-import {decide,unpack,scrub,publishedPath,observedContract,contractDigests,selectReviewer,retainResources,retainValidation,verifyAuthority,nativeFailure,externalAuthorityPath} from '../scripts/marketplace-native.mjs';
+import {decide,unpack,scrub,publishedPath,observedContract,contractDigests,selectReviewer,retainResources,retainValidation,verifyAuthority,nativeFailure,externalAuthorityPath,acceptanceVerdict} from '../scripts/marketplace-native.mjs';
 import {mkdtemp,mkdir,writeFile,symlink,rm} from 'node:fs/promises';
 import {join} from 'node:path';
 import {tmpdir} from 'node:os';
@@ -124,4 +124,18 @@ test('native failures retain neutral provider classifications without raw messag
  assert.equal(nativeFailure({type:'error',message:'Unexpected upstream failure'}),'native_request_failed');
  assert.equal(nativeFailure({type:'item.completed',message:diagnostic.message}),null);
  assert.doesNotMatch(nativeFailure(diagnostic),/synthetic-secret|example.invalid|token/);
+});
+
+test('refusal completion labels respect negative outcomes and retain evidence failures',()=>{
+ assert.equal(acceptanceVerdict('negative','blocked',[]).status,'PASS');
+ for(const failure of ['negative_native_invocation','guard_rejected_tool_attempt','configured_outcome_failed']) {
+  assert.deepEqual(acceptanceVerdict('negative','blocked',[failure]),{status:'FAIL',reason:failure});
+ }
+ for(const kind of ['positive','starter']) {
+  assert.equal(acceptanceVerdict(kind,'blocked',[]).reason,'product_prerequisite');
+  assert.equal(acceptanceVerdict(kind,'completed',[]).status,'PASS');
+  assert.equal(acceptanceVerdict(kind,'completed',['synthetic_fixture_assertions_missing_or_failed']).status,'FAIL');
+ }
+ const failures=['configured_outcome_failed'];acceptanceVerdict('positive','blocked',failures);
+ assert.deepEqual(failures,['configured_outcome_failed']);
 });
