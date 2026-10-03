@@ -21,6 +21,24 @@ function select(evidence,rule,other=false) {
  if(other||!['answer','effects'].includes(rule.evidence))return undefined;
  return project(pointer(evidence[rule.evidence],path),paths);
 }
+function selectedLocations(evidence,rule,other=false) {
+ const selector=rule[other?'other_response':'response'],path=rule[other?'other_path':'path'],paths=rule[other?'other_project_paths':'project_paths']??[];
+ if(!selector||!validPointer(path)||!Array.isArray(paths)||paths.length>8||paths.some(row=>!validPointer(row)))return undefined;
+ const matches=(evidence.responses??[]).map((response,index)=>({response,index})).filter(row=>row.response.operation===selector.operation&&row.response.transport===selector.transport);
+ if(matches.length!==1)return undefined;
+ const tokens=path=>path===''?[]:path.slice(1).split('/').map(key=>key.replaceAll('~1','/').replaceAll('~0','~'));
+ const descend=(row,path)=>({value:pointer(row.value,path),location:[...row.location,...tokens(path)]});
+ const expand=row=>Array.isArray(row.value)?row.value.map((value,index)=>({value,location:[...row.location,String(index)]})):[row];
+ const selected=descend({value:matches[0].response.body,location:[String(matches[0].index)]},path);
+ if(!Array.isArray(selected.value))return undefined;
+ let rows=expand(selected);
+ for(const path of paths){rows=rows.flatMap(row=>expand(descend(row,path)));}
+ return rows.map(row=>row.location);
+}
+function independentLocations(left,right) {
+ if(!left?.length||!right?.length)return false;
+ return left.every(a=>right.every(b=>!a.slice(0,Math.min(a.length,b.length)).every((part,index)=>part===b[index])));
+}
 function timestamp(value) {
  if(typeof value!=='string')return NaN;
  const parts=/^(\d{4})-(\d{2})-(\d{2})T(\d{2}):(\d{2}):(\d{2})(?:\.\d{1,9})?(?:Z|[+-](\d{2}):(\d{2}))$/.exec(value);
@@ -42,7 +60,7 @@ export function compareBindings(envelope,evidence,requirements=[],context={}) {
   if(rule.operator==='contains')return typeof value==='string'&&typeof rule.value==='string'&&rule.value.length>0&&value.includes(rule.value);
   if(rule.operator==='same_values'){
    const other=select(evidence,rule,true);
-   return Array.isArray(value)&&value.length>0&&value.every(row=>row!==undefined&&row!==null)&&Array.isArray(other)&&other.length>0&&other.every(row=>row!==undefined&&row!==null)&&!(equal(rule.response,rule.other_response)&&rule.path===rule.other_path&&equal(rule.project_paths,rule.other_project_paths))&&equal(value.map(canonical).map(JSON.stringify).sort(),other.map(canonical).map(JSON.stringify).sort());
+   return Array.isArray(value)&&value.length>0&&value.every(row=>row!==undefined&&row!==null)&&Array.isArray(other)&&other.length>0&&other.every(row=>row!==undefined&&row!==null)&&independentLocations(selectedLocations(evidence,rule),selectedLocations(evidence,rule,true))&&equal(value.map(canonical).map(JSON.stringify).sort(),other.map(canonical).map(JSON.stringify).sort());
   }
   if(rule.operator==='min_length'){
    if(!Array.isArray(value)||!Number.isInteger(rule.value)||rule.value<1||value.length<rule.value)return false;

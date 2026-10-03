@@ -48,3 +48,20 @@ test('unsent client preview remains response-grounded and requires zero effects'
  assert.equal(compareBindings(envelope(rules),{...evidence,effects:{prohibited_effects:1}},[],context),false);
  assert.equal(compareBindings({...envelope(rules),rules},evidence,[],context),false);
 });
+
+test('same_values rejects equivalent and overlapping actual locations while retaining independent collections',()=>{
+ const selector=select('crm.search');
+ const rule={requirement:'correspondence',operator:'same_values',response:selector,path:'/records',project_paths:['/email'],other_response:selector,other_path:'/records',other_project_paths:['','/email']};
+ const rows=[{email:'synthetic@example.invalid'}];
+ const data={...evidence,responses:[evidence.responses[0],response('crm.search',{records:rows,expected_attendees:structuredClone(rows),'escaped/key':rows})]};
+ const check=row=>compareBindings(envelope([row]),data,[{id:'correspondence',operator:'same_values'}],context);
+ assert.equal(check(rule),false);
+ assert.equal(check({...rule,project_paths:[],other_project_paths:['']}),false);
+ assert.equal(check({...rule,path:'/records/0/email',project_paths:undefined}),false);
+ assert.equal(check({...rule,path:'/escaped~1key',other_path:'/escaped~1key',project_paths:['/email']}),false);
+ assert.equal(check({...rule,other_path:'/expected_attendees'}),true);
+ assert.equal(check({...rule,path:'',project_paths:['/records','/email']}),false);
+ const doubled=structuredClone(data);doubled.responses[1].body.records.push({email:'synthetic@example.invalid'});
+ const overlap={...rule,path:'',project_paths:['/records','/email'],other_path:'/records',other_project_paths:['/email']};
+ assert.equal(compareBindings(envelope([overlap]),doubled,[],context),false);
+});
