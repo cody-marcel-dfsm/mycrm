@@ -87,7 +87,8 @@
                 "no-initial-crm-lookup",
                 "approval-before-send",
                 "crm-only-on-returned-instruction",
-                "no-mutation"
+                "no-mutation",
+                "client-preview"
               ]
             }
           }

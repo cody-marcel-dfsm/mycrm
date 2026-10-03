@@ -1,6 +1,6 @@
 {
   "name": "my-crm",
-  "version": "0.2.31",
+  "version": "0.2.32",
   "description": "Provider-neutral CRM expertise; ad hoc dynamic workflows require live BOS contracts",
   "author": {
     "name": "Infinite State Machines LLC",
@@ -27,8 +27,8 @@
     ],
     "defaultPrompt": [
       "Using My CRM's configured BOS scope, find CRM matches for external attendees from my last completed meeting; read only.",
-      "Using My CRM's configured BOS scope, prepare a follow-up for external attendees from my last meeting; show it before sending.",
-      "Using My CRM's configured BOS scope, compare CRM records for the first matched attendee from my last meeting; read only."
+      "My CRM's configured BOS scope: preview unsent follow-up for last completed meeting external attendees; show recipients and text.",
+      "My CRM's configured BOS scope: find last completed meeting attendees' CRM matches; compare the first across sources; read only."
     ],
     "websiteURL": "https://dfsm.ai",
     "brandColor": "#061638",

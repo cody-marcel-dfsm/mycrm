@@ -40,12 +40,17 @@ test('selected reviewer context binds exact organization, role, application and 
  assert.equal(selectReviewer([{...context,application_name:'Other'}],state),null);assert.equal(selectReviewer([{...context,installation_name:'Other'}],state),null);assert.equal(selectReviewer([context,context],state),null);assert.equal(selectReviewer([context],{...state,application:undefined}),null);assert.deepEqual(selectReviewer([context],state),context);
 });
 
-test('exact transient fixture comparisons fail missing values and unrelated responses',()=>{
- const rule={requirement:'record',operator:'equals',path:'/responses/0/body/name',value:'Synthetic Person'};
- assert.equal(compareBindings([rule],{responses:[{body:{name:'Synthetic Person'}}]},[{id:'record',operator:'equals'}]),true);
- assert.equal(compareBindings([rule],{responses:[{body:{name:'Unrelated'}}]}),false);
- assert.equal(compareBindings([rule],{responses:[]}),false);
- assert.equal(compareBindings([{...rule,operator:'same_values',other_path:rule.path}],{responses:[{body:{name:['Synthetic']}}]}),false);
+test('exact transient fixture comparisons require product/case and independent truth',()=>{
+ const response={operation:'synthetic.read',transport:'deterministic_https',body:{name:'Synthetic Person'}};
+ const rule={requirement:'record',operator:'equals',response:{operation:response.operation,transport:response.transport},path:'/name',value:'Synthetic Person'};
+ const envelope={schema:'marketplace-case-assertions/v1',product:'my-crm',case_id:'positive-4',rules:[rule]};
+ const context={product:'my-crm',case_id:'positive-4'};
+ assert.equal(compareBindings(envelope,{responses:[response]},[{id:'record',operator:'equals'}],context),true);
+ assert.equal(compareBindings(envelope,{responses:[{...response,body:{name:'Unrelated'}}]},[],context),false);
+ assert.equal(compareBindings(envelope,{responses:[]},[],context),false);
+ assert.equal(compareBindings({...envelope,product:'other'},{responses:[response]},[],context),false);
+ assert.equal(compareBindings({...envelope,case_id:'positive-1'},{responses:[response]},[],context),false);
+ assert.equal(compareBindings([rule],{responses:[response]},[],context),false);
  assert.deepEqual(verifiedApiResponses([{tool:'mcp__BOS__bos_get_context',response:{selected:true}}]),[]);
 });
 test('HTTPS success requires matching published validator evidence and actual response schemas',()=>{

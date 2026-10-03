@@ -187,7 +187,7 @@ export function acceptanceVerdict(caseKind,answerStatus,failures) {
  return {status:allFailures.length===0?'PASS':'FAIL',reason:allFailures.join(',')};
 }
 export async function executeNative(catalog,item,config,release,model) {
- const base={transport_mode:'isolated_reviewer_https_host',id:item.id,prompt_sha256:digest(item.prompt),configuration_sha256:catalog.configuration_sha256,installed_version:release.version,release_commit:release.release_commit};
+ const base={product:catalog.product,transport_mode:'isolated_reviewer_https_host',id:item.id,prompt_sha256:digest(item.prompt),configuration_sha256:catalog.configuration_sha256,installed_version:release.version,release_commit:release.release_commit};
  try {
   const authority=await readFile(await externalAuthorityPath(config.fixture_authority_file));
   verifyAuthority(authority,config);
