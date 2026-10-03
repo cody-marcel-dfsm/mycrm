@@ -1,6 +1,6 @@
 ---
 name: my-crm
-description: Handle provider-neutral CRM work directly or, when required BOS authoring and runtime contracts are available, contribute CRM steps to ad hoc dynamic workflows. Use for CRM reads and mutations, multi-step or cross-service objectives, current contract discovery, and source-preserving results.
+description: Handle provider-neutral CRM work directly or, when required BOS authoring and runtime contracts are available, contribute CRM steps to ad hoc dynamic workflows. Use for CRM reads and mutations, communication prerequisite review, multi-step or cross-service objectives, current contract discovery, and source-preserving results.
 ---
 
 # My CRM
