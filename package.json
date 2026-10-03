@@ -1,6 +1,6 @@
 {
   "name": "my-crm",
-  "version": "0.2.27",
+  "version": "0.2.28",
   "description": "Provider-neutral CRM expertise; ad hoc dynamic workflows require live BOS contracts",
   "license": "Apache-2.0",
   "type": "module",
@@ -30,7 +30,9 @@
     "test": "npm run check:privacy && npm run check:boundary && npm run check:contracts && node --test tests/*.test.mjs",
     "vault:init": "node scripts/init-vault.mjs",
     "vault:sync": "node scripts/vault.mjs sync",
-    "vault:query": "node scripts/vault.mjs query"
+    "vault:query": "node scripts/vault.mjs query",
+    "acceptance:marketplace": "node scripts/run-marketplace-prompts.mjs",
+    "submission:cases": "node scripts/run-marketplace-prompts.mjs --submission-cases"
   },
   "engines": {
     "node": ">=20"
