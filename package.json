@@ -1,6 +1,6 @@
 {
   "name": "my-crm",
-  "version": "0.2.35",
+  "version": "0.2.36",
   "description": "Provider-neutral CRM expertise; ad hoc dynamic workflows require live BOS contracts",
   "license": "Apache-2.0",
   "type": "module",
