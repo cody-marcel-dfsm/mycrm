@@ -76,7 +76,7 @@ function composedOperationAdapter({first, second, transport = "throw"}) {
   const operationRequests = [];
   const deliver = (error) => {
     if (transport === "throw") throw thrownPublicError(error, "/bos/protected-resource");
-    const status = error.code === "service_unavailable" ? 503 : /^[A-Z][A-Z0-9_]+$/.test(error.code) ? 401 : 400;
+    const status = ["service_unavailable", "SOURCE_TEMPORARILY_UNAVAILABLE"].includes(error.code) ? 503 : error.code === "AUTHENTICATION_REQUIRED" ? 401 : 400;
     return {status, body: {error: structuredClone(error)}};
   };
   return {
@@ -209,7 +209,7 @@ test("execute preserves valid unadvertised returned and thrown errors without au
     describe: async () => structuredClone({...documents.describe, operations: [documents.describe.operations[0]]})
   };
   for (const mode of ["returned", "thrown"]) {
-    for (const expected of [exactError("authorization_denied", `${mode}-authorization`), exactError("service_unavailable", `${mode}-service`)]) {
+    for (const expected of [exactError("authorization_denied", `${mode}-authorization`), exactError("service_unavailable", `${mode}-service`), exactError("SOURCE_TEMPORARILY_UNAVAILABLE", `${mode}-uppercase`)]) {
       const adapter = composedOperationAdapter({first: expected, second: exactError("invalid_request", `${mode}-must-not-run`), transport: mode === "thrown" ? "throw" : "return"});
       const client = contractClient({
         discovery,
@@ -238,7 +238,10 @@ test("execute preserves canonical nested operation errors while scanning every o
       Object.assign(body.outcomes[0], {status: "failed", receipt: null, error});
     }]
   ];
-  for (const [operation, input, expected, applyFailure] of cases) {
+  for (const [operation, input, expected, applyFailure] of cases.flatMap(([operation, input, error, applyFailure]) => [
+    [operation, input, error, applyFailure],
+    [operation, input, {...error, code: error.code.toUpperCase()}, applyFailure]
+  ])) {
     const body = structuredClone(documents.examples[operation].response);
     applyFailure(body, structuredClone(expected));
     const client = contractClient({
