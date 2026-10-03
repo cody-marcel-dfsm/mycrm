@@ -1,4 +1,4 @@
-import {verifyPublishedPackage} from './marketplace-published-package.mjs';
+import {verifyPublishedPackage,verifyPackageOwnedBinding} from './marketplace-published-package.mjs';
 import {execFile} from 'node:child_process';
 import {promisify} from 'node:util';
 import {readFile, readdir} from 'node:fs/promises';
@@ -27,5 +27,16 @@ export async function installedRelease(catalog) {
     if (entry.isDirectory()) skills.push({name: entry.name, text: await readFile(join(path, 'skills', entry.name, 'SKILL.md'), 'utf8')});
   }
   if (!skills.length || skills.some(skill => !skill.text.trim())) throw new Error('Installed skills unavailable');
-  return {package_sha256:packageSha,plugin_id:matching[0].pluginId,entries,path, version: plugin.version, release_commit: sha, skills, skills_sha256: digest(skills)};
+  const bos=entries.filter(row=>row.name==='bos'&&row.installed&&row.enabled);
+  if(bos.length!==1||!bos[0].source?.path)throw new Error('Installed BOS dependency unavailable');
+  const dependencyPath=bos[0].source.path,dependencyCommit=(await run('git',['rev-parse','HEAD'],{cwd:dependencyPath})).stdout.trim();
+  await run('git',['merge-base','--is-ancestor',dependencyCommit,'origin/main'],{cwd:dependencyPath});
+  if((await run('git',['status','--porcelain','--','.'],{cwd:dependencyPath})).stdout.trim())throw new Error('Unpublished BOS dependency');
+  const dependencyManifest=JSON.parse(await readFile(join(dependencyPath,'.codex-plugin/plugin.json'),'utf8'));
+  if(dependencyManifest.version!==bos[0].version)throw new Error('BOS dependency version mismatch');
+  const binding=JSON.parse(await readFile(join(dependencyPath,'.mcp.json'),'utf8')).mcpServers?.['BOS-Platform'];
+  if(binding?.type!=='http'||binding.oauth_resource!==binding.url||binding.required!==false)throw new Error('Published BOS binding invalid');
+  await verifyPackageOwnedBinding(entries,bos[0].pluginId,binding);
+  const dependency={path:dependencyPath,release_commit:dependencyCommit,package_sha256:await verifyPublishedPackage(dependencyPath,dependencyCommit),version:bos[0].version,plugin_id:bos[0].pluginId};
+  return {dependency,package_sha256:packageSha,plugin_id:matching[0].pluginId,entries,path, version: plugin.version, release_commit: sha, skills, skills_sha256: digest(skills)};
 }
