@@ -167,3 +167,13 @@ test("unready sources remain describable and cannot reach business transport", a
     assert.equal(requests.length, 1);
   }
 });
+
+test("optional public Describe limits preserve strict types and attachment bounds",()=>{
+ const operation=structuredClone(createSyntheticDocuments().describe.operations[0]);
+ for(const value of [true,false])assert.equal(validateOperationDescription({...operation,limits:{...operation.limits,multiple_selectors_per_source:value}}).limits.multiple_selectors_per_source,value);
+ for(const value of [1,26214400])assert.equal(validateOperationDescription({...operation,limits:{...operation.limits,maximum_attachment_bytes:value}}).limits.maximum_attachment_bytes,value);
+ for(const value of [null,0,1,"true",{},[]])assert.throws(()=>validateOperationDescription({...operation,limits:{...operation.limits,multiple_selectors_per_source:value}}),/limits/);
+ for(const value of [null,0,-1,26214401,1.5,true,"26214400",{},[]])assert.throws(()=>validateOperationDescription({...operation,limits:{...operation.limits,maximum_attachment_bytes:value}}),/limits/);
+ assert.throws(()=>validateOperationDescription({...operation,limits:{...operation.limits,unknown_limit:true}}),/limits shape/);
+ assert.equal(validateOperationDescription({...operation,limits:{...operation.limits,max_targets:null}}).limits.max_targets,null);
+});
