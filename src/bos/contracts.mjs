@@ -70,7 +70,7 @@ function nonEmpty(value, label) {
 }
 function publicRoute(value, label) {
   nonEmpty(value, label);
-  return validateSafeBosRoute(value, label, {organizationTemplate: true});
+  return validateSafeBosRoute(value, label);
 }
 function exactKeys(value, expected, label) {
   if (JSON.stringify(Object.keys(object(value, label)).sort()) !== JSON.stringify([...expected].sort())) throw new TypeError(`${label} shape is invalid`);

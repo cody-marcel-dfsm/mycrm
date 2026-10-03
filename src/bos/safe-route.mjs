@@ -1,4 +1,4 @@
-export function validateSafeBosRoute(value, label = "BOS route", {organizationTemplate = false} = {}) {
+export function validateSafeBosRoute(value, label = "BOS route") {
   const invalid = () => { throw new TypeError(`${label} must be a safe origin-relative /bos/ URI`); };
   if (typeof value !== "string" || value.length === 0 || value.length > 4096 ||
       !value.startsWith("/bos/") || value.startsWith("//") ||
@@ -14,8 +14,8 @@ export function validateSafeBosRoute(value, label = "BOS route", {organizationTe
   } catch { invalid(); }
   if (!decoded.startsWith("/bos/") || /[\u0000-\u0020\u007f\\#]/u.test(decoded) || decodedPath.includes("?") ||
       decodedPath.includes("//") || decodedPath.split("/").some((segment) => segment === "." || segment === "..")) invalid();
-  if (organizationTemplate && !rawPath.includes("/{organization}/")) {
-    throw new TypeError(`${label} must be a public organization route template`);
+  if (/[{}]/u.test(value) || /[{}]/u.test(decoded)) {
+    invalid();
   }
   return value;
 }

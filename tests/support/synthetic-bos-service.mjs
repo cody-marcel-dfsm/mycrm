@@ -39,7 +39,7 @@ function operation(operation, effect, input_schema, output_schema, method = "POS
     effect,
     limits: structuredClone(limits),
     guarantees: structuredClone(guarantees),
-    execution: {context_header: "X-BOS-Context-Handle", method, uri: `/bos/synthetic/organizations/{organization}/operations/${operation}`},
+    execution: {context_header: "X-BOS-Context-Handle", method, uri: `/bos/synthetic/organizations/synthetic/operations/${operation}`},
     input_schema: structuredClone(input_schema),
     output_schema: structuredClone(output_schema),
     sources: [{source: structuredClone(SOURCE), availability: "ready"}],
@@ -56,12 +56,12 @@ export function createSyntheticDocuments({variant = "alpha"} = {}) {
     operation("calendar_read_event", "read", objectSchema({}, []), mutationOutput)
   ];
   if (variant === "beta") {
-    operations[0].execution.uri = "/bos/synthetic/organizations/{organization}/operations/search-v2";
+    operations[0].execution.uri = "/bos/synthetic/organizations/synthetic/operations/search-v2";
     operations[0].input_schema.properties.text.maxLength = 512;
   }
   const discovery = {
     application: {platform: "bos", application: "lead-director"},
-    describe: {contract_version: "lead-director-describe/v1", method: "POST", uri: "/bos/synthetic/organizations/{organization}/describe", max_operations: 5, operations: operations.map(({operation: id}) => id)},
+    describe: {contract_version: "lead-director-describe/v1", method: "POST", uri: "/bos/synthetic/organizations/synthetic/describe", max_operations: 5, operations: operations.map(({operation: id}) => id)},
     journey_registration: {
       contract: {
         capability: "api.contract.get",
@@ -121,7 +121,7 @@ export async function startSyntheticBosService(options = {}) {
     const result = await fetch(url, init);
     return result.json();
   };
-  const expand = (uri) => new URL(uri.replace("{organization}", "synthetic"), discoveryUrl).href;
+  const expand = (uri) => new URL(uri, discoveryUrl).href;
   const discovery = {
     read: async () => fetchJson(discoveryUrl),
     refresh: async () => fetchJson(discoveryUrl, {cache: "no-store"}),
