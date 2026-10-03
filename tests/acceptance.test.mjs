@@ -71,7 +71,9 @@ test("every marketplace starter prompt follows its declared direct or BOS journe
       assert.equal(prompt.assertions.includes("bos-owned-journey-orchestration"), true);
       assert.equal(prompt.assertions.includes("active-authenticated-scope"), true);
       assert.equal(prompt.assertions.includes("no-additional-identifiers"), true);
-      if (prompt.effect === "approval-gated-write") {
+      if (prompt.assertions.includes("client-preview")) {
+        assert.equal(prompt.effect, "read");
+        assert.equal(prompt.assertions.includes("no-mutation"), true);
         assert.equal(prompt.operation, null);
         assert.equal(prompt.assertions.includes("no-initial-crm-lookup"), true);
         assert.equal(prompt.assertions.includes("approval-before-send"), true);

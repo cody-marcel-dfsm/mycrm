@@ -11,7 +11,9 @@
         },
         {
           "id": "freshness",
-          "operator": "equals"
+          "operator": "timestamp_age",
+          "maximum_age_ms": 300000,
+          "future_skew_ms": 30000
         },
         {
           "id": "source-provenance",
@@ -22,11 +24,9 @@
     },
     {
       "starter_prompt_index": 1,
-      "expected_output": "Use BOS-owned orchestration and the current discovered contracts to prepare a follow-up for the synthetic meeting attendees. Show the prepared content before sending and perform no send or call. My CRM contributes CRM expertise only when the workflow requests it.",
+      "expected_output": "Use BOS-owned orchestration to read the last completed synthetic meeting through current discovered HTTPS contracts and present an unsent client preview with its eligible recipients and draft text. Perform no send, call, provider draft write or campaign preparation. My CRM contributes CRM expertise only when the workflow requests it. A missing fixture or read capability is a blocked test, not a pass.",
       "allowed_effects": [
-        "read",
-        "prepare",
-        "draft"
+        "read"
       ],
       "requirements": [
         {
@@ -39,7 +39,9 @@
         },
         {
           "id": "freshness",
-          "operator": "equals"
+          "operator": "timestamp_age",
+          "maximum_age_ms": 300000,
+          "future_skew_ms": 30000
         },
         {
           "id": "source-provenance",
@@ -50,7 +52,7 @@
     },
     {
       "starter_prompt_index": 2,
-      "expected_output": "Compare the first matched synthetic meeting attendee's CRM records across the sources returned by discovery. Preserve each source record, freshness, conflicts and uncertainty; perform no mutation. The fixture must contain at least two independently attributed source records.",
+      "expected_output": "Discover the last completed synthetic meeting, find CRM matches for its external attendees, and compare the first matched attendee's source-native records across the returned sources. Preserve each source record, freshness, conflicts and uncertainty; perform no mutation. The fixture must establish the selected attendee independently and contain at least two independently attributed source records.",
       "requirements": [
         {
           "id": "matched-attendee",
@@ -63,7 +65,9 @@
         },
         {
           "id": "freshness",
-          "operator": "equals"
+          "operator": "timestamp_age",
+          "maximum_age_ms": 300000,
+          "future_skew_ms": 30000
         },
         {
           "id": "source-provenance",
@@ -87,7 +91,9 @@
         },
         {
           "id": "freshness",
-          "operator": "equals"
+          "operator": "timestamp_age",
+          "maximum_age_ms": 300000,
+          "future_skew_ms": 30000
         }
       ]
     },
@@ -106,7 +112,9 @@
         },
         {
           "id": "freshness",
-          "operator": "equals"
+          "operator": "timestamp_age",
+          "maximum_age_ms": 300000,
+          "future_skew_ms": 30000
         },
         {
           "id": "source-provenance",

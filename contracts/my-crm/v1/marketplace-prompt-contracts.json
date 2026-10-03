@@ -28,9 +28,9 @@
     },
     {
       "id": "canonical-recent-meeting-follow-up",
-      "text": "Using My CRM's configured BOS scope, prepare a follow-up for external attendees from my last meeting; show it before sending.",
+      "text": "My CRM's configured BOS scope: preview unsent follow-up for last completed meeting external attendees; show recipients and text.",
       "operation": null,
-      "effect": "approval-gated-write",
+      "effect": "read",
       "routing": "bos-journey",
       "assertions": [
         "active-authenticated-scope",
@@ -44,12 +44,14 @@
         "bos-owned-journey-orchestration",
         "no-initial-crm-lookup",
         "approval-before-send",
-        "crm-only-on-returned-instruction"
+        "crm-only-on-returned-instruction",
+        "client-preview",
+        "no-mutation"
       ]
     },
     {
       "id": "compare-customer-across-sources",
-      "text": "Using My CRM's configured BOS scope, compare CRM records for the first matched attendee from my last meeting; read only.",
+      "text": "My CRM's configured BOS scope: find last completed meeting attendees' CRM matches; compare the first across sources; read only.",
       "operation": "search",
       "effect": "read",
       "routing": "bos-journey",
