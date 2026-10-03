@@ -3,7 +3,7 @@ import addFormats from "ajv-formats";
 import {validateSafeBosRoute} from "./safe-route.mjs";
 
 const HTTP_METHODS = new Set(["DELETE", "GET", "PATCH", "POST", "PUT"]);
-const LIMIT_KEYS = ["max_targets", "max_results_per_source", "pagination_supported", "bulk_supported", "streaming_supported", "maximum_duration_seconds", "maximum_fan_out"];
+const LIMIT_KEYS = ["max_targets", "max_results_per_source", "pagination_supported", "bulk_supported", "streaming_supported", "maximum_duration_seconds", "maximum_fan_out", "multiple_selectors_per_source", "maximum_attachment_bytes"];
 const REQUIRED_LIMIT_KEYS = ["pagination_supported", "bulk_supported", "streaming_supported"];
 const GUARANTEE_KEYS = ["read_consistency", "per_source_atomicity", "cross_source_atomicity", "convergence", "idempotency"];
 const PUBLIC_ERROR_KEYS = new Set(["code", "message", "retryable", "correlation_id", "details"]);
@@ -278,9 +278,11 @@ function validateLimits(value, label) {
   for (const key of REQUIRED_LIMIT_KEYS) if (!(key in limits)) throw new TypeError(`${label} limits.${key} is required`);
   for (const key of Object.keys(limits)) {
     const current = limits[key];
-    if (current !== null && typeof current !== (key.endsWith("supported") ? "boolean" : "number")) throw new TypeError(`${label} limits.${key} has an invalid type`);
+    if (["multiple_selectors_per_source", "maximum_attachment_bytes"].includes(key) && current === null) throw new TypeError(`${label} limits.${key} must be nonnull`);
+    if (current !== null && typeof current !== (key.endsWith("supported") || key === "multiple_selectors_per_source" ? "boolean" : "number")) throw new TypeError(`${label} limits.${key} has an invalid type`);
     if (typeof current === "number" && (!Number.isInteger(current) || current < 1)) throw new TypeError(`${label} limits.${key} must be a positive integer`);
   }
+  if (limits.maximum_attachment_bytes != null && limits.maximum_attachment_bytes > 26214400) throw new TypeError(`${label} limits exceed the public contract`);
   if (limits.maximum_duration_seconds != null && limits.maximum_duration_seconds > 900) throw new TypeError(`${label} limits exceed the public contract`);
   if (limits.maximum_fan_out != null && limits.maximum_fan_out > 100) throw new TypeError(`${label} limits exceed the public contract`);
 }
