@@ -196,7 +196,7 @@ export function validatePublicError(value, {definition = false} = {}) {
   const error = object(value, "public error");
   exactKeys(error, PUBLIC_ERROR_KEYS, "public error");
   nonEmpty(error.code, "public error code");
-  if (!/^[a-z][a-z0-9_]{0,127}$/.test(error.code)) throw new TypeError("public error code is invalid");
+  if (!/^(?:[a-z][a-z0-9_]{0,127}|[A-Z][A-Z0-9_]{0,127})$/.test(error.code)) throw new TypeError("public error code is invalid");
   if (typeof error.message !== "string" || Array.from(error.message).length === 0) throw new TypeError("public error message must be a non-empty string");
   if (Array.from(error.message).length > 2048) throw new TypeError("public error message is too long");
   if (PUBLIC_ERROR_CONTEXT_HANDLE.test(error.message)) throw new TypeError("public error message contains a forbidden context handle");
@@ -321,7 +321,7 @@ export function validateOperationDescription(value, label = "operation") {
     const hasSourceContract = contractKeys.some((key) => key in source);
     const expected = [...baseKeys, ...(hasSourceContract ? contractKeys : [])].sort();
     if (JSON.stringify(keys) !== JSON.stringify(expected)) throw new TypeError(`${label}.sources[${index}] shape is invalid`);
-    if (!new Set(["ready", "provider_authorization_required", "source_not_available", "source_temporarily_unavailable"]).has(source.availability)) throw new TypeError(`${label}.sources[${index}] availability is invalid`);
+    if (!new Set(["ready", "authorization_required", "configuration_required", "temporarily_unavailable", "provider_authorization_required", "source_not_available", "source_temporarily_unavailable"]).has(source.availability)) throw new TypeError(`${label}.sources[${index}] availability is invalid`);
     const validated = {source: validateSourceReference(source.source, `${label}.sources[${index}].source`), availability: source.availability};
     if (hasSourceContract) {
       for (const schemaName of ["input_schema", "output_schema", "receipt_schema"]) {
@@ -336,7 +336,7 @@ export function validateOperationDescription(value, label = "operation") {
       if (sourceErrorContract.schema !== "lead-director-public-error/v1" || !Array.isArray(sourceErrorContract.codes) || sourceErrorContract.codes.length < 1 || new Set(sourceErrorContract.codes).size !== sourceErrorContract.codes.length) throw new TypeError(`${label}.sources[${index}].error_contract is invalid`);
       sourceErrorContract.codes.forEach((code, codeIndex) => {
         nonEmpty(code, `${label}.sources[${index}].error_contract.codes[${codeIndex}]`);
-        if (!/^[a-z][a-z0-9_]{0,127}$/.test(code)) throw new TypeError(`${label}.sources[${index}].error_contract.codes[${codeIndex}] is invalid`);
+        if (!/^(?:[a-z][a-z0-9_]{0,127}|[A-Z][A-Z0-9_]{0,127})$/.test(code)) throw new TypeError(`${label}.sources[${index}].error_contract.codes[${codeIndex}] is invalid`);
       });
       validated.limits = clone(source.limits);
       validated.guarantees = clone(source.guarantees);
@@ -352,7 +352,7 @@ export function validateOperationDescription(value, label = "operation") {
   if (!Array.isArray(errorContract.codes) || errorContract.codes.length < 1 || new Set(errorContract.codes).size !== errorContract.codes.length) throw new TypeError(`${label} error_contract codes are invalid`);
   errorContract.codes.forEach((code, index) => {
     nonEmpty(code, `${label} error_contract.codes[${index}]`);
-    if (!/^[a-z][a-z0-9_]{0,127}$/.test(code)) throw new TypeError(`${label} error_contract.codes[${index}] is invalid`);
+    if (!/^(?:[a-z][a-z0-9_]{0,127}|[A-Z][A-Z0-9_]{0,127})$/.test(code)) throw new TypeError(`${label} error_contract.codes[${index}] is invalid`);
   });
   const envelope = {...operation, input_schema: {}, output_schema: {}};
   assertNoPrivateKeys(envelope, label);

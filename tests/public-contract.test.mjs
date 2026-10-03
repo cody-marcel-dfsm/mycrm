@@ -67,8 +67,8 @@ test("discovered schemas enforce current scalar constraints", async (context) =>
 });
 
 test("public errors enforce structural code, message privacy, and detail safety", () => {
-  assert.throws(() => validatePublicError({code: "SOURCE_TEMPORARILY_UNAVAILABLE", message: "Safe", retryable: true, correlation_id: "corr", details: []}), /code is invalid/);
-  assert.throws(() => validatePublicError({code: "VALIDATION_FAILED", message: "Safe", retryable: false, correlation_id: "corr", details: []}), /code is invalid/);
+  assert.equal(validatePublicError({code: "SOURCE_TEMPORARILY_UNAVAILABLE", message: "Safe", retryable: true, correlation_id: "corr", details: []}).code, "SOURCE_TEMPORARILY_UNAVAILABLE");
+  assert.throws(() => validatePublicError({code: "Validation_Failed", message: "Safe", retryable: false, correlation_id: "corr", details: []}), /code is invalid/);
   assert.throws(() => validatePublicError({code: "failed", message: "token=synthetic-secret; SQLSTATE synthetic failure", retryable: false, correlation_id: "corr", details: []}), /private implementation detail/);
   assert.throws(() => validatePublicError({code: "failed", message: "Safe", retryable: false, correlation_id: "corr", details: [{access_token: "private"}]}), /private key/);
 });
@@ -121,22 +121,49 @@ test("public error messages preserve whitespace and count Unicode code points", 
   assert.throws(() => validatePublicError({...base, message: ""}), /non-empty string/);
 });
 
-test("source availability accepts only exact canonical BOS values", () => {
+test("source availability preserves current and recognized archived values", () => {
   const operation = createSyntheticDocuments().describe.operations[0];
-  for (const availability of ["ready", "provider_authorization_required", "source_not_available", "source_temporarily_unavailable"]) {
+  for (const availability of ["ready", "authorization_required", "configuration_required", "temporarily_unavailable", "provider_authorization_required", "source_not_available", "source_temporarily_unavailable"]) {
     const candidate = structuredClone(operation);
     candidate.sources[0].availability = availability;
     assert.equal(validateOperationDescription(candidate).sources[0].availability, availability);
   }
-  for (const legacy of ["authorization_required", "configuration_required", "temporarily_unavailable"]) {
-    const candidate = structuredClone(operation);
-    candidate.sources[0].availability = legacy;
+  for (const availability of ["unknown", "Ready", "AUTHORIZATION_REQUIRED"]) {
+    const candidate=structuredClone(operation);candidate.sources[0].availability=availability;
     assert.throws(() => validateOperationDescription(candidate), /availability is invalid/);
   }
 });
 
-test("operation error contracts reject legacy uppercase codes", () => {
-  const operation = createSyntheticDocuments().describe.operations[0];
-  operation.error_contract.codes = ["SOURCE_TEMPORARILY_UNAVAILABLE"];
-  assert.throws(() => validateOperationDescription(operation), /error_contract\.codes\[0\] is invalid/);
+test("declared error codes preserve case and reject mixed or malformed values", () => {
+  for (const codes of [["INVALID_REQUEST","SOURCE_TEMPORARILY_UNAVAILABLE"],["invalid_request","source_temporarily_unavailable"]]) {
+    const operation=createSyntheticDocuments().describe.operations[0];
+    operation.error_contract.codes=codes;
+    assert.deepEqual(validateOperationDescription(operation).error_contract.codes,codes);
+  }
+  for(const code of ["Invalid_Request","INVALID-REQUEST","invalid request"]) {
+    const operation=createSyntheticDocuments().describe.operations[0];operation.error_contract.codes=[code];
+    assert.throws(() => validateOperationDescription(operation), /error_contract.codes/);
+  }
+});
+
+test("unready sources remain describable and cannot reach business transport", async () => {
+  for (const availability of ["authorization_required", "configuration_required", "temporarily_unavailable"]) {
+    const documents = createSyntheticDocuments();
+    const operation = documents.describe.operations[0];
+    operation.sources[0].availability = availability;
+    const requests = [];
+    const client = new BosContractClient({
+      discovery: {read: async () => documents.discovery, refresh: async () => documents.discovery},
+      http: {request: async (request) => {
+        requests.push(request);
+        assert.equal(request.uri, documents.discovery.describe.uri);
+        return {status: 200, body: {...documents.describe, operations: [operation]}};
+      }},
+      bos: {recoverAuthentication: async () => {throw new Error("Readiness cannot grant authentication");}}
+    });
+    const described = await client.describe([operation.operation]);
+    assert.equal(described.operations[0].sources[0].availability, availability);
+    await assert.rejects(client.execute(operation.operation, {text: "Synthetic Person"}), /no ready selected source/);
+    assert.equal(requests.length, 1);
+  }
 });
