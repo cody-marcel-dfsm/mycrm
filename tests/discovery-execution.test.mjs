@@ -16,23 +16,25 @@ function contractClient(options) {
 }
 
 const unsafeDiscoveredUris = [
-  "https://fixture.invalid/bos/organizations/{organization}/operation",
-  "//fixture.invalid/bos/organizations/{organization}/operation",
-  "/synthetic/organizations/{organization}/operation",
-  "/bos/../organizations/{organization}/operation",
-  "/bos/..?/organizations/{organization}/operation",
-  "/bos/%2e%2e/organizations/{organization}/operation",
-  "/bos/%2e./organizations/{organization}/operation",
-  "/bos/.%2e/organizations/{organization}/operation",
-  "/bos/%2e%2e%2forganizations/{organization}/operation",
-  "/bos/action%3f/../organizations/{organization}/operation",
-  "/bos/organizations/{organization}/operation#fragment",
-  "/bos/organizations/{organization}/operation%23fragment",
-  "/bos/organizations/{organization}/operation\r\nx-header:value",
-  "/bos/organizations/{organization}/operation%0d%0ax-header:value",
-  "/bos//organizations/{organization}/operation",
-  "/bos/%2forganizations/{organization}/operation",
-  "/bos/\\..\\organizations/{organization}/operation"
+  "/bos/synthetic/organizations/{organization}/describe",
+  "/bos/synthetic/organizations/%7Borganization%7D/describe",
+  "https://fixture.invalid/bos/organizations/synthetic/operation",
+  "//fixture.invalid/bos/organizations/synthetic/operation",
+  "/synthetic/organizations/synthetic/operation",
+  "/bos/../organizations/synthetic/operation",
+  "/bos/..?/organizations/synthetic/operation",
+  "/bos/%2e%2e/organizations/synthetic/operation",
+  "/bos/%2e./organizations/synthetic/operation",
+  "/bos/.%2e/organizations/synthetic/operation",
+  "/bos/%2e%2e%2forganizations/synthetic/operation",
+  "/bos/action%3f/../organizations/synthetic/operation",
+  "/bos/organizations/synthetic/operation#fragment",
+  "/bos/organizations/synthetic/operation%23fragment",
+  "/bos/organizations/synthetic/operation\r\nx-header:value",
+  "/bos/organizations/synthetic/operation%0d%0ax-header:value",
+  "/bos//organizations/synthetic/operation",
+  "/bos/%2forganizations/synthetic/operation",
+  "/bos/\\..\\organizations/synthetic/operation"
 ];
 const publicError = (code) => ({
   code,
