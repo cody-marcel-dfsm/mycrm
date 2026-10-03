@@ -44,7 +44,7 @@ test("CRM contribution contains domain goals and constraints without BOSL or run
 
 test("published BOS awaiting_client CRM instruction is accepted and delegated unchanged", async () => {
   const calls = [];
-  const client = new CrmJourneyClient({bos: {invokeReturnedAction: async (action, payload) => { calls.push({action, payload}); return {status: 200, body: {status: "completed"}}; }}});
+  const client = new CrmJourneyClient({bos: {verifyExecutionIntent: async () => true, invokeReturnedAction: async (action, payload) => { calls.push({action, payload}); return {status: 200, body: {status: "completed"}}; }}});
   const response = validateCrmInstructionEnvelope(serviceFixture);
   assert.equal(response.status, "awaiting_client");
   assert.equal(response.identity, "synthetic-crm-evidence");
@@ -64,7 +64,7 @@ test("awaiting_client envelope is closed and exposes only the public journey ide
 });
 
 test("CRM instructions are bounded and server transitions remain opaque", () => {
-  const client = new CrmJourneyClient({bos: {invokeReturnedAction: async () => ({status: 200, body: {}})}});
+  const client = new CrmJourneyClient({bos: {verifyExecutionIntent: async () => true, invokeReturnedAction: async () => ({status: 200, body: {}})}});
   const instruction = client.validateInstruction(serviceFixture.instruction);
   assert.equal(instruction.goal, "Find current CRM evidence for the synthetic attendee.");
   assert.throws(() => client.validateInstruction({...instruction, access_token: "private"}), /forbidden private key/i);
@@ -80,7 +80,7 @@ test("CRM instructions are bounded and server transitions remain opaque", () => 
 
 test("exact instruction actions are invoked without client IDs, keys, or state", async () => {
   const calls = [];
-  const client = new CrmJourneyClient({bos: {invokeReturnedAction: async (action, payload) => { calls.push({action, payload}); return {status: 200, body: {status: "step_completed"}}; }}});
+  const client = new CrmJourneyClient({bos: {verifyExecutionIntent: async () => true, invokeReturnedAction: async (action, payload) => { calls.push({action, payload}); return {status: 200, body: {status: "step_completed"}}; }}});
   const instruction = serviceFixture.instruction;
   await client.invokeInstructionAction(instruction, "after_success", {acknowledged: true});
   assert.deepEqual(calls, [{action: instruction.after_success, payload: {acknowledged: true}}]);
@@ -118,7 +118,7 @@ test("CRM audience repair requires server rematerialization, campaign reprepare,
 test("published client_action_required recovery is closed, sanitized, and delegated through its returned step", async () => {
   const response = structuredClone(actionRequiredFixture);
   const calls = [];
-  const client = new CrmJourneyClient({bos: {invokeReturnedAction: async (action, payload) => { calls.push({action, payload}); return {status: 200}; }}});
+  const client = new CrmJourneyClient({bos: {verifyExecutionIntent: async () => true, invokeReturnedAction: async (action, payload) => { calls.push({action, payload}); return {status: 200}; }}});
   const validated = validateCrmResolutionEnvelope(response);
   assert.equal(validated.resolution.operation, actionRequiredFixture.resolution.operation);
   assert.match(validated.resolution.operation, /\.templates\.create$/);

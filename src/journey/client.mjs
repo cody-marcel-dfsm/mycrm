@@ -28,6 +28,7 @@ export function buildCrmContribution(input) {
 export class CrmJourneyClient {
   constructor({bos}) {
     if (typeof bos?.invokeReturnedAction !== "function") throw new TypeError("bos.invokeReturnedAction is required");
+    this.bos = bos;
     this.actions = new ReturnedActionClient({bos});
   }
   validateInstruction(value) {
@@ -36,11 +37,22 @@ export class CrmJourneyClient {
   async invokeInstructionAction(instruction, name, payload) {
     if (!INSTRUCTION_ACTIONS.has(name)) throw new TypeError(`CRM instruction action ${name} is unsupported`);
     const current = this.validateInstruction(instruction);
-    return this.actions.invoke(current[name], payload);
+    const pinnedPayload = payload === undefined ? undefined : structuredClone(payload);
+    if (name === "after_success") await this.#verifySuccess({instruction: current, action: current[name], payload: pinnedPayload});
+    return this.actions.invoke(current[name], pinnedPayload);
   }
   async invokeResolutionAction(response) {
     const current = validateCrmResolutionEnvelope(response);
+    await this.#verifySuccess({resolution: current.resolution, action: current.resolution.after_success});
     return this.actions.invoke(current.resolution.after_success);
+  }
+  async #verifySuccess(intent) {
+    if (typeof this.bos.verifyExecutionIntent !== "function" ||
+        await this.bos.verifyExecutionIntent(structuredClone({...intent,
+          requireGoalCompletion: true,
+          requireUserApproval: intent.resolution?.requires_user_approval === true})) !== true) {
+      throw new TypeError("Trusted BOS approval and goal-completion review is required");
+    }
   }
 }
 

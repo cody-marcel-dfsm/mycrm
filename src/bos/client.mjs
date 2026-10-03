@@ -134,6 +134,7 @@ export class BosContractClient {
   }
 
   async execute(operationId, input) {
+    input = structuredClone(input);
     const original = this.descriptions.get(operationId);
     if (!original) throw new BosContractError(`Operation ${operationId} has not been described`, {operation: operationId});
     if (original.status !== "described") throw new BosContractError(`Operation ${operationId} is not available`, {operation: operationId});
@@ -164,6 +165,27 @@ export class BosContractClient {
     return structuredClone(response);
   }
 
+  async verifyExecutionIntent(intent) {
+    if (typeof this.bos.verifyExecutionIntent !== "function" ||
+        await this.bos.verifyExecutionIntent(structuredClone(intent)) !== true) {
+      throw new BosContractError("Trusted BOS execution review is required", {code: "EXECUTION_REVIEW_REQUIRED"});
+    }
+    return true;
+  }
+
+  async captureExecutionScope() {
+    return typeof this.bos.captureExecutionScope === "function"
+      ? this.bos.captureExecutionScope() : null;
+  }
+
+  async #verifyScope(verifyScope) {
+    if (typeof verifyScope !== "function" || await verifyScope() !== true) {
+      this.discovery = null;
+      this.descriptions.clear();
+      throw new BosContractError("Execution scope must be rediscovered and reviewed", {code: "EXECUTION_SCOPE_CHANGED"});
+    }
+  }
+
   async invokeReturnedAction(action, payload) {
     return new ReturnedActionClient({bos: this.bos}).invoke(action, payload);
   }
@@ -173,6 +195,8 @@ export class BosContractClient {
   }
 
   async #readDiscovery(refresh) {
+    const previouslyScoped = this.discovery !== null;
+    const verifyScope = previouslyScoped ? await this.captureExecutionScope() : null;
     let value;
     try {
       value = await this.discoveryTransport[refresh ? "refresh" : "read"]();
@@ -183,6 +207,7 @@ export class BosContractClient {
       this.recoveryActive = true;
       try {
         await this.#recover(condition, error?.resource ?? null);
+        if (previouslyScoped) await this.#verifyScope(verifyScope);
         try { value = await this.discoveryTransport.refresh(); } catch (retryError) {
           if (authenticationCondition(retryError)) throw new BosContractError("BOS authentication recovery did not restore discovery", {code: "AUTHENTICATION_RECOVERY_FAILED"});
           throw this.#transportFailure(retryError, null, "The BOS discovery transport failed after recovery");
@@ -196,25 +221,28 @@ export class BosContractClient {
   }
 
   async #requestWithRecovery(action, {operationIds, operation, redescribe = true}) {
+    const verifyScope = await this.captureExecutionScope();
     let response;
     try { response = await action(); } catch (error) {
       if (error instanceof BosContractError) throw error;
       const condition = authenticationCondition(error);
       if (!condition) throw this.#transportFailure(error, operation, "The discovered HTTPS transport failed");
-      return this.#recoverRefreshAndRetry(condition, action, {operationIds, operation, resource: error?.resource ?? null, redescribe});
+      return this.#recoverRefreshAndRetry(condition, action, {operationIds, operation, resource: error?.resource ?? null, redescribe, verifyScope});
     }
     const condition = authenticationCondition(response);
     if (!condition) return response;
-    return this.#recoverRefreshAndRetry(condition, action, {operationIds, operation, resource: response?.resource ?? null, redescribe});
+    return this.#recoverRefreshAndRetry(condition, action, {operationIds, operation, resource: response?.resource ?? null, redescribe, verifyScope});
   }
 
-  async #recoverRefreshAndRetry(condition, action, {operationIds, operation, resource, redescribe}) {
+  async #recoverRefreshAndRetry(condition, action, {operationIds, operation, resource, redescribe, verifyScope}) {
     if (this.recoveryActive) throw new BosContractError("BOS authentication recovery did not restore the operation", {code: "AUTHENTICATION_RECOVERY_FAILED", operation});
     this.recoveryActive = true;
     try {
       await this.#recover(condition, resource);
+      await this.#verifyScope(verifyScope);
       await this.refreshDiscovery();
       if (operation !== "app.describe" && redescribe) await this.describe(operationIds);
+      await this.#verifyScope(verifyScope);
       let response;
       try { response = await action(); } catch (error) {
         if (error instanceof BosContractError) throw error;

@@ -11,6 +11,7 @@ function fixtureBos() {
   const calls = [];
   return {
     calls,
+    verifyExecutionIntent: async () => true,
     describe: async (operations) => { calls.push(["describe", operations]); return {operations: operations.map((operation) => descriptions.get(operation))}; },
     getDescription: (operation) => structuredClone(descriptions.get(operation)),
     execute: async (operation, request) => { calls.push(["execute", operation, request]); return {status: 200, body: structuredClone(examples[operation].response)}; },
