@@ -12,7 +12,7 @@ function contractClient(options) {
       return options.bos.invokeDiscoveredOperation({execution: {method, uri, context_header}}, body);
     }
   };
-  return new BosContractClient({...options, bos: {recoverAuthentication: async () => ({status: "READY"}), ...options.bos}, http});
+  return new BosContractClient({...options, bos: {verifyExecutionIntent: async () => true, captureExecutionScope: async () => async () => true, recoverAuthentication: async () => ({status: "READY"}), ...options.bos}, http});
 }
 
 const unsafeDiscoveredUris = [

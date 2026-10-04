@@ -136,6 +136,8 @@ export async function startSyntheticBosService(options = {}) {
     }
   };
   const bos = {
+    verifyExecutionIntent: async () => true,
+    captureExecutionScope: async () => async () => true,
     recoverAuthentication: async () => ({status: "READY"}),
     invokeDiscoveredOperation: async (contact, payload) => {
       const init = {method: contact.execution.method, headers: {"content-type": "application/json"}};

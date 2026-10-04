@@ -64,6 +64,12 @@ export class ProviderNeutralCrmClient {
 
   async #orderedMutation(operation, request) {
     const description = await this.#describe(operation);
+    if (typeof this.bos.verifyExecutionIntent !== "function" ||
+        await this.bos.verifyExecutionIntent({operation, effect: description.effect,
+          request: structuredClone(request), requireOneConceptualRecord: true,
+          requireUserApproval: operation === OPERATIONS.delete}) !== true) {
+      throw new TypeError("Trusted BOS execution review is required; prepare the exact request for review");
+    }
     const result = validateOrderedMutationResult(body(await this.bos.execute(operation, request), operation), request.targets, description);
     await this.#afterMutation(operation, result, {sources: request.targets.map(({source}) => source)});
     return result;
