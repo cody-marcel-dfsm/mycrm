@@ -1,7 +1,7 @@
 {
   "name": "my-crm",
   "description": "Provider-neutral CRM expertise; ad hoc dynamic workflows require live BOS contracts",
-  "version": "0.2.37",
+  "version": "0.2.38",
   "author": {
     "name": "Infinite State Machines LLC",
     "url": "https://dfsm.ai"
