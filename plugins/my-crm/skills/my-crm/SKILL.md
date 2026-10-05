@@ -5,7 +5,7 @@ description: Handle provider-neutral CRM work directly or, when required BOS aut
 
 # My CRM
 
-Require the installed BOS product and use its authenticated application-discovery and client skills. Delegate login, reauthentication, consent, source authorization, and connection recovery automatically to BOS. When an advertised operation returns an established uppercase handoff condition or challenged HTTP 401, ask BOS to recover through `READY`, refresh discovery, re-Describe the operation, and retry the exact preserved request once. Handle no credential, token, authority selector, client identifier, idempotency key, retry state, or execution identity.
+Require the installed BOS product for authenticated context, discovery, and deterministic execution. That dependency does not require loading BOS client-skill files for every CRM operation. For ordinary single-operation work, use the focused My CRM skill with current BOS discovery and exact advertised HTTPS contracts; load a BOS client skill when the task needs its owned behavior: resolving an unscoped context, authentication or consent recovery, provider-source authorization recovery, an explicitly requested explain plan, multi-step or cross-service orchestration, BOSL or journey interaction, or BOS-owned settings and cache work. Delegate login, reauthentication, consent, source authorization, and connection recovery automatically to BOS. When an advertised operation returns an established uppercase handoff condition or challenged HTTP 401, ask BOS to recover through `READY`, refresh discovery, re-Describe the operation, and retry the exact preserved request once. Handle no credential, token, authority selector, client identifier, idempotency key, retry state, or execution identity.
 
 Before unscoped discovery, ask the installed BOS client to resolve context with
 the `my-crm` plugin preference namespace. An organization explicitly named for
@@ -35,8 +35,10 @@ Never construct an application or organization coordinate, route, source, provid
 - Use `my-crm-automation` to contribute CRM goals and constraints to BOS-owned explain planning, BOSL authoring, and journey interaction.
 - Use `my-crm-cache-maintenance` when the user asks to inspect, refresh, or invalidate shared CRM cache entries.
 
-Ordinary single-operation work invokes its operation directly. First select a
-complete applicable focused CRM workflow when one covers the objective. Select
+Ordinary single-operation work invokes its operation directly and does not
+retrieve additional BOS client-skill documents when this skill and current
+discovery contracts cover the request. First select a complete applicable focused CRM
+workflow when one covers the objective. Select
 ad hoc composition only when no complete fixed workflow covers the objective
 or the user explicitly requests custom composition. In that branch, route
 through `my-crm-automation` and the installed BOS workflow orchestrator when
@@ -52,6 +54,13 @@ Route all marketplace starter prompts to the installed BOS workflow orchestrator
 For the follow-up starter, calendar attendees supply the initial audience, so perform no CRM discovery or lookup merely to obtain their addresses. Present exact recipients and content and require explicit user approval before send. My CRM participates only if a later returned client instruction explicitly requests CRM expertise. For the two read-only starters, use returned external-attendee identity only as search text for the currently discovered CRM search, preserve all source evidence, and perform no mutation.
 
 ## Communication prerequisites
+
+For hypothetical or educational questions about what would be required before
+a broad or unspecified promotional communication, answer from this section
+when the user asks only for an explanation. Do not perform BOS discovery,
+retrieve installed skill files, look up recipients, prepare campaign material,
+or make another tool call when the user explicitly prohibits business reads
+and preparation.
 
 For promotional communication involving CRM records, require an explicit bounded audience with documented marketing permission for the sender, purpose, and content. CRM membership, an address, and prior correspondence establish no marketing consent. Preserve unsubscribe, suppression, complaint, bounce, and do-not-contact exclusions; exclude recipients with missing, ambiguous, withdrawn, or incompatible permission.
 
