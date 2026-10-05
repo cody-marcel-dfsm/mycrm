@@ -84,6 +84,8 @@ test("plugin descriptions and routing skills advertise BOS-owned ad hoc workflow
   assert.match(claude.description, /ad hoc dynamic workflows/i);
   assert.match(claude.description, /require live BOS contracts/i);
   assert.match(router, /user never says automation,\s+BOSL, custom journey, or workflow/i);
+  assert.match(router, /ordinary single-operation work invokes its operation directly and does not\s+retrieve additional BOS client-skill documents/i);
+  assert.match(router, /hypothetical or educational questions[\s\S]*?answer from this section[\s\S]*?Do not perform BOS discovery[\s\S]*?or make another tool call/i);
   assert.match(automation, /multiple dependent steps/i);
   for (const guidance of [router, automation]) {
     assert.match(guidance, /when (?:the )?required BOS authoring and runtime contracts are available/i);
