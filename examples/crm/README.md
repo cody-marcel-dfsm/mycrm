@@ -1,5 +1,13 @@
 # CRM consumer examples
 
+## Understand one customer with evidence
+
+Requires the separately installed BOS product. For a synthetic read-only task such as “Find the synthetic CRM record named Rivera and show its current details,” My CRM helps the reader understand the returned record, its sources, freshness, and any gaps. Availability comes from current authenticated discovery and operation readiness; a missing record or unavailable source remains an explicit outcome.
+
+BOS governs permissions and execution through its service gateway. My CRM consumes only the discovered contracts and presents source records, conflicts, uncertainty, and partial results. For changes across sources, preserve each source's declared guarantee and explain non-atomic completion. These examples illustrate synthetic CRM reasoning and contract consumption.
+
+## Builder contract flow
+
 These examples show the My CRM-owned portions of a BOS interaction. Runtime
 routes, source references, organization fields, selectors, schemas, limits,
 guarantees, errors, and lifecycle actions always come from the installed BOS
