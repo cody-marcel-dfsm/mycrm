@@ -40,6 +40,74 @@ test("application discovery remains compatible when journey registration is not 
   assert.equal(validateApplicationDiscovery(discovery).journey_registration, undefined);
 });
 
+function contextQualifiedDiscovery() {
+  return createSyntheticDocuments({qualifiedResources: true}).discovery;
+}
+
+test("application discovery preserves exact context-qualified BOSL resource addresses", () => {
+  const discovery = contextQualifiedDiscovery();
+  const validated = validateApplicationDiscovery(discovery);
+  assert.deepEqual(validated, discovery);
+  assert.notEqual(validated, discovery);
+  assert.equal(Object.hasOwn(validated, "context_handle"), false);
+  assert.equal(Object.hasOwn(validated.bosl, "context_handle"), false);
+});
+
+test("current discovery with context-qualified resources continues through Describe and HTTPS execution", async (context) => {
+  const service = await startSyntheticBosService({qualifiedResources: true});
+  context.after(service.close);
+  const client = new BosContractClient({discovery: service.discovery, http: service.http, bos: service.bos});
+  const described = await client.describe(["search"]);
+  assert.equal(described.operations[0].operation, "search");
+  assert.deepEqual(client.discovery.bosl, service.documents.discovery.bosl);
+  const result = await client.execute("search", {text: "Synthetic Person"});
+  assert.equal(result.status, 200);
+  assert.deepEqual(result.body, service.documents.examples.search.response);
+  assert.equal(service.calls.at(-1).url, described.operations[0].execution.uri);
+});
+
+test("BOSL resource URI validation rejects malformed and foreign query envelopes", () => {
+  const handle = `bos_ctx_v2_${"a".repeat(64)}`;
+  for (const key of ["schema_uri", "reference_uri", "examples_uri"]) {
+    const kind = key.replace("_uri", "");
+    const base = `bos://apps/lead-director/bosl/${"a".repeat(32)}/${kind}`;
+    for (const invalid of [
+      `${base}?`, `${base}?context_handle=`, `${base}?context_handle=other`,
+      `${base}?context_handle=bos_ctx_v2_${"a".repeat(63)}`,
+      `${base}?context_handle=bos_ctx_v2_${"a".repeat(65)}`,
+      `${base}?context_handle=bos_ctx_v2_${"A".repeat(64)}`,
+      `${base}?context_handle=${handle}&context_handle=${handle}`,
+      `${base}?context_handle=${handle}&scope=other`,
+      `${base}?scope=other&context_handle=${handle}`,
+      `${base}?context%5Fhandle=${handle}`, `${base}?context_handle=${handle}%20`,
+      `${base}?context_handle=${handle}#fragment`, `${base}#fragment`,
+      `${base}?context_handle=${handle}\n`, `${base}\n`,
+      `${base}/?context_handle=${handle}`,
+      `${base.replace("bos://apps/", "bos://foreign/")}?context_handle=${handle}`,
+      `${base.replace("lead-director", "foreign")}?context_handle=${handle}`,
+      `${base.replace(`/${kind}`, "/../schema")}?context_handle=${handle}`
+    ]) {
+      const discovery = contextQualifiedDiscovery();
+      discovery.bosl[key] = invalid;
+      assert.throws(() => validateApplicationDiscovery(discovery), /BOSL .* is invalid/, key);
+    }
+  }
+});
+
+test("BOSL resources reject cross-partition, different-context and mixed query forms", () => {
+  for (const mutation of ["partition", "context", "query-free"]) {
+    const discovery = contextQualifiedDiscovery();
+    if (mutation === "partition") {
+      discovery.bosl.reference_uri = discovery.bosl.reference_uri.replace("a".repeat(32), "b".repeat(32));
+    } else if (mutation === "context") {
+      discovery.bosl.reference_uri = discovery.bosl.reference_uri.replace(`bos_ctx_v2_${"a".repeat(64)}`, `bos_ctx_v2_${"b".repeat(64)}`);
+    } else {
+      discovery.bosl.reference_uri = discovery.bosl.reference_uri.split("?")[0];
+    }
+    assert.throws(() => validateApplicationDiscovery(discovery), /one authority partition|one context qualifier/, mutation);
+  }
+});
+
 test("operations absent from discovery cannot be described or executed", async (context) => {
   const service = await startSyntheticBosService();
   context.after(service.close);

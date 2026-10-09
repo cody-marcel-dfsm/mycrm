@@ -47,7 +47,7 @@ function operation(operation, effect, input_schema, output_schema, method = "POS
   };
 }
 
-export function createSyntheticDocuments({variant = "alpha"} = {}) {
+export function createSyntheticDocuments({variant = "alpha", qualifiedResources = false} = {}) {
   const operations = [
     operation("search", "read", searchInput, searchOutput),
     operation("create", "create", sourceInput, mutationOutput),
@@ -75,6 +75,11 @@ export function createSyntheticDocuments({variant = "alpha"} = {}) {
       descriptor_etag: variant === "alpha" ? "b".repeat(64) : "c".repeat(64)
     }
   };
+  if (qualifiedResources) {
+    for (const key of ["schema_uri", "reference_uri", "examples_uri"]) {
+      discovery.bosl[key] += `?context_handle=bos_ctx_v2_${"a".repeat(64)}`;
+    }
+  }
   const examples = {
     search: {
       request: {text: "Synthetic Person"},

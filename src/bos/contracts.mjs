@@ -244,14 +244,17 @@ export function validateApplicationDiscovery(value) {
   const bosl = object(discovery.bosl, "application discovery BOSL resources");
   if (JSON.stringify(Object.keys(bosl).sort()) !== JSON.stringify(["descriptor_etag", "examples_uri", "reference_uri", "schema_uri"])) throw new TypeError("application discovery BOSL resources are invalid");
   const partitions = [];
+  const qualifiers = [];
   for (const key of ["schema_uri", "reference_uri", "examples_uri"]) {
     nonEmpty(bosl[key], `BOSL ${key}`);
     const suffix = key.replace("_uri", "");
-    const match = new RegExp(`^bos://apps/lead-director/bosl/([a-f0-9]{32})/${suffix}$`).exec(bosl[key]);
-    if (!match) throw new TypeError(`BOSL ${key} is invalid`);
+    const match = new RegExp(`^bos://apps/lead-director/bosl/([a-f0-9]{32})/${suffix}(?:\\?context_handle=(bos_ctx_v2_[a-f0-9]{64}))?$`).exec(bosl[key]);
+    if (!match || match[0] !== bosl[key]) throw new TypeError(`BOSL ${key} is invalid`);
     partitions.push(match[1]);
+    qualifiers.push(match[2] ?? null);
   }
   if (new Set(partitions).size !== 1) throw new TypeError("BOSL resources must use one authority partition");
+  if (new Set(qualifiers).size !== 1) throw new TypeError("BOSL resources must use one context qualifier");
   if (!/^[a-f0-9]{64}$/.test(bosl.descriptor_etag)) throw new TypeError("BOSL descriptor_etag is invalid");
   assertNoPrivateKeys(discovery, "application discovery");
   return clone(discovery);
