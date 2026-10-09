@@ -26,13 +26,18 @@ name and input schema. Check the fresh response for both contract advertisements
    Resolve that capability through current discovery and invoke it with the
    exact returned input. Require the actual validated response for operation
    `lead-director.journeys.register`, contract version
-   `lead-director-journey-registration/v1`. Its `input_schema` describes raw BOSL;
+   `lead-director-journey-registration/v1` or
+   `lead-director-journey-registration/v2`, matching fresh discovery. Copy its
+   exact advertised execution URI. Its `input_schema` describes raw BOSL;
    `output_schema`, `limits`, `guarantees`, `execution`, and `public_errors`
    describe registration and the supported runtime response. Follow lifecycle
    actions only when BOS returns them; construct no lifecycle endpoint.
 
-BOS registration compiles and registers raw BOSL and returns
-`{compiled: true, identity, actions.start}`. Execution begins only when
+Registration behavior follows the discovered contract version. Version 1
+retains its existing immediate lifecycle response and execution behavior;
+consume that response and its returned instructions and actions. Version 2
+compiles and registers raw BOSL and returns
+`{compiled: true, identity, actions.start}`. Version 2 execution begins only when
 `bos-workflow-orchestrator` invokes the exact returned `actions.start` through
 the BOS connection. A bodyless start advertises `payload_schema: null`; send
 no payload. My CRM contributes domain expertise and consumes CRM instructions
