@@ -9,7 +9,7 @@ export async function readPublishedFile(packageRoot,commit,name) {
  if(!rel||rel.startsWith('..')||isAbsolute(rel)||await realpath(file)!==file||(await lstat(file)).isSymbolicLink())throw new Error('Unpublished package path');
  const gitRoot=(await run('git',['rev-parse','--show-toplevel'],{cwd:base})).stdout.trim();
  let path=relative(gitRoot,file).split('\\').join('/');
- if(relative(gitRoot,base)==='dist/my-crm')path=['examples/','src/'].some(prefix=>rel.startsWith(prefix))||['LICENSE','NOTICE','README.md'].includes(rel)?rel:'plugins/my-crm/'+rel;
+ if(relative(gitRoot,base)==='dist/my-crm')path=['examples/','src/','clients/'].some(prefix=>rel.startsWith(prefix))||['LICENSE','NOTICE','README.md'].includes(rel)?rel:'plugins/my-crm/'+rel;
  const expected=(await run('git',['show',commit+':'+path],{cwd:gitRoot,encoding:'buffer',maxBuffer:64*1024*1024})).stdout;
  const actual=await readFile(file);
  if(!actual.equals(expected))throw new Error('Unpublished package bytes');
@@ -48,7 +48,7 @@ export async function verifyPublishedPackage(root,commit){try{return await check
 
 function releasePathOrder(a,b){const left=a.split('/'),right=b.split('/');for(let i=0;i<Math.min(left.length,right.length);i++){const result=left[i].localeCompare(right[i]);if(result)return result;}return left.length-right.length;}
 async function verifyGeneratedMyCrm(base,gitRoot,commit){
- const sourcePaths=(await run('git',['ls-tree','-r','--name-only','-z',commit,'--','plugins/my-crm','examples','src','LICENSE','NOTICE','README.md'],{cwd:gitRoot})).stdout.split('\0').filter(Boolean);
+ const sourcePaths=(await run('git',['ls-tree','-r','--name-only','-z',commit,'--','plugins/my-crm','examples','src','clients','LICENSE','NOTICE','README.md'],{cwd:gitRoot})).stdout.split('\0').filter(Boolean);
  const expected=sourcePaths.map(name=>name.startsWith('plugins/my-crm/')?name.slice('plugins/my-crm/'.length):name).sort(releasePathOrder);
  const actual=[];
  async function walk(directory){for(const entry of await readdir(directory,{withFileTypes:true})){const file=join(directory,entry.name);if(entry.isSymbolicLink())throw new Error('Unpublished release symlink');if(entry.isDirectory())await walk(file);else if(entry.isFile())actual.push(relative(base,file));else throw new Error('Unsupported release entry');}}

@@ -5,9 +5,10 @@ import process from "node:process";
 
 import {releaseDirectory} from "./build-release.mjs";
 import {checkPrivacy} from "./check-privacy.mjs";
+import {checkClients} from "./build-clients.mjs";
 import {readJson, repositoryRoot, sha256, sha256File, walkFiles} from "./release-utils.mjs";
 
-const COPY_ROOTS = ["examples", "src"];
+const COPY_ROOTS = ["examples", "src", "clients"];
 const COPY_FILES = ["LICENSE", "NOTICE", "README.md"];
 export const RUNTIME_VERIFICATION_TOOLS = Object.freeze([
   "lead_director_get_customer_journey",
@@ -31,6 +32,8 @@ async function canonicalInventory() {
 }
 
 export async function checkRelease({directory = releaseDirectory} = {}) {
+  await checkClients();
+  await checkClients({directory: path.join(directory, "clients")});
   await checkPrivacy({root: directory, includeDist: true});
   const release = await readJson(path.join(directory, "release-manifest.json"));
   const packageJson = await readJson(path.join(repositoryRoot, "package.json"));

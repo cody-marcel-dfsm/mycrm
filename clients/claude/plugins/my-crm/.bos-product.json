@@ -1,0 +1,50 @@
+{
+  "schema_version": "2",
+  "name": "my-crm",
+  "version": "0.2.41",
+  "client": "claude",
+  "application_name": "my-crm",
+  "connection_owner": "bos",
+  "dependency_products": [
+    "bos"
+  ],
+  "runtime_verification_tools": [
+    "lead_director_get_customer_journey",
+    "lead_director_create_lead",
+    "lead_director_search_leads",
+    "lead_director_update_lead"
+  ],
+  "authentication": "bos_dependency",
+  "authorization_scope_policy": "ONE_ORGANIZATION_APPLICATION_INSTALLATION_ROLE_PER_GRANT",
+  "authentication_handoff": {
+    "contract_id": "bos.authentication-handoff",
+    "contract_version": "1",
+    "authentication_manager": "bos",
+    "credential_lifecycle_owner": "host",
+    "authorization_enforcement_owner": "bos-service",
+    "delegation_policy": "AUTOMATIC",
+    "recognized_condition_categories": [
+      "MISSING_GRANT",
+      "EXPIRED_TOKEN",
+      "REVOKED_GRANT",
+      "INVALID_CLIENT",
+      "INVALID_GRANT",
+      "RESOURCE_MISMATCH",
+      "REAUTHENTICATION_REQUIRED",
+      "AUTHORIZATION_REQUIRED",
+      "MCP_WWW_AUTHENTICATE",
+      "MCP_SESSION_CLOSED",
+      "PROVIDER_AUTHORIZATION_REQUIRED"
+    ],
+    "readiness_result": {
+      "owner": "bos",
+      "statuses": [
+        "READY",
+        "HOST_ACTION_REQUIRED",
+        "NOT_READY"
+      ],
+      "representation": "AUTHENTICATION_READINESS_ONLY",
+      "authority_data": "EXCLUDED"
+    }
+  }
+}

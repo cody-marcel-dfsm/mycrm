@@ -1,12 +1,13 @@
 {
   "name": "my-crm",
-  "version": "0.2.40",
+  "version": "0.2.41",
   "description": "Understand CRM records and next actions through BOS; ad hoc dynamic workflows require live BOS contracts",
   "license": "Apache-2.0",
   "type": "module",
   "private": false,
   "files": [
     "examples/",
+    "clients/",
     "plugins/",
     "src/",
     "LICENSE",
@@ -27,12 +28,16 @@
     "oracle:verify": "node scripts/oracle-review.mjs verify-index",
     "oracle:verify-commit": "node scripts/oracle-review.mjs verify-commit HEAD",
     "release:check": "npm run build && npm test && npm run check:release",
-    "test": "npm run check:privacy && npm run check:boundary && npm run check:contracts && node --test tests/*.test.mjs",
+    "test": "npm run check:privacy && npm run check:boundary && npm run check:contracts && npm run check:clients && node --test tests/*.test.mjs",
     "vault:init": "node scripts/init-vault.mjs",
     "vault:sync": "node scripts/vault.mjs sync",
     "vault:query": "node scripts/vault.mjs query",
     "acceptance:marketplace": "node scripts/run-marketplace-prompts.mjs",
-    "submission:cases": "node scripts/run-marketplace-prompts.mjs --submission-cases"
+    "submission:cases": "node scripts/run-marketplace-prompts.mjs --submission-cases",
+    "build:muse": "node scripts/build-muse.mjs",
+    "check:muse": "node scripts/build-muse.mjs --check",
+    "build:clients": "node scripts/build-clients.mjs",
+    "check:clients": "node scripts/build-clients.mjs --check"
   },
   "engines": {
     "node": ">=20"

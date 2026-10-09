@@ -1,0 +1,4 @@
+interface:
+  display_name: "My CRM Automation"
+  short_description: "Contribute CRM expertise to BOS-owned journeys"
+  default_prompt: "Use $my-crm-automation to contribute CRM goals and constraints to this BOS-owned journey."
