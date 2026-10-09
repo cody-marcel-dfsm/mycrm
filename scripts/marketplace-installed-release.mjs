@@ -5,6 +5,9 @@ import {readFile, readdir} from 'node:fs/promises';
 import {digest} from './marketplace-prompt-catalog.mjs';
 import {join} from 'node:path';
 const run = promisify(execFile);
+export async function verifyLocalInstall(runCommand=run) {
+  return await runCommand(process.execPath, ['scripts/codex-local-install.mjs', 'verify'], {cwd: new URL('..', import.meta.url)});
+}
 export async function installedRelease(catalog) {
   const {stdout} = await run('codex', ['plugin', 'list', '--json']);
   const entries = JSON.parse(stdout).installed ?? [];
@@ -14,7 +17,7 @@ export async function installedRelease(catalog) {
   const plugin = JSON.parse(await readFile(join(path, '.codex-plugin/plugin.json'), 'utf8'));
   if (plugin.version !== catalog.version || JSON.stringify(plugin.interface.defaultPrompt) !== JSON.stringify(catalog.cases.filter(row => row.kind === 'starter').map(row => row.prompt))) throw new Error('Installed starter/version mismatch');
   if (plugin.interface.longDescription !== catalog.description || plugin.description !== catalog.short_description) throw new Error('Installed description mismatch');
-  await run('node', ['scripts/codex-local-install.mjs', 'verify'], {cwd: new URL('..', import.meta.url)});
+  await verifyLocalInstall();
   const {stdout: commit} = await run('git', ['rev-parse', 'HEAD'], {cwd: path});
   const sha = commit.trim();
   if (!/^[a-f0-9]{40}$/.test(sha)) throw new Error('Installed commit unavailable');
