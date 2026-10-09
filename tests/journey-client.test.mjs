@@ -1,6 +1,8 @@
 import assert from "node:assert/strict";
 import test from "node:test";
 
+import {ReturnedActionClient} from "../src/bos/action-client.mjs";
+
 import { CrmJourneyClient, buildCrmContribution, createAudienceRepairGuidance, validateCrmInstructionEnvelope, validateCrmResolutionEnvelope } from "../src/journey/client.mjs";
 
 const serviceFixture = {
@@ -40,6 +42,25 @@ test("CRM contribution contains domain goals and constraints without BOSL or run
   assert.equal(contribution.goal, "Find current customer evidence");
   const serialized = JSON.stringify(contribution).toLowerCase();
   for (const forbidden of ["bosl", "transition", "execution_id", "journey_id", "version", "digest"]) assert.equal(serialized.includes(forbidden), false);
+});
+
+test("compiled registration stays separate from CRM instructions until exact bodyless start is invoked", async () => {
+  const registration = {
+    compiled: true,
+    identity: serviceFixture.identity,
+    actions: {start: {verb: "start", method: "POST", href: "/bos/synthetic/journeys/crm-evidence/start?capability=synthetic_start", payload_schema: null}}
+  };
+  const calls = [];
+  const actions = new ReturnedActionClient({bos: {invokeReturnedAction: async (...args) => {
+    calls.push(args);
+    return {status: 200, body: structuredClone(serviceFixture)};
+  }}});
+  assert.throws(() => validateCrmInstructionEnvelope(registration), /shape is invalid/);
+  await assert.rejects(actions.invoke(registration.actions.start, {}), /bodyless/);
+  assert.deepEqual(calls, []);
+  const result = await actions.invoke(registration.actions.start);
+  assert.deepEqual(calls, [[registration.actions.start]]);
+  assert.deepEqual(validateCrmInstructionEnvelope(result.body), serviceFixture);
 });
 
 test("published BOS awaiting_client CRM instruction is accepted and delegated unchanged", async () => {

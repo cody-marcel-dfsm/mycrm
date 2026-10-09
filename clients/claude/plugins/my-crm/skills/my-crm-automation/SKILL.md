@@ -31,6 +31,14 @@ name and input schema. Check the fresh response for both contract advertisements
    describe registration and the supported runtime response. Follow lifecycle
    actions only when BOS returns them; construct no lifecycle endpoint.
 
+BOS registration compiles and registers raw BOSL and returns
+`{compiled: true, identity, actions.start}`. Execution begins only when
+`bos-workflow-orchestrator` invokes the exact returned `actions.start` through
+the BOS connection. A bodyless start advertises `payload_schema: null`; send
+no payload. My CRM contributes domain expertise and consumes CRM instructions
+when the journey reaches its client step. Keep the compilation receipt separate
+from `awaiting_client` and `client_action_required` CRM instruction envelopes.
+
 The entry condition passes only when both advertisements and their required
 resource/contract reads are present and valid. A missing key, failed read,
 unsupported contract, or invalid response leaves the affected authoring/runtime
