@@ -1,6 +1,6 @@
 {
   "name": "my-crm",
-  "version": "0.2.41",
+  "version": "0.2.42",
   "description": "Understand CRM records and next actions through BOS; ad hoc dynamic workflows require live BOS contracts",
   "license": "Apache-2.0",
   "type": "module",
@@ -37,7 +37,8 @@
     "build:muse": "node scripts/build-muse.mjs",
     "check:muse": "node scripts/build-muse.mjs --check",
     "build:clients": "node scripts/build-clients.mjs",
-    "check:clients": "node scripts/build-clients.mjs --check"
+    "check:clients": "node scripts/build-clients.mjs --check",
+    "oracle:verify-proposal": "node scripts/oracle-review.mjs verify-proposal"
   },
   "engines": {
     "node": ">=20"

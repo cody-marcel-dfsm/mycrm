@@ -151,3 +151,7 @@ workflow and cannot wear the approver skill; the isolated Oracle subprocess
 alone evaluates the staged candidate and writes the receipt. This process does
 not model an implementation agent as a malicious same-OS adversary with direct
 access to `.git` or the ability to rewrite the gate itself.
+
+## Canonical main and project agent context
+
+Work exclusively on `main` in `/Users/cody/Development/Projects/MyCRM`. Do not create, switch to, or use Git worktrees for planning, implementation, validation, review, or release. Existing worktree changes may be read solely for recovery into canonical main; preserve those sources until recovery is verified. Run the implementation agent from this directory and follow this project's skills, validation commands, and Oracle process. Preserve staged, unstaged, and untracked changes, fetch and reconcile remote main before implementation and publication, record the base commit, and validate the complete integrated main before release.

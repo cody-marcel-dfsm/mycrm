@@ -56,6 +56,42 @@ requires a durable human/automation handoff, or needs bounded recovery is an ad
 hoc workflow candidate. My CRM contributes the CRM portion and never creates a
 local graph, compiler, transition engine, or runtime.
 
+## Normative artifacts and installed definitions
+
+Repository paths below belong to `cody-marcel-dfsm/mycrm`; their links locate the
+source artifacts even when the installed package contains only skills. The
+following definitions are available directly in this skill.
+
+Marketplace starters are defined by [contracts/my-crm/v1/marketplace-prompt-contracts.json](https://github.com/cody-marcel-dfsm/mycrm/blob/main/contracts/my-crm/v1/marketplace-prompt-contracts.json), validated by [contracts/my-crm/v1/marketplace-prompt-contracts.schema.json](https://github.com/cody-marcel-dfsm/mycrm/blob/main/contracts/my-crm/v1/marketplace-prompt-contracts.schema.json):
+
+- `find-customer-records`: search CRM matches for external attendees from the last completed meeting; read only.
+- `canonical-recent-meeting-follow-up`: preview unsent follow-up for those attendees and show recipients and content; no initial CRM lookup or mutation, with explicit approval required before a later send.
+- `compare-customer-across-sources`: find those attendees' CRM matches and compare the first conceptual customer across sources; read only.
+
+All three use My CRM's configured BOS scope and BOS-owned journey orchestration,
+current discovery, calendar-derived identity, and stop when no qualifying
+attendee exists. Preserve provenance and freshness; comparison also preserves
+reconciliation evidence and uncertainty. Apply the detailed routing rules in this skill.
+
+The CRM contribution's normative shape is [contracts/my-crm/v1/crm-journey-contribution.schema.json](https://github.com/cody-marcel-dfsm/mycrm/blob/main/contracts/my-crm/v1/crm-journey-contribution.schema.json), illustrated by
+[examples/crm/journey-contribution.json](https://github.com/cody-marcel-dfsm/mycrm/blob/main/examples/crm/journey-contribution.json). It is a closed object with all eight fields required:
+
+| Field | Type | CRM meaning |
+| --- | --- | --- |
+| `goal` | Non-empty string | CRM objective that contributes to the user's request. |
+| `concepts` | Array | Relevant organization-described CRM concepts and source semantics. |
+| `constraints` | Array | Scope and domain limits, including source-record preservation. |
+| `requiredEvidence` | Array | Current observations needed to support the CRM work. |
+| `approvals` | Array | Required human approvals and their scope; empty when none apply. |
+| `guarantees` | Array | Declared read or mutation guarantees and transaction boundaries. |
+| `presentation` | Array | Result requirements for provenance, freshness, conflicts, and uncertainty. |
+| `recovery` | Array | CRM guidance for returned public recovery instructions. |
+
+Arrays may be empty; the schema adds no item type restriction. Contribute no
+additional object fields, BOSL state, transition, runtime identity, or source
+binding. BOS owns authoring and runtime execution; live discovery supplies
+execution contracts.
+
 Route each marketplace starter through the installed BOS `bos-workflow-orchestrator` skill because its audience or lookup identity comes from the latest completed meeting. Ask BOS to resolve the `my-crm` plugin's configured default unless the user explicitly selected another authorized organization for this task. Stay within the resulting BOS-authenticated organization, application, installation, user, and role scope; never request organization data, tenant identifiers, or authority selectors. If the default is unavailable, or no qualifying meeting, external attendee, or CRM match exists, report that outcome and stop without probing another organization or requesting replacement input.
 
 For the follow-up starter, perform no initial CRM lookup: the meeting attendees already supply the audience. Require the BOS-owned review and explicit approval step before send, and involve My CRM only when a later returned client instruction requests CRM expertise. For the two read-only starters, allow only the currently discovered CRM search and no mutation.
@@ -64,7 +100,7 @@ When a user asks to explain, inspect, or preview an organization's automation pl
 
 Present the customer's progression through the automation plugin, starting with its described trigger and continuing through verified human touchpoints, automated steps, connected services, approvals, success outcomes, final failure outcomes, and recovery. Lead with a source-backed diagram of that plugin workflow and use only interfaces, channels, operations, and services named by current Describe evidence. Keep technical steps, node ownership, effects, typed inputs and outputs, and readiness in the explain plan or supporting detail.
 
-Do not substitute the Lead Director record-state graph, a record's current journey position, a shortest lifecycle path, plugin health, or campaign status for the automation workflow. Use `my-crm-customer-journey` only when the user asks about an individual record or the organization's record lifecycle itself. If the plugin Describe contract is unavailable, retain it as an explicit dependency and do not infer the automation from generic CRM behavior.
+Do not substitute the Lead Director record-state graph, a record's current journey position, a shortest lifecycle path, plugin health, or campaign status for the automation workflow. Use [my-crm-customer-journey](../my-crm-customer-journey/SKILL.md) only when the user asks about an individual record or the organization's record lifecycle itself. If the plugin Describe contract is unavailable, retain it as an explicit dependency and do not infer the automation from generic CRM behavior.
 
 Implement no local FSM or BOSL dialect, compiler, validator, graph registry, transition selection, execution engine, runtime state, version, digest, revision, or identifier.
 
