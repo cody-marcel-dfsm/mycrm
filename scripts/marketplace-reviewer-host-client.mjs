@@ -5,11 +5,19 @@ import {createHash} from 'node:crypto';
 import {digest} from './marketplace-prompt-catalog.mjs';
 
 const fields=new Set(['product','transport_mode','id','prompt_sha256','configuration_sha256','reviewer_configuration_sha256','installed_version','release_commit','executed_package_sha256','bos_dependency_commit','bos_dependency_package_sha256','bos_binding_provenance_verified','reviewer_url_sha256','reviewer_login_http_status','authentication_source','isolated_connection','status','reason','fixture_outcome_verified','independent_grading_verified','evaluation_missing_count','native_calls','https_calls','tools','guard_verified','guard_required','reviewer_scope_verified','evidence_sha256','observed_status','grant_cleanup_verified','prohibited_effects','negative_bos_invocations','unsafe_attempts']);
+const internalMetadata=new Set(['kind','model_identifier_sha256','denied_attempts','elapsed_ms']);
 const counts=['evaluation_missing_count','native_calls','https_calls','prohibited_effects','negative_bos_invocations','unsafe_attempts'];
 const booleans=['bos_binding_provenance_verified','isolated_connection','fixture_outcome_verified','independent_grading_verified','guard_verified','guard_required','reviewer_scope_verified','grant_cleanup_verified'];
 export function safeReviewerReceipt(receipt) {
- if(!receipt||typeof receipt!=='object'||Array.isArray(receipt)||Object.keys(receipt).some(key=>!fields.has(key)))return false;
+ if(!receipt||typeof receipt!=='object'||Array.isArray(receipt)||Object.keys(receipt).some(key=>!fields.has(key)&&!internalMetadata.has(key)))return false;
  for(const [key,value]of Object.entries(receipt)){
+  if(internalMetadata.has(key)){
+   if(key==='kind'&&!['negative','positive','starter'].includes(value))return false;
+   if(key==='model_identifier_sha256'&&(typeof value!=='string'||!/^[a-f0-9]{64}$/.test(value)))return false;
+   if(key==='elapsed_ms'&&(!Number.isSafeInteger(value)||value<0||value>86400000))return false;
+   if(key==='denied_attempts'&&(!Array.isArray(value)||value.length>100||value.some(row=>!row||typeof row!=='object'||Array.isArray(row)||Object.keys(row).length!==2||typeof row.tool!=='string'||!/^[a-z][a-z0-9._-]{0,199}$/.test(row.tool)||typeof row.reason!=='string'||!/^[a-z][a-z0-9._-]{0,99}$/.test(row.reason))))return false;
+   continue;
+  }
   if(counts.includes(key)){if(!Number.isSafeInteger(value)||value<0)return false;}
   else if(booleans.includes(key)){if(typeof value!=='boolean')return false;}
   else if(key==='tools'){if(!Array.isArray(value)||value.some(name=>typeof name!=='string'||!/^[a-z][a-z0-9._-]{0,199}$/.test(name)))return false;}

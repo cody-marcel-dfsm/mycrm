@@ -23,6 +23,19 @@ test('receipt requires exact prompt, URL, release, scope, actual HTTPS, independ
   for(const key of ['access_token','cookie','context_handle','organization_name'])assert.equal(safeReviewerReceipt({...receipt,[key]:'synthetic-private'}),false);
   assert.equal(safeReviewerReceipt({...receipt,tools:['synthetic@example.invalid']}),false);
 });
+test('known host metadata is validated but never exposed; every other unknown field still fails closed',()=>{
+ const context={catalog,item,release,urlHash,reviewerHash};
+ const hostMetadata={kind:'positive',model_identifier_sha256:'f'.repeat(64),denied_attempts:[{tool:'acceptance_guard_probe',reason:'guard_canary_denied'}],elapsed_ms:2500};
+ assert.equal(safeReviewerReceipt({...receipt,...hostMetadata}),true);
+ assert.equal(verifyReviewerReceipt({...receipt,...hostMetadata},context),true);
+ for(const invalid of [
+  {...hostMetadata,kind:'other'},
+  {...hostMetadata,model_identifier_sha256:'private'},
+  {...hostMetadata,denied_attempts:[{tool:'unsafe tool',reason:'secret'}]},
+  {...hostMetadata,elapsed_ms:-1}
+ ])assert.equal(safeReviewerReceipt({...receipt,...invalid}),false);
+ assert.equal(safeReviewerReceipt({...receipt,unexpected_host_value:'ignored?'}),false);
+});
 test('reviewer digest binds externally configured scope and fixture authority',()=>{
  for(const field of ['review_organization','review_application','review_installation','review_role','fixture_authority_sha256'])assert.notEqual(reviewerConfigurationDigest({...config,[field]:'changed'}),reviewerHash);
 });
@@ -33,15 +46,30 @@ test('negative PASS requires zero BOS calls, unsafe attempts and prohibited effe
 });
 test('external capability receives exact configured inputs and returns a correlated receipt without credentials',async()=>{
   const directory=await mkdtemp(join(tmpdir(),'crm-reviewer-capability-')),path=join(directory,'host.sock');let request;
-  const server=createServer(connection=>{let text='';connection.on('data',chunk=>{text+=chunk;if(text.includes('\n')){request=JSON.parse(text);connection.end(JSON.stringify(receipt)+'\n');}});});
+  const hostMetadata={kind:'positive',model_identifier_sha256:'f'.repeat(64),denied_attempts:[{tool:'acceptance_guard_probe',reason:'guard_canary_denied'}],elapsed_ms:2500};
+  const server=createServer(connection=>{let text='';connection.on('data',chunk=>{text+=chunk;if(text.includes('\n')){request=JSON.parse(text);connection.end(JSON.stringify({...receipt,...hostMetadata})+'\n');}});});
   await new Promise(done=>server.listen(path,done));await chmod(path,0o600);
   try {
     const result=await executeReviewerHost(catalog,item,{...config,reviewer_test_host_socket:path},release,'configured-model');
     assert.equal(result.status,'PASS');assert.deepEqual(request.catalog,catalog);assert.deepEqual(request.item,item);assert.equal(request.reviewer_url_sha256,urlHash);
+    for(const key of Object.keys(hostMetadata))assert.equal(Object.hasOwn(result,key),false,key);
     assert.equal(request.reviewer_configuration_sha256,reviewerHash);
     assert.doesNotMatch(JSON.stringify(request),/access_token|refresh_token|cookie|authorization|reviewer_login_url/);
     await chmod(path,0o666);
     const denied=await executeReviewerHost(catalog,item,{...config,reviewer_test_host_socket:path},release,'configured-model');assert.equal(denied.status,'FAIL');
+  }finally{await new Promise(done=>server.close(done));await rm(directory,{recursive:true,force:true});}
+});
+test('sanitized host FAIL reason reaches the case result while internal metadata stays private',async()=>{
+  const directory=await mkdtemp(join(tmpdir(),'crm-reviewer-failure-')),path=join(directory,'host.sock');
+  const hostMetadata={kind:'positive',model_identifier_sha256:'f'.repeat(64),denied_attempts:[{tool:'acceptance_guard_probe',reason:'guard_canary_denied'}],elapsed_ms:2500};
+  const failedReceipt={...receipt,...hostMetadata,status:'FAIL',reason:'reviewer_app_description_unvalidated',fixture_outcome_verified:false,independent_grading_verified:false,evaluation_missing_count:3,observed_status:'failed'};
+  const server=createServer(connection=>{let text='';connection.on('data',chunk=>{text+=chunk;if(text.includes('\n'))connection.end(JSON.stringify(failedReceipt)+'\n');});});
+  await new Promise(done=>server.listen(path,done));await chmod(path,0o600);
+  try {
+    const result=await executeReviewerHost(catalog,item,{...config,reviewer_test_host_socket:path},release,'configured-model');
+    assert.equal(result.status,'FAIL');
+    assert.equal(result.reason,'reviewer_app_description_unvalidated');
+    for(const key of Object.keys(hostMetadata))assert.equal(Object.hasOwn(result,key),false,key);
   }finally{await new Promise(done=>server.close(done));await rm(directory,{recursive:true,force:true});}
 });
 test('missing capability fails closed and performs no fallback authentication',async()=>{
