@@ -5,12 +5,14 @@ import process from "node:process";
 
 import {readJson, repositoryRoot, sha256, sha256File, stableJson, walkFiles} from "./release-utils.mjs";
 import {checkPrivacy} from "./check-privacy.mjs";
+import {buildClients, checkClients} from "./build-clients.mjs";
 
 export const releaseDirectory = path.join(repositoryRoot, "dist/my-crm");
-const COPY_ENTRIES = ["examples", "src", "LICENSE", "NOTICE", "README.md"];
+const COPY_ENTRIES = ["examples", "src", "clients", "LICENSE", "NOTICE", "README.md"];
 
 export async function buildRelease({destination = releaseDirectory} = {}) {
   await checkPrivacy({root: repositoryRoot, includeDist: false});
+  await checkClients();
   const packageJson = await readJson(path.join(repositoryRoot, "package.json"));
   await rm(destination, {recursive: true, force: true});
   await mkdir(destination, {recursive: true});
@@ -35,6 +37,7 @@ export async function buildRelease({destination = releaseDirectory} = {}) {
 
 if (process.argv[1] && path.resolve(process.argv[1]) === fileURLToPath(import.meta.url)) {
   try {
+    await buildClients();
     const release = await buildRelease();
     console.log(`MYCRM_RELEASE_BUILD=APPROVED version=${release.version} sha256=${release.content_sha256}`);
   } catch (error) {

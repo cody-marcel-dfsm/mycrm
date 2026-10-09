@@ -1,0 +1,13 @@
+{
+  "name": "my-crm",
+  "owner": {
+    "name": "Infinite State Machines LLC"
+  },
+  "plugins": [
+    {
+      "name": "my-crm",
+      "source": "./plugins/my-crm",
+      "description": "Understand CRM records and next actions through BOS; ad hoc dynamic workflows require live BOS contracts"
+    }
+  ]
+}

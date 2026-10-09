@@ -14,7 +14,7 @@ Use My CRM when your team needs to find or compare customer records, understand 
 
 BOS business access is pre-launch and invite-only. [Request an invite](https://dfsm.ai/apps/bos/#request-invite) to discuss your CRM use case. An invite request does not promise access, and installing the public My CRM package does not grant permission to business services.
 
-This Apache-2.0 repository is public. Its supported installation path builds a versioned package and adds it through a local custom Codex marketplace after BOS is installed and enabled. Repository availability, local installation, and publication in an official ChatGPT or Codex directory are separate stages. The commands appear under [Validate](#validate).
+This Apache-2.0 repository is public. Its client distributions follow the published BOS layouts for Claude, Codex, Copilot, Gemini (including Antigravity Desktop), and Muse. Install BOS for the selected host before adding My CRM. Repository availability, local installation, and publication in an official ChatGPT or Codex directory are separate stages. The commands appear under [Validate](#validate).
 
 ### A synthetic example
 
@@ -45,7 +45,7 @@ General searches omit a source so BOS owns federation. Explicit-source requests 
 
 The distributable contains source-first record, pipeline, activity, federation, customer-journey, automation, and cache-maintenance skills, examples, and My CRM client helpers. Its `.bos-product.json` metadata requires BOS, names BOS as the connection owner, declares automatic authentication handoff, and advertises the canonical `lead_director_*` package-verification tools through that dependency. It contains no `.mcp.json`, resource URL, token, second MCP connection, OAuth binding, BOS Service or BOS Operations Center contract, schema, manifest, archive, provenance record, or executable adapter. My CRM knows only the configured BOS discovery URL, discovers current operations and schemas dynamically from authenticated BOS discovery APIs, and invokes the advertised endpoints through BOS authenticated transport.
 
-`npm run build` creates a deterministic Codex plugin release candidate under `dist/my-crm`. The candidate includes the skills-only plugin, examples, My CRM client helpers, license, and notice. `npm run release:check` rebuilds it, runs the full suite, and verifies package-boundary conformance. The repository-local marketplace at `.agents/plugins/marketplace.json` points only to this built candidate. It adds no MCP or authentication binding and carries no frozen BOS server or client artifact.
+`npm run build` generates all five client distributions and creates a deterministic release candidate under `dist/my-crm`, retaining the root Codex layout for existing installers. The candidate includes every client distribution, complete skills and references, examples, My CRM client helpers, license, and notice. `npm run release:check` rebuilds it, runs the full suite, and verifies package-boundary conformance. The repository-local marketplace at `.agents/plugins/marketplace.json` points only to this built candidate. It adds no MCP or authentication binding and carries no frozen BOS server or client artifact.
 
 Local contract tests generate tenant-neutral synthetic discovery-service responses at test time. They exercise discovery and Describe recovery through BOS readiness, fresh schema selection, exact advertised endpoint invocation, My CRM-owned bounded continuation, response validation, and contract evolution without loading a frozen BOS Service or BOS Operations Center copy.
 
@@ -92,6 +92,47 @@ Rollback removes only this local candidate through the native CLI; it leaves BOS
 ```bash
 codex plugin remove my-crm@my-crm-local
 ```
+
+## Supported clients
+
+Version 0.2.41 is a source-validated release candidate. Native installation and authenticated operation on every host remain pending; package conformance alone does not establish runtime readiness. Install the separately published BOS product for your host and complete its connection setup first. My CRM adds skills through that existing connection.
+
+The layouts below match the [published BOS client distributions](https://github.com/cody-marcel-dfsm/bos_operations_ceneter/tree/main/clients). Commands run from a **published My CRM release checkout**; use the same relative paths under `dist/my-crm` when reviewing a built release candidate.
+
+| Host | Package | Install |
+|---|---|---|
+| Claude Code | `clients/claude/plugins/my-crm` | `claude plugin marketplace add ./clients/claude`, then `claude plugin install my-crm@my-crm` |
+| Codex | `clients/codex/plugins/my-crm` | `codex plugin marketplace add ./clients/codex`, then `codex plugin add my-crm@my-crm` |
+| Copilot CLI | `clients/copilot/products/my-crm` | `copilot plugin install ./clients/copilot/products/my-crm` |
+| Copilot in VS Code | Same Copilot product | Copy its eight `skills/` directories into the target repository's `.agents/skills/`; preserve existing skills and the installed BOS configuration. |
+| Gemini CLI | `clients/gemini/extensions/my-crm` | `gemini extensions install ./clients/gemini/extensions/my-crm` |
+| Antigravity 2.0 Desktop | Same Gemini extension | Add the published package directory under `~/.gemini/config/plugins/my-crm` using the host's manual plugin installation, then restart. The directory includes native `plugin.json`. |
+| Muse Code | `clients/muse/plugins/my-crm` | `muse plugins validate clients/muse/plugins/my-crm`, then `muse plugins install clients/muse/plugins/my-crm` |
+
+Copilot's product also includes a native CLI `plugin.json` in addition to the BOS-compatible repository skill layout. Select one Copilot installation method per workspace to avoid duplicate skill precedence. Copilot cloud agent and code review lack the BOS remote OAuth runtime supported by CLI/VS Code; these surfaces have no authenticated operation claim.
+
+### Skill content by host
+
+`SKILL.md` is the canonical content for all hosts. Each distribution contains the same eight complete skill directories, Markdown instructions, references, assets, and available `agents/openai.yaml` files. The main `my-crm` skill has no YAML file, which is valid. The YAML files on the seven focused skills contain optional display metadata and a suggested prompt; their size does not indicate missing instructions.
+
+| Host | How instructions load | Role of `agents/openai.yaml` |
+|---|---|---|
+| [Codex](https://developers.openai.com/codex/skills) | Discover `SKILL.md` name/description; load its full body when selected. | Optional UI appearance, default prompt, invocation policy and dependency metadata. The existing display-only files are sufficient for those UI fields. |
+| [Claude Code](https://code.claude.com/docs/en/skills) | Discover `skills/<name>/SKILL.md` through the plugin. | No documented host requirement or instruction-loader role. |
+| [Copilot CLI and VS Code](https://docs.github.com/en/copilot/concepts/agents/about-agent-skills) | Discover skill directories containing `SKILL.md`; CLI also supports native plugin installation. | No documented host requirement or instruction-loader role. |
+| [Gemini CLI](https://geminicli.com/docs/cli/skills/) | Discover extension skills and load the `SKILL.md` body on activation. | No documented host requirement or instruction-loader role. |
+| [Antigravity Desktop](https://antigravity.google/docs/plugins) | Native `plugin.json` marks the package; skills contain `SKILL.md`. | No documented host requirement or instruction-loader role. |
+| [Muse Code](https://meta-models.github.io/muse-code-sdk/next/guides/plugins/reference/manifest/) | Native manifest explicitly lists each `skills/<name>/SKILL.md` capability path. | Native skills use the declared Markdown path; YAML is retained as ancillary source metadata. |
+
+A YAML file alone is insufficient on every host: ship the complete skill directory. Host manifests and marketplace indexes are generated separately from skill instructions. Format references: [Claude plugins](https://code.claude.com/docs/en/plugins-reference), [Copilot plugins](https://docs.github.com/en/copilot/reference/copilot-cli-reference/cli-plugin-reference), [Gemini extensions](https://geminicli.com/docs/extensions/reference/).
+
+### Verify and upgrade
+
+Restart the host after installation. Check the native plugin/extension list and skill catalog: Claude `/skills`, Codex `/skills`, Copilot `copilot skill list`, Gemini `/skills list`, Antigravity Settings > Customizations, and Muse `/skills` plus `muse plugins inspect my-crm`. Confirm all eight skills and the selected release version. Through the existing BOS connection, run a read-only synthetic CRM request and require actual discovery, Describe, advertised HTTPS execution, and source/freshness evidence. Missing BOS access, host transport, or operation readiness blocks runtime acceptance.
+
+Upgrade only from a later published release using the host's plugin/extension update or reinstall controls. For repository skills and desktop manual packages, replace only My CRM-owned files with the published version and restart. Keep BOS installed and preserve customer configuration. A local Gemini extension installs a copy, so refresh that copy from the later published package. Muse supports `muse plugins update my-crm` after syncing its published source. Remove My CRM through the corresponding native uninstall/remove control or remove only its eight repository skill directories.
+
+Maintainers run `npm run build:clients`, `npm run check:clients`, and `npm run release:check`. Generation uses only My CRM canonical sources. Checks compare complete inventories and bytes, host-specific manifests and client metadata, marketplaces, skill references, dependency delegation, and absence of extra transport files. Existing `build:muse` and `check:muse` remain available for focused Muse work.
 
 ## License
 

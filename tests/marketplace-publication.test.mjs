@@ -37,7 +37,7 @@ test('equivalent manual BOS bindings and competing package owners fail provenanc
  assert.throws(()=>assertPackageOwnedBinding({},['other@fixture'],owner,binding));
 });
 
-test('generated My CRM release proves its documented copy mapping against published source bytes',async()=>{
+for (const withClients of [false, true]) test(`generated My CRM release proves published copy mapping ${withClients ? 'with client distributions' : 'for legacy releases'}`,async()=>{
  const {createHash}=await import('node:crypto');
  const hash=value=>createHash('sha256').update(value).digest('hex');
  const dir=await mkdtemp(join(tmpdir(),'marketplace-generated-release-'));
@@ -49,6 +49,8 @@ test('generated My CRM release proves its documented copy mapping against publis
   await writeFile(join(dir,'plugins/my-crm/skills/example/SKILL.md'),'Published skill\n');
   await mkdir(join(dir,'plugins/my-crm/skills/example-activity'),{recursive:true});
   await writeFile(join(dir,'plugins/my-crm/skills/example-activity/SKILL.md'),'Published activity\n');
+  const clientFiles=withClients?['claude/plugins/my-crm','codex/plugins/my-crm','copilot/products/my-crm','gemini/extensions/my-crm','muse/plugins/my-crm'].map(root=>'clients/'+root+'/skills/example/SKILL.md'):[];
+  for(const name of clientFiles){await mkdir(join(dir,name,'..'),{recursive:true});await writeFile(join(dir,name),'Published client skill\n');}
   await run('git',['add','.'],{cwd:dir});
   await run('git',['-c','user.name=Fixture','-c','user.email=test@example.invalid','commit','-qm','Published generated source'],{cwd:dir});
   const commit=(await run('git',['rev-parse','HEAD'],{cwd:dir})).stdout.trim();
@@ -56,13 +58,26 @@ test('generated My CRM release proves its documented copy mapping against publis
   await writeFile(join(pkg,'skills/example/SKILL.md'),'Published skill\n');
   await mkdir(join(pkg,'skills/example-activity'),{recursive:true});
   await writeFile(join(pkg,'skills/example-activity/SKILL.md'),'Published activity\n');
-  const inventory=[{path:'skills/example/SKILL.md',sha256:hash('Published skill\n')},{path:'skills/example-activity/SKILL.md',sha256:hash('Published activity\n')}];
+  for(const name of clientFiles){await mkdir(join(pkg,name,'..'),{recursive:true});await writeFile(join(pkg,name),'Published client skill\n');}
+  const inventory=[...clientFiles.map(path=>({path,sha256:hash('Published client skill\n')})),{path:'skills/example/SKILL.md',sha256:hash('Published skill\n')},{path:'skills/example-activity/SKILL.md',sha256:hash('Published activity\n')}];
+  const clientPath='clients/codex/plugins/my-crm/skills/example/SKILL.md';
   const content=hash(inventory.map(row=>row.path+'\0'+row.sha256+'\n').join(''));
   const manifest={schema:'my-crm.release/v1',name:'my-crm',version:'1.0.0',files:inventory,content_sha256:content};
   await writeFile(join(pkg,'release-manifest.json'),JSON.stringify(manifest,null,2)+'\n');
   assert.equal((await run('git',['status','--porcelain'],{cwd:dir})).stdout.trim(),'');
   assert.equal(await verifyPublishedPackage(pkg,commit),content);
   assert.equal((await readPublishedFile(pkg,commit,'skills/example/SKILL.md')).toString(),'Published skill\n');
+  for(const clientPath of clientFiles){
+   assert.equal((await readPublishedFile(pkg,commit,clientPath)).toString(),'Published client skill\n');
+   await writeFile(join(pkg,clientPath),'Altered client skill');
+   await assert.rejects(verifyPublishedPackage(pkg,commit),error=>error.acceptance_reason==='installed_package_not_published');
+   await rm(join(pkg,clientPath));
+   await assert.rejects(verifyPublishedPackage(pkg,commit),error=>error.acceptance_reason==='installed_package_not_published');
+   await writeFile(join(pkg,clientPath),'Published client skill\n');
+  }
+  await writeFile(join(pkg,'release-manifest.json'),JSON.stringify({...manifest,content_sha256:hash('tampered')},null,2)+'\n');
+  await assert.rejects(verifyPublishedPackage(pkg,commit),error=>error.acceptance_reason==='installed_package_not_published');
+  await writeFile(join(pkg,'release-manifest.json'),JSON.stringify(manifest,null,2)+'\n');
   await writeFile(join(pkg,'skills/example/extra.md'),'Unpublished');
   await assert.rejects(verifyPublishedPackage(pkg,commit),error=>error.acceptance_reason==='installed_package_not_published');
   await rm(join(pkg,'skills/example/extra.md'));
