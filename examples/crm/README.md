@@ -58,7 +58,9 @@ BOS dependency adapter methods rather than putting them inside the CRM
 instruction.
 The installed BOS adapter performs the protected invocation and attaches the
 active identity-v2 context; My CRM adds and observes no authentication header.
-A `null` payload schema is a physically bodyless request. The client never
-constructs a lifecycle href and never sends a journey ID, execution ID, state,
+A `null` payload schema means no caller business payload: delegate the unchanged
+action to BOS without a payload. BOS owns HTTP framing and encodes a POST as
+exact `{}` with JSON `Content-Type`; GET state actions remain body-free. The client
+never constructs a lifecycle href and never sends a journey ID, execution ID, state,
 transition, version, digest, idempotency key, CRM record, contact list, file,
 or source identity through lifecycle completion.

@@ -1,7 +1,7 @@
 {
   "schema_version": "2",
   "name": "my-crm",
-  "version": "0.2.43",
+  "version": "0.2.44",
   "client": "copilot",
   "application_name": "my-crm",
   "connection_owner": "bos",

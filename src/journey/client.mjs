@@ -107,7 +107,7 @@ export function validateCrmResolution(value) {
     throw new TypeError("CRM journey resolution approval_scope is invalid");
   }
   const afterSuccess = validateResolvedAction(value.after_success);
-  if (afterSuccess.verb !== "step" || afterSuccess.payload_schema !== null) throw new TypeError("CRM journey resolution after_success must be a bodyless step action");
+  if (afterSuccess.verb !== "step" || afterSuccess.payload_schema !== null) throw new TypeError("CRM journey resolution after_success must be a no-payload step action");
   const resolution = {...structuredClone(value), approval_scope: structuredClone(approvalScope), after_success: afterSuccess};
   assertNoPrivateKeys(resolution, "CRM journey resolution");
   return resolution;
