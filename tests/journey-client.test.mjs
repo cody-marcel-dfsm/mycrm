@@ -44,7 +44,7 @@ test("CRM contribution contains domain goals and constraints without BOSL or run
   for (const forbidden of ["bosl", "transition", "execution_id", "journey_id", "version", "digest"]) assert.equal(serialized.includes(forbidden), false);
 });
 
-test("compiled registration stays separate from CRM instructions until exact bodyless start is invoked", async () => {
+test("compiled registration stays separate from CRM instructions until exact no-payload start is invoked", async () => {
   const registration = {
     compiled: true,
     identity: serviceFixture.identity,
@@ -56,7 +56,7 @@ test("compiled registration stays separate from CRM instructions until exact bod
     return {status: 200, body: structuredClone(serviceFixture)};
   }}});
   assert.throws(() => validateCrmInstructionEnvelope(registration), /shape is invalid/);
-  await assert.rejects(actions.invoke(registration.actions.start, {}), /bodyless/);
+  await assert.rejects(actions.invoke(registration.actions.start, {}), /no-payload/);
   assert.deepEqual(calls, []);
   const result = await actions.invoke(registration.actions.start);
   assert.deepEqual(calls, [[registration.actions.start]]);
@@ -149,7 +149,7 @@ test("published client_action_required recovery is closed, sanitized, and delega
   assert.throws(() => validateCrmResolutionEnvelope({...response, execution_id: "private"}), /schema|shape is invalid/);
   assert.throws(() => validateCrmResolutionEnvelope({...response, current_step: {...response.current_step, type: "client"}}), /schema|server-owned/);
   assert.throws(() => validateCrmResolutionEnvelope({...response, resolution: {...response.resolution, approval_scope: ["purpose", "purpose"]}}), /unique|approval_scope is invalid/);
-  assert.throws(() => validateCrmResolutionEnvelope({...response, resolution: {...response.resolution, after_success: {...response.resolution.after_success, verb: "complete"}}}), /schema|bodyless step/);
+  assert.throws(() => validateCrmResolutionEnvelope({...response, resolution: {...response.resolution, after_success: {...response.resolution.after_success, verb: "complete"}}}), /schema|no-payload step/);
   assert.throws(() => validateCrmResolutionEnvelope({...response, error: {...response.error, provider_error: "private"}}), /schema|shape is invalid|private key/i);
 });
 

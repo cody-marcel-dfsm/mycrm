@@ -1,5 +1,5 @@
 {
   "$schema": "https://antigravity.google/schemas/v1/plugin.json",
   "name": "my-crm",
-  "description": "Understand CRM records and next actions through BOS; ad hoc dynamic workflows require live BOS contracts. Version 0.2.43."
+  "description": "Understand CRM records and next actions through BOS; ad hoc dynamic workflows require live BOS contracts. Version 0.2.44."
 }

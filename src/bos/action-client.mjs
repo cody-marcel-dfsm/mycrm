@@ -35,7 +35,7 @@ export class ReturnedActionClient {
     const current = validateResolvedAction(value);
     if (current.verb === "state") throw new TypeError("Use the BOS state-action adapter for a state action");
     if (current.payload_schema === null) {
-      if (payload !== undefined) throw new TypeError("A bodyless returned action cannot receive a payload");
+      if (payload !== undefined) throw new TypeError("A no-payload returned action cannot receive a caller payload");
       return this.bos.invokeReturnedAction(current);
     }
     if (payload === undefined) throw new TypeError("Returned action payload is required");
