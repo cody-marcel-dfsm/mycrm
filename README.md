@@ -95,7 +95,7 @@ codex plugin remove my-crm@my-crm-local
 
 ## Supported clients
 
-Version 0.2.42 is a source-validated release candidate. Native installation and authenticated operation on every host remain pending; package conformance alone does not establish runtime readiness. Install the separately published BOS product for your host and complete its connection setup first. My CRM adds skills through that existing connection.
+Version 0.2.43 is a source-validated release candidate. Native installation and authenticated operation on every host remain pending; package conformance alone does not establish runtime readiness. Install the separately published BOS product for your host and complete its connection setup first. My CRM adds skills through that existing connection.
 
 The layouts below match the [published BOS client distributions](https://github.com/cody-marcel-dfsm/bos_operations_ceneter/tree/main/clients). Commands run from a **published My CRM release checkout**; use the same relative paths under `dist/my-crm` when reviewing a built release candidate.
 

@@ -26,23 +26,23 @@ name and input schema. Check the fresh response for both contract advertisements
    Resolve that capability through current discovery and invoke it with the
    exact returned input. Require the actual validated response for operation
    `lead-director.journeys.register`, contract version
-   `lead-director-journey-registration/v1` or
-   `lead-director-journey-registration/v2`, matching fresh discovery. Copy its
-   exact advertised execution URI. Its `input_schema` describes raw BOSL;
-   `output_schema`, `limits`, `guarantees`, `execution`, and `public_errors`
-   describe registration and the supported runtime response. Follow lifecycle
-   actions only when BOS returns them; construct no lifecycle endpoint.
+   `lead-director-journey-registration/v1`, matching fresh discovery. Copy its
+   exact advertised execution URI under API version 1. Its `input_schema`
+   describes raw BOSL; `output_schema`, `limits`, `guarantees`, `execution`, and
+   `public_errors` describe registration and the supported runtime response.
+   Capability and readiness gates are independent from the API version.
+   Follow lifecycle actions only when BOS returns them; construct no endpoint.
 
-Registration behavior follows the discovered contract version. Version 1
-retains its existing immediate lifecycle response and execution behavior;
-consume that response and its returned instructions and actions. Version 2
-compiles and registers raw BOSL and returns
-`{compiled: true, identity, actions.start}`. Version 2 execution begins only when
-`bos-workflow-orchestrator` invokes the exact returned `actions.start` through
-the BOS connection. A bodyless start advertises `payload_schema: null`; send
-no payload. My CRM contributes domain expertise and consumes CRM instructions
-when the journey reaches its client step. Keep the compilation receipt separate
-from `awaiting_client` and `client_action_required` CRM instruction envelopes.
+API version 1 compiles and registers raw BOSL and returns
+`{compiled: true, identity, actions.start}`. Registration does not start execution.
+Execution begins only when `bos-workflow-orchestrator` invokes the exact returned
+`actions.start` through the BOS connection. A start with no business payload
+advertises `payload_schema: null`; delegate the unchanged action to BOS without
+a caller payload. My CRM contributes domain expertise and consumes CRM
+instructions when the journey reaches its client step. Keep the compilation
+receipt separate from `awaiting_client` and `client_action_required` CRM
+instruction envelopes. All implemented journey improvements remain in API
+version 1; an API version change requires the user's explicit request.
 
 The entry condition passes only when both advertisements and their required
 resource/contract reads are present and valid. A missing key, failed read,
@@ -133,7 +133,7 @@ For a CRM-domain client instruction:
 2. Combine the goal with the original user objective and discover the minimum current CRM capability.
 3. Invoke its exact HTTPS contract and retain only public receipt or correlation evidence needed by the returned continuation.
 4. Require the exact returned `{verb, method, href, payload_schema}` shape. After success, invoke `after_success` unchanged through `bos.invokeReturnedAction(action, payload?)`; after a published failure, invoke `on_failure` the same way. Send only the compiler-approved lifecycle payload and add no header or context field.
-5. When `payload_schema` is `null`, omit both body and `Content-Type`; never send `{}` or JSON `null`.
+5. When `payload_schema` is `null`, delegate the unchanged action to BOS without a caller business payload. BOS owns HTTP framing and may encode a POST as exact `{}` with JSON `Content-Type` under the current compatible service contract. GET state actions remain body-free; supply no JSON `null`, nonempty object, or replacement payload.
 
 Do not put `step` inside the CRM instruction. BOS selects every next and catch transition, and a later top-level service response may return a `step` action for the BOS client to invoke when ready. Do not transport CRM records, contact lists, files, source identities, transition names, or runtime state through lifecycle completion.
 
@@ -141,7 +141,7 @@ When BOS returns `client_action_required` for a server-owned node, validate the
 sanitized public error and the separate closed resolution. Use the resolution's
 goal and optional semantic operation to discover the minimum current CRM
 capability. Respect its exact approval requirement and approval scope. After
-the resolution is satisfied, invoke only its returned bodyless `step` action
+the resolution is satisfied, invoke only its returned no-payload `step` action
 through BOS. Supply no journey state, retry state, transition, or replacement
 action.
 
@@ -149,15 +149,15 @@ When a returned CRM instruction reports invalid campaign recipients, reason from
 
 ## Recover an interrupted instruction
 
-Before each request, preserve its exact advertised contract/action and approved payload, including absence of a body, in the active BOS-owned task context. Retain the original objective, validated instruction, established protocol agreement, confirmed public receipts, and approval scope. My CRM creates no durable execution journal, runtime identity, retry field, or idempotency key. A confirmed CRM effect and its lifecycle acknowledgment are separate outcomes: acknowledgment recovery reuses the confirmed result and never repeats the CRM work.
+Before each request, preserve its exact advertised contract/action and approved payload, including absence of a caller business payload, in the active BOS-owned task context. Retain the original objective, validated instruction, established protocol agreement, confirmed public receipts, and approval scope. My CRM creates no durable execution journal, runtime identity, retry field, or idempotency key. A confirmed CRM effect and its lifecycle acknowledgment are separate outcomes: acknowledgment recovery reuses the confirmed result and never repeats the CRM work.
 
-When an action's transport outcome is unknown and no successor was received, repeat that exact unresolved action through BOS. Preserve its verb, method, href, payload schema, and payload unchanged. A bodyless action remains bodyless. Server idempotency owns replay safety; require the current advertised lifecycle replay guarantee. A timeout, disconnect, rejected transport promise, truncated response, or lost continuation provides no evidence of business failure. Send `on_failure` only for a confirmed published failure with the compiler-approved payload.
+When an action's transport outcome is unknown and no successor was received, repeat that exact unresolved action through BOS. Preserve its verb, method, href, payload schema, and payload unchanged. A null-schema action retains no caller business payload; BOS owns its compatible POST framing. GET state actions remain body-free. Server idempotency owns replay safety; require the current advertised lifecycle replay guarantee. A timeout, disconnect, rejected transport promise, truncated response, or lost continuation provides no evidence of business failure. Send `on_failure` only for a confirmed published failure with the compiler-approved payload.
 
 | Interruption | Client recovery action |
 |---|---|
 | Discovery, Describe, or version selection transport fails | Retry the same discovery/selection request through BOS within the bounded policy below. Keep the preflight incomplete and execute no CRM or lifecycle effect until agreement is verified. |
 | CRM HTTPS operation loses its response during the instruction | Preserve the exact request and classify the effect as unknown. Use the operation's advertised receipt/status reconciliation through BOS first. Repeat the exact request only when its discovered idempotency/replay guarantee permits it; repeat a safe read under its contract. If no safe reconciliation or replay is advertised, pause with the operation outcome unknown and ask BOS to retain it for service-owner recovery. Invoke neither lifecycle branch until the CRM outcome is confirmed. |
-| `bos.invokeReturnedAction` throws or loses the response to `after_success`, `on_failure`, or a resolution's bodyless `step` | Repeat only that exact unresolved lifecycle action and its original payload through BOS under the advertised replay guarantee. Preserve the confirmed CRM result or published failure; keep the same branch. |
+| `bos.invokeReturnedAction` throws or loses the response to `after_success`, `on_failure`, or a resolution's no-payload `step` | Repeat only that exact unresolved lifecycle action and its original payload through BOS under the advertised replay guarantee. Preserve the confirmed CRM result or published failure; keep the same branch. |
 | A lifecycle response is lost, truncated, or lacks a valid successor or terminal outcome | Treat that action as unresolved and repeat it exactly. Follow only a validated successor or terminal result returned by BOS; infer no next step from the last instruction. |
 | A valid successor was received but processing was interrupted | Resume from that successor. If it was lost from the task context, ask BOS to use an already returned or freshly advertised state/reconciliation contract, then follow its current response. Repeating a completed predecessor requires the service's advertised reconciliation/replay prescription. |
 | Challenged HTTP 401, established uppercase authentication handoff, or MCP-session recovery condition at any phase | Preserve the pending request/action, delegate automatically to BOS through `READY`, refresh authenticated discovery, re-Describe, recheck protocol agreement and scope, then retry the exact preserved request once. Preserve the established one-resume authentication recovery budget separately from ordinary transport retries; nested calls cannot reset it, and transport retries cannot consume it. |

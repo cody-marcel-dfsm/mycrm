@@ -1,8 +1,10 @@
 import assert from "node:assert/strict";
-import {readFile} from "node:fs/promises";
+import {mkdtemp, readFile, rm, writeFile} from "node:fs/promises";
 import test from "node:test";
+import os from "node:os";
+import path from "node:path";
 
-import {parseTrailers, proposalRecordSha256, receiptSha256, stampCommitMessage, validateOracleResponse, verifyCommitMessage, verifyProposalRecord, verifyPublishedCommitTrailers, verifyReceipt} from "../scripts/oracle-review.mjs";
+import {parseTrailers, proposalRecordSha256, receiptSha256, stampCommitMessage, validateOracleResponse, verifyApiVersionRequestEvidence, sha256, verifyCommitMessage, verifyProposalRecord, verifyPublishedCommitTrailers, verifyReceipt} from "../scripts/oracle-review.mjs";
 
 function approvedReceipt(tree = "1".repeat(40)) {
   const receipt = {
@@ -118,4 +120,35 @@ test("Oracle alone classifies authentication impact and owner-approval sufficien
   assert.throws(() => validateOracleResponse({verdict: "APPROVED", authentication_impact: true, owner_approval_status: "MISSING"}), /requires owner_approval_status APPROVED/);
   assert.throws(() => validateOracleResponse({verdict: "REJECTED", authentication_impact: true, owner_approval_status: "NOT_REQUIRED"}), /cannot mark owner approval NOT_REQUIRED/);
   assert.throws(() => validateOracleResponse({verdict: "APPROVED", authentication_impact: false, owner_approval_status: "APPROVED"}), /must mark owner approval NOT_REQUIRED/);
+});
+
+
+test("fresh API-version decisions reject approval-only and missing requests independently from auth", () => {
+  const response = {verdict: "APPROVED", authentication_impact: false, owner_approval_status: "NOT_REQUIRED"};
+  const none = {impact: "NONE", request_kind: "NOT_REQUIRED", requested_change: null, request_quote: null, request_evidence: null};
+  assert.throws(() => validateOracleResponse(response, {requireApiAssessment: true}), /API-version assessment/);
+  assert.doesNotThrow(() => validateOracleResponse({...response, api_version_assessment: none}, {requireApiAssessment: true}));
+  const change = {impact: "CHANGE", request_kind: "EXPLICIT_REQUEST", requested_change: "Change the synthetic API to version 2", request_quote: "I request synthetic API version 2.", request_evidence: "/synthetic/request.md"};
+  assert.doesNotThrow(() => validateOracleResponse({...response, api_version_assessment: change}, {requireApiAssessment: true}));
+  for (const request_kind of ["APPROVAL_ONLY", "MISSING", "NOT_REQUIRED"]) {
+    assert.throws(() => validateOracleResponse({...response, api_version_assessment: {...change, request_kind}}, {requireApiAssessment: true}), /API-version change/);
+  }
+  assert.throws(() => validateOracleResponse({...response, api_version_assessment: {...none, request_quote: "Approved"}}, {requireApiAssessment: true}), /null request evidence/);
+  assert.throws(() => validateOracleResponse({...response, api_version_assessment: {...change, request_evidence: "relative.md"}}, {requireApiAssessment: true}), /absolute evidence/);
+});
+
+test("API-version exact request must be quoted in independently hash-bound supplied evidence", async () => {
+  const directory = await mkdtemp(path.join(os.tmpdir(), "mycrm-api-request-"));
+  try {
+    const filename = path.join(directory, "request.md");
+    const bytes = "Synthetic direct human request: I request synthetic API version 2.\n";
+    await writeFile(filename, bytes);
+    const response = {verdict: "APPROVED", api_version_assessment: {impact: "CHANGE", request_kind: "EXPLICIT_REQUEST", requested_change: "Change synthetic API to version 2", request_quote: "I request synthetic API version 2.", request_evidence: filename}};
+    const binding = [{kind: "file", value: `@${filename}`, sha256: sha256(bytes)}];
+    await assert.doesNotReject(verifyApiVersionRequestEvidence(response, binding));
+    await assert.rejects(verifyApiVersionRequestEvidence(response, []), /supplied hash-bound/);
+    await assert.rejects(verifyApiVersionRequestEvidence({...response, api_version_assessment: {...response.api_version_assessment, request_quote: "Approved"}}, binding), /quote is absent/);
+    await writeFile(filename, "Changed evidence");
+    await assert.rejects(verifyApiVersionRequestEvidence(response, binding), /changed after binding/);
+  } finally { await rm(directory, {recursive: true, force: true}); }
 });
