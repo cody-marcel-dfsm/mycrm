@@ -12,6 +12,15 @@ selected model. Oracle CLI launchers pass that model explicitly to isolated
 `codex exec` processes and stop if it is unknown. Do not silently select a
 different model during release recovery.
 
+## API-version request requirement
+
+An API-version change requires the user's explicit request for that exact
+change. Approval of implementation or shipment supplies no version-change
+request. Keep behavior fixes and all implemented improvements in the existing
+API version unless explicitly requested. Package release versions and
+independent authentication-envelope identifiers are separate. Preserve exact
+request evidence for independent proposal and completed-tree assessment.
+
 ## Protected-change approval gate
 
 This invocation authorizes release execution for already authorized work. It

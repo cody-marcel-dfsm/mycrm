@@ -24,6 +24,17 @@ API, authentication, or authorization decision; keep each labeled section to
 three concise sentences. Proposal review writes a separate local record and
 never substitutes for the completed staged-tree receipt.
 
+## API-version request requirement
+
+An API-version change requires the user's explicit request for that exact
+change. General approval, a release request, compatibility reasoning, or an
+Oracle recommendation supplies no API-version request. Fix behavior and retain
+all implemented improvements within the existing API version unless the user
+explicitly requests a version change. Package patch versions and independent
+authentication-envelope identifiers remain distinct. Both proposal and
+completed reviews must assess API-version impact separately from authentication
+approval and verify direct-user request evidence and exact scope.
+
 ## BOS Product Family coordination
 
 Projects-level family architecture:
