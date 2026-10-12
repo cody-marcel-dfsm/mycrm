@@ -34,6 +34,11 @@ a complete applicable workflow from this catalog before ad hoc composition.
 
 ## Handle CRM intent
 
+For an individual lead/contact lookup or detail result, apply
+[individual CRM detail completion](../my-crm-customer-journey/references/detail-display.md).
+Continue into the owned journey workflow in the same turn, including after a
+workspace clarification, and delegate its compact graph to BOS visualization.
+
 - Use `my-crm-record-operations` for organization-described record search, read, create, update, and delete. See [../my-crm-record-operations/SKILL.md](../my-crm-record-operations/SKILL.md).
 - Use `my-crm-pipeline-operations` for currently advertised state, ownership, value, opportunity, and next-action behavior. See [../my-crm-pipeline-operations/SKILL.md](../my-crm-pipeline-operations/SKILL.md).
 - Use `my-crm-activity-operations` for bounded, source-attributed timelines. See [../my-crm-activity-operations/SKILL.md](../my-crm-activity-operations/SKILL.md).

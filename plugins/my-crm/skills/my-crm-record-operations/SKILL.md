@@ -5,6 +5,11 @@ description: Search, read, create, update, or delete organization-described CRM 
 
 # My CRM Record Operations
 
+Apply [individual CRM detail completion](../my-crm-customer-journey/references/detail-display.md)
+to named lookups and lead/contact detail results. Resolve the requested record,
+then load `my-crm-customer-journey` and complete its compact graph before the
+final response. Keep explicit format preferences and ambiguous identity scope.
+
 Use installed BOS discovery to identify the smallest current operation set. Request Describe for those operations and validate all values against its schemas. Use the organization-described entity label and fields; never assume a universal record type.
 
 For search, send the non-empty lookup text extracted from the request. Omit `source` for general federation. When the user names a source, match it to current metadata and copy the entire `{platform, application, plugin}` object. Send one request; BOS owns selection, fan-out, translation, limits, retries, and response assembly. Use a separate read only when current discovery advertises it.

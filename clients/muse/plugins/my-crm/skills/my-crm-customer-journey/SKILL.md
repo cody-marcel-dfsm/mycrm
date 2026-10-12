@@ -1,9 +1,14 @@
 ---
 name: my-crm-customer-journey
-description: Present current application-owned customer journey evidence from discovered graph or record operations without inventing topology, state, or transitions.
+description: Complete individual lead/contact lookups and details with a compact application-owned journey graph using discovered record and topology evidence.
 ---
 
 # My CRM Customer Journey
+
+Apply [individual CRM detail completion](references/detail-display.md) to ordinary
+lead/contact lookups and detail results. Present one compact preferred route by
+default, retaining every verified intermediate state and the shortest structural
+fallback. Use the full graph only when the user requests that view.
 
 Use only currently advertised graph, node, or record operations. Present the organization-described entity label, current node, verified transition history, reachable goals, directed paths, gates, blockers, rendering, actions, provenance, and freshness returned by those contracts.
 
