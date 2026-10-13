@@ -217,7 +217,14 @@ export function validateApplicationDiscovery(value) {
   const discovery = clone(object(value, "application discovery"));
   const discoveryKeys = Object.keys(discovery).sort();
   const expectedDiscoveryKeys = ["application", "bosl", "describe"];
-  if (Object.hasOwn(discovery, "journey_registration")) expectedDiscoveryKeys.push("journey_registration");
+  const contractLinks = {
+    journey_registration: "lead-director.journeys.register",
+    workflow_catalog: "lead-director.journeys.workflows",
+    workflow_control: "lead-director.journeys.workflow-control"
+  };
+  for (const key of Object.keys(contractLinks)) {
+    if (Object.hasOwn(discovery, key)) expectedDiscoveryKeys.push(key);
+  }
   if (JSON.stringify(discoveryKeys) !== JSON.stringify(expectedDiscoveryKeys.sort())) throw new TypeError("application discovery contains unsupported fields");
   const application = object(discovery.application, "application discovery application");
   if (JSON.stringify(Object.keys(application).sort()) !== JSON.stringify(["application", "platform"])) throw new TypeError("application discovery application reference is invalid");
@@ -231,15 +238,16 @@ export function validateApplicationDiscovery(value) {
   if (!Array.isArray(describe.operations)) throw new TypeError("application discovery operations must be an array");
   const ids = describe.operations.map((operation, index) => operationId(operation, `operations[${index}]`));
   if (new Set(ids).size !== ids.length) throw new TypeError("application discovery operation identities must be unique");
-  if (Object.hasOwn(discovery, "journey_registration")) {
-    const journeyRegistration = object(discovery.journey_registration, "application discovery journey_registration");
-    exactKeys(journeyRegistration, ["contract"], "application discovery journey_registration");
-    const registrationContract = object(journeyRegistration.contract, "application discovery journey_registration.contract");
-    exactKeys(registrationContract, ["capability", "input"], "application discovery journey_registration.contract");
-    if (registrationContract.capability !== "api.contract.get") throw new TypeError("application discovery journey_registration capability is invalid");
-    const registrationInput = object(registrationContract.input, "application discovery journey_registration.contract.input");
-    exactKeys(registrationInput, ["operation"], "application discovery journey_registration.contract.input");
-    if (registrationInput.operation !== "lead-director.journeys.register") throw new TypeError("application discovery journey_registration operation is invalid");
+  for (const [key, operation] of Object.entries(contractLinks)) {
+    if (!Object.hasOwn(discovery, key)) continue;
+    const link = object(discovery[key], `application discovery ${key}`);
+    exactKeys(link, ["contract"], `application discovery ${key}`);
+    const contract = object(link.contract, `application discovery ${key}.contract`);
+    exactKeys(contract, ["capability", "input"], `application discovery ${key}.contract`);
+    if (contract.capability !== "api.contract.get") throw new TypeError(`application discovery ${key} capability is invalid`);
+    const input = object(contract.input, `application discovery ${key}.contract.input`);
+    exactKeys(input, ["operation"], `application discovery ${key}.contract.input`);
+    if (input.operation !== operation) throw new TypeError(`application discovery ${key} operation is invalid`);
   }
   const bosl = object(discovery.bosl, "application discovery BOSL resources");
   if (JSON.stringify(Object.keys(bosl).sort()) !== JSON.stringify(["descriptor_etag", "examples_uri", "reference_uri", "schema_uri"])) throw new TypeError("application discovery BOSL resources are invalid");

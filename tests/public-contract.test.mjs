@@ -34,6 +34,45 @@ test("application discovery validates the exact published journey registration c
   }
 });
 
+test("application discovery preserves the two exact API v1 callback workflow links", () => {
+  const discovery = createSyntheticDocuments().discovery;
+  assert.deepEqual(validateApplicationDiscovery(discovery).workflow_catalog, {
+    contract: {
+      capability: "api.contract.get",
+      input: {operation: "lead-director.journeys.workflows"}
+    }
+  });
+  assert.deepEqual(validateApplicationDiscovery(discovery).workflow_control, {
+    contract: {
+      capability: "api.contract.get",
+      input: {operation: "lead-director.journeys.workflow-control"}
+    }
+  });
+  for (const [key, mutate] of [
+    ["workflow_catalog", (value) => { value.contract.capability = "other"; }],
+    ["workflow_catalog", (value) => { value.contract.input.operation = "other"; }],
+    ["workflow_catalog", (value) => { value.contract.input.extra = true; }],
+    ["workflow_control", (value) => { value.contract.capability = "other"; }],
+    ["workflow_control", (value) => { value.contract.input.operation = "other"; }],
+    ["workflow_control", (value) => { value.extra = true; }]
+  ]) {
+    const candidate = structuredClone(discovery);
+    mutate(candidate[key]);
+    assert.throws(() => validateApplicationDiscovery(candidate), new RegExp(key));
+  }
+  assert.throws(() => validateApplicationDiscovery({...discovery, unsupported: {}}), /unsupported fields/);
+});
+
+test("application discovery accepts each legacy workflow-link omission", () => {
+  for (const omitted of [[], ["workflow_catalog"], ["workflow_control"], ["workflow_catalog", "workflow_control"]]) {
+    const discovery = createSyntheticDocuments().discovery;
+    for (const key of omitted) delete discovery[key];
+    const validated = validateApplicationDiscovery(discovery);
+    assert.deepEqual(validated, discovery);
+    for (const key of omitted) assert.equal(Object.hasOwn(validated, key), false);
+  }
+});
+
 test("application discovery remains compatible when journey registration is not advertised", () => {
   const discovery = structuredClone(createSyntheticDocuments().discovery);
   delete discovery.journey_registration;
