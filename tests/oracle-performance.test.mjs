@@ -7,6 +7,7 @@ import {fileURLToPath} from "node:url";
 import {promisify} from "node:util";
 import test from "node:test";
 import {captureInputs, assertInputsMatch, withOracleRun, preparedEvidence} from "../scripts/oracle-inputs.mjs";
+import {receiptSha256, sha256} from "../scripts/oracle-review.mjs";
 
 const execute = promisify(execFile);
 const launcher = fileURLToPath(new URL("../scripts/oracle-review.mjs", import.meta.url));
@@ -26,7 +27,7 @@ async function fixture(t) {
   await writeFile(path.join(repo, ".gitignore"), "Vault/\n");
   await writeFile(path.join(repo, "candidate.txt"), "before\n");
   const fake = path.join(bin, "codex");
-  await writeFile(fake, `#!${process.execPath}\nconst fs = require('node:fs');\nconst args=process.argv.slice(2); const out=args[args.indexOf('--output-last-message')+1];\nconst proposal=!args.includes('--output-schema');\nif(!proposal && process.env.ORACLE_READY) fs.writeFileSync(process.env.ORACLE_READY,'ready');\nif(!proposal && process.env.ORACLE_MUTATE) fs.writeFileSync(process.env.ORACLE_MUTATE,'changed during review');\nconst emit=()=>{ fs.writeFileSync(out,proposal?'Synthetic proposal.\\nAPI_VERSION_ASSESSMENT={"impact":"NONE","request_kind":"NOT_REQUIRED","requested_change":null,"request_quote":null,"request_evidence":null}\\nAUTHENTICATION_IMPACT=NONE\\nOWNER_APPROVAL_STATUS=NOT_REQUIRED\\nORACLE_VERDICT=APPROVED\\n':process.env.ORACLE_MALFORMED?'{}':JSON.stringify({verdict:'APPROVED',api_version_assessment:{impact:'NONE',request_kind:'NOT_REQUIRED',requested_change:null,request_quote:null,request_evidence:null},summary:'Synthetic candidate accepted.',authentication_impact:false,owner_approval_status:'NOT_REQUIRED',warning:null,findings:[]})); };\nif(!proposal && process.env.ORACLE_DELAY) setTimeout(emit,Number(process.env.ORACLE_DELAY)); else emit();\n`);
+  await writeFile(fake, `#!${process.execPath}\nconst fs = require('node:fs');\nconst args=process.argv.slice(2); if(args[args.indexOf('--sandbox')+1]!=='danger-full-access') throw new Error('Oracle must execute natively'); const out=args[args.indexOf('--output-last-message')+1];\nconst proposal=!args.includes('--output-schema');\nif(!proposal && process.env.ORACLE_READY) fs.writeFileSync(process.env.ORACLE_READY,'ready');\nif(!proposal && process.env.ORACLE_MUTATE) fs.writeFileSync(process.env.ORACLE_MUTATE,'changed during review');\nconst emit=()=>{ fs.writeFileSync(out,proposal?'Synthetic proposal.\\nAPI_VERSION_ASSESSMENT={"impact":"NONE","request_kind":"NOT_REQUIRED","requested_change":null,"request_quote":null,"request_evidence":null}\\nAUTHENTICATION_IMPACT=NONE\\nOWNER_APPROVAL_STATUS=NOT_REQUIRED\\nORACLE_VERDICT=APPROVED\\n':process.env.ORACLE_MALFORMED?'{}':JSON.stringify({verdict:'APPROVED',api_version_assessment:{impact:'NONE',request_kind:'NOT_REQUIRED',requested_change:null,request_quote:null,request_evidence:null},summary:'Synthetic candidate accepted.',authentication_impact:false,owner_approval_status:'NOT_REQUIRED',warning:null,findings:[]})); };\nif(!proposal && process.env.ORACLE_DELAY) setTimeout(emit,Number(process.env.ORACLE_DELAY)); else emit();\n`);
   await chmod(fake, 0o700);
   const git = async (...args) => (await execute("git", args, {cwd: repo})).stdout.trim();
   await git("init", "-q"); await git("add", ".");
@@ -109,7 +110,7 @@ test("live gates bind all inputs, emit owner verifier JSON, and retain phase dia
   const receipt = JSON.parse(await readFile(path.join(repo, ".git/oracle/approval.json")));
   assert.equal(receipt.schema, "my-crm.oracle-approval/v2");
   assert.equal(receipt.reviewer.model, "synthetic-test-model");
-  assert.equal(receipt.reviewer.sandbox, "read-only");
+  assert.equal(receipt.reviewer.sandbox, "danger-full-access");
   assert.equal(receipt.reviewer.ephemeral, true);
   assert.equal(receipt.reviewer.ignore_user_config, true);
   assert.match(receipt.reviewer.response_schema_sha256, /^[a-f0-9]{64}$/);
@@ -126,6 +127,21 @@ test("live gates bind all inputs, emit owner verifier JSON, and retain phase dia
     assert.equal(evidence.reviewer_metadata_sha256, receipt.reviewer_metadata_sha256);
     assert.deepEqual(JSON.parse(await readFile(evidence.reviewer_metadata_file)), receipt.reviewer);
   }
+  const approvalFile = path.join(repo, ".git/oracle/approval.json");
+  const changedMode = {...receipt, reviewer: {...receipt.reviewer, sandbox: "read-only"}};
+  await writeFile(approvalFile, JSON.stringify(changedMode));
+  await assert.rejects(command(repo, ["verify-index"], env), /digest/);
+  // Existing content-bound read-only receipts retain their historical meaning.
+  changedMode.reviewer_metadata_sha256 = sha256(`${JSON.stringify(changedMode.reviewer, null, 2)}\n`);
+  changedMode.receipt_sha256 = receiptSha256(changedMode);
+  await writeFile(approvalFile, JSON.stringify(changedMode));
+  await command(repo, ["verify-index"], env);
+  const unsupportedMode = {...changedMode, reviewer: {...changedMode.reviewer, sandbox: "workspace-write"}};
+  unsupportedMode.reviewer_metadata_sha256 = sha256(`${JSON.stringify(unsupportedMode.reviewer, null, 2)}\n`);
+  unsupportedMode.receipt_sha256 = receiptSha256(unsupportedMode);
+  await writeFile(approvalFile, JSON.stringify(unsupportedMode));
+  await assert.rejects(command(repo, ["verify-index"], env), /provenance/);
+  await writeFile(approvalFile, JSON.stringify(receipt));
   await writeFile(path.join(repo, "Vault/tmp/validation.log"), "changed evidence");
   await assert.rejects(command(repo, ["verify-index"], env), /drifted/);
 });
