@@ -159,9 +159,82 @@ then call `npm run oracle:review`. The utility submits the exact staged tree and
 repeatable `--validation` evidence to the independent project-local Oracle.
 When exact owner-approval evidence applies, pass it once through
 `--owner-approval`; the Oracle alone determines whether it covers the staged
-change. The utility records only a tree-bound `APPROVED` receipt. Resolve every rejection, rerun affected
-validation, restage, sync the Vault after Vault changes, and call the utility
-again. Every mutation after approval invalidates the receipt.
+change. The utility records a complete tree-bound decision and issues usable
+approval only for `COMPLETE` and `APPROVED`. Every mutation after approval
+invalidates the receipt.
+
+Preserve the launcher's private review-series records. The initial assessment
+finishes coverage of the complete candidate, callers, dependencies, boundaries
+and failure paths before returning consolidated actionable findings. Repair
+the full finding set together, retain stable finding IDs, and provide the
+reproduction, required behavior and acceptance-check evidence for each
+resolution. An `INCOMPLETE` assessment or process `ERROR` resumes unfinished
+coverage without creating a source rejection or approval.
+
+For each repair, inspect the changes since the previous candidate and affected
+dependencies. Stage the candidate and capture reusable successful checks through
+`npm run oracle:validate -- -- <command> [args]` for a complete-candidate baseline.
+For a focused repair check, use `npm run oracle:validate -- --input <file>
+--input <another-file> -- <command> [args]`, repeating `--input` for the complete
+source, test, fixture, configuration and consumed authority dependency closure;
+package configuration, environment and executable bindings are included automatically.
+New scoped captures retain base/branch and reviewer authority, policy, proposal
+and owner identities separately as provenance. Unrelated changes to those facts
+preserve an unchanged command observation. Explicitly select each authority or
+policy file the command consumes; selected source/index/configuration/authority
+drift invalidates it. Existing records retain their original conservative scope.
+Pass the emitted native record
+unchanged through `oracle:review --validation`. This executes the command and
+retains original before/after inputs, executable, environment, outcome and
+output hashes. Existing raw logs remain readable evidence and never gain
+reusable status from current dependency labels. Reuse prior coverage and
+successful checks only after the
+independent reviewer verifies their complete dependency witnesses and supplied
+hash-bound file evidence, including source, tests, fixtures, configuration,
+tools and environment against the original recorded execution. Record why each
+invalidated result needs rerunning.
+A verified native pass on identical inputs fulfills that check's execution
+requirement. Retain its witness in the result and run additional checks only for
+an invalidated input, new behavior or a concrete coverage gap. Exact-tree
+receipt verification checks original evidence/output integrity across hook and
+CLI contexts without requiring their ambient environment to match a past run.
+Original passing-case output from a failed aggregate can support unaffected
+coverage when exact source, test, shared-fixture, configuration and environment
+inputs remain proven unchanged. Preserve the aggregate's FAILED outcome; an
+absent green aggregate alone supplies no reason to rerun passing cases. Declare
+the complete source, test, fixture and configuration closure for each new capture.
+Keep global controlling policy/schema distinct from per-observation Vault
+dependencies. The exact receipt binds every canonical authority; an unrelated
+status/design update invalidates its own coverage and declared dependents.
+The Oracle automatically retains and revalidates its original native execution
+records across follow-ups, even when a client omits reattaching them. It binds
+the verified originals and outputs into the effective current evidence manifest.
+Missing/tampered data invalidates the affected check with a concrete reason;
+owner/API approval evidence and unstructured legacy logs are never inferred.
+Additive exact owner metadata preserves unrelated source coverage. Native
+execution facts depend on actual declared inputs, configuration, environment
+and provenance; a declared owner-file dependency still invalidates on change.
+Every fresh complete receipt independently rechecks current protected authority.
+Restage, sync the Vault after Vault changes, rerun affected validation and call
+the utility again. Shared behavior changes justify broader regression checks;
+establish the required complete integrated `npm test` baseline, retain verified
+unaffected observations and execute affected repair checks instead of repeating
+the identical complete suite after each repair. The reviewer
+classifies a late unchanged-code discovery as missed first-pass coverage and
+identifies a changed affected path for a repair-induced defect. After two
+unsuccessful repair rounds, reconcile all findings and one concrete repair
+plan before making the next implementation edits. The wrapper publishes this
+plan immediately with the second rejected follow-up and preserves it in review
+context; missing model prose creates no retry. In-scope repair proposals retain series
+history. Every resubmission still needs a fresh independent decision for the
+whole current candidate and an exact current receipt; reused evidence supplies
+no approval authority.
+
+When an assessment returns INCOMPLETE, resume the same unchanged candidate until
+the Oracle returns COMPLETE. Treat partial findings as provisional and collect
+the consolidated assessment before implementing repairs. If continuation is
+impossible, document the concrete execution failure and perform only the minimum
+recovery needed to resume that unchanged assessment.
 
 ## Commit and publish
 
