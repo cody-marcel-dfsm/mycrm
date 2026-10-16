@@ -31,6 +31,9 @@ test("Oracle receipt is bound to the exact staged Git tree", () => {
   assert.throws(() => verifyReceipt(receipt, "3".repeat(40)), /stale/);
   assert.throws(() => verifyReceipt({...receipt, summary: "changed"}, receipt.reviewed_tree), /digest/);
   assert.throws(() => verifyReceipt({...receipt, verdict: "REJECTED", receipt_sha256: receiptSha256({...receipt, verdict: "REJECTED"})}, receipt.reviewed_tree), /verdict/);
+  const incomplete = {...receipt, review_status: "INCOMPLETE"};
+  incomplete.receipt_sha256 = receiptSha256(incomplete);
+  assert.throws(() => verifyReceipt(incomplete, receipt.reviewed_tree), /complete assessment/);
 });
 
 test("proposal records are separate, base-bound, and must be approved", () => {

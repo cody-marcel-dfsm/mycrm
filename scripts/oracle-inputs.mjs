@@ -1,6 +1,7 @@
 import {createHash, randomUUID} from "node:crypto";
 import {mkdir, readFile, readdir, rename, rm, writeFile, lstat} from "node:fs/promises";
 import path from "node:path";
+import {currentPolicy, policyVersion, policyModules} from "./oracle-policy.mjs";
 
 export const canonicalJson = (value) => Array.isArray(value) ? `[${value.map(canonicalJson).join(",")}]` : value && typeof value === "object" ? `{${Object.keys(value).sort().map((key) => `${JSON.stringify(key)}:${canonicalJson(value[key])}`).join(",")}}` : JSON.stringify(value);
 export const contentHash = (value) => createHash("sha256").update(value).digest("hex");
@@ -14,7 +15,7 @@ export async function atomicJson(filename, value) {
   } finally { await rm(temporary, {force: true}); }
 }
 
-export async function withOracleRun(directory, action) {
+export async function withOracleRun(directory, action, {kind = null, onAdmitted = null} = {}) {
   await mkdir(directory, {recursive: true, mode: 0o700});
   const lock = path.join(directory, "run.lock");
   try { await mkdir(lock, {mode: 0o700}); }
@@ -22,27 +23,61 @@ export async function withOracleRun(directory, action) {
   let run;
   const timings = {};
   const started = performance.now();
+  const startedAt = new Date().toISOString();
+  let result, failure;
   const phase = async (name, operation) => {
     const begin = performance.now();
     try { return await operation(); } finally { timings[name] = performance.now() - begin; }
   };
   try {
+    // Admission holds the checkout lock; completion custody precedes diagnostics.
+    await onAdmitted?.();
     await atomicJson(path.join(lock, "owner.json"), {pid: process.pid, started_at: new Date().toISOString()});
     run = path.join(directory, "runs", randomUUID());
     await mkdir(run, {recursive: true, mode: 0o700});
-    return await action({run, phase});
+    result = await action({run, phase});
+    return result;
+  } catch (error) {
+    failure = error;
+    throw error;
   } finally {
     timings.total_ms = performance.now() - started;
-    try { if (run) await atomicJson(path.join(run, "timings.json"), timings); }
-    finally { await rm(lock, {recursive: true, force: true}); }
+    try {
+      if (run) {
+        await atomicJson(path.join(run, "timings.json"), timings);
+        await atomicJson(path.join(run, "outcome.json"), {
+          kind, started_at: startedAt, finished_at: new Date().toISOString(),
+          outcome: failure ? "ERROR" : result?.review_status === "INCOMPLETE" ? "INCOMPLETE" : result?.verdict ?? "COMPLETED",
+          reviewer_invoked: Object.hasOwn(timings, "reviewer_ms"),
+          error: failure ? {name: failure.name, message: failure.message} : null,
+        });
+      }
+    } catch (error) {
+      if (!failure) throw error;
+    } finally { await rm(lock, {recursive: true, force: true}); }
   }
 }
 
-async function fileBinding(root, relative) {
+async function fileBinding(root, relative, {allowMissing = false} = {}) {
   const absolute = path.resolve(root, relative);
-  const stats = await lstat(absolute);
+  let stats;
+  try { stats = await lstat(absolute); }
+  catch (error) { if (allowMissing && error.code === "ENOENT") return {path: relative, sha256: null}; throw error; }
   if (!stats.isFile() || stats.isSymbolicLink()) throw new Error(`Oracle input must be a regular file: ${relative}`);
   return {path: relative, sha256: contentHash(await readFile(absolute))};
+}
+
+async function declaredParentAuthorities(root) {
+  const parent = path.dirname(path.resolve(root));
+  const declarations = await readFile(path.join(root, "AGENTS.md"), "utf8");
+  // Only inherited policy and these exact locally declared coordination files
+  // cross the project boundary. Their bytes are evidence, never runtime imports.
+  const files = [{path: path.join(parent, "AGENTS.md"), controlling: true}];
+  for (const relative of ["Vault/docs/architecture/bos-product-family.md", "tools/projects_oracle.py"]) {
+    const filename = path.join(parent, relative);
+    if (declarations.includes(filename)) files.push({path: filename, controlling: false});
+  }
+  return Promise.all(files.map(async (item) => ({...await fileBinding(root, item.path, {allowMissing: true}), external: true, controlling: item.controlling})));
 }
 
 async function vaultSources(root, relative = "Vault") {
@@ -76,13 +111,15 @@ export async function captureInputs({root, base, tree = null, validationEvidence
   // Hash the approver policy bytes without adopting or exposing its instructions.
   const policyFiles = ["AGENTS.md", "Vault/docs/CONSTITUTION.md", ".agents/skills/oracle/SKILL.md"];
   const files = complete ? [...new Set([...policyFiles, ...await vaultSources(root)])].sort() : policyFiles.sort();
-  const [authorities, validation, owner] = await Promise.all([
+  const [localAuthorities, externalAuthorities, validation, owner] = await Promise.all([
     Promise.all(files.map((filename) => fileBinding(root, filename))),
+    declaredParentAuthorities(root),
     Promise.all(validationEvidence.map((value) => evidenceBinding(root, value))),
     evidenceBinding(root, ownerApprovalEvidence),
   ]);
-  const tool_sha256 = bindingHash(await Promise.all(["oracle-inputs.mjs", "oracle-review.mjs"].map(async (name) => contentHash(await readFile(new URL(name, import.meta.url))))));
-  return {schema: "my-crm.oracle-inputs/v2", tool_sha256, base_commit: base, reviewed_tree: tree, authorities, validation, owner, proposal_sha256: proposal ? bindingHash(proposal) : null};
+  const authorities = [...localAuthorities, ...externalAuthorities];
+  const tool_sha256 = bindingHash(await Promise.all(policyModules.map(async (name) => contentHash(await readFile(new URL(name, import.meta.url))))));
+  return {schema: "my-crm.oracle-inputs/v2", tool_sha256, tool_source_files: policyModules, reviewer_policy_sha256: await currentPolicy(), reviewer_policy_version: await policyVersion(), base_commit: base, reviewed_tree: tree, authorities, validation, owner, proposal_sha256: proposal ? bindingHash(proposal) : null};
 }
 
 export function assertInputsMatch(expected, actual) {

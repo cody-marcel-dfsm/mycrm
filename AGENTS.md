@@ -146,7 +146,7 @@ never load the Projects approver skill directly.
 - Public product contracts, executable source, examples, license files, and the
   customer-facing README remain Git-visible.
 
-Run `npm test` before completing any implementation change.
+Establish the complete integrated `npm test` baseline before completing an implementation change. During repair follow-ups, retain verified unchanged baseline observations and run the checks affected by changed source, dependencies, configuration, environment or uncovered behavior.
 
 Every repository mutation requires review of the complete staged tree through
 `npm run oracle:review`. A mutation is incomplete until the Oracle utility
@@ -163,6 +163,70 @@ alone evaluates the staged candidate and writes the receipt. This process does
 not model an implementation agent as a malicious same-OS adversary with direct
 access to `.git` or the ability to rewrite the gate itself.
 
+## Oracle review continuity
+
+The launcher designates its isolated reviewer through trusted developer
+configuration. Ordinary agents keep invoking the command and never adopt the
+approver skill. The private `.git/oracle/series/` records preserve a review
+series across in-scope repair proposals and retain earlier rounds when the
+base changes. Keep these records intact; process failures resume unfinished
+coverage and use `ERROR` or `INCOMPLETE`, while source `REJECTED` requires a
+completed assessment.
+
+The first review covers the complete candidate and relevant callers,
+dependencies, boundaries and failure paths, then returns all established
+findings together. Findings carry stable IDs, reproduction, required behavior,
+affected paths and acceptance checks. Repair every finding as a set and supply
+resolution evidence for each ID on resubmission. Follow-up review checks the
+repair and affected dependencies, independently verifies eligible prior
+coverage and validation, and explicitly records invalidation reasons. A late
+unchanged-code finding records missed first-pass coverage; a repair-induced
+defect identifies its changed dependency. After two unsuccessful repair rounds,
+the wrapper immediately publishes and retains one repair plan containing all
+open IDs, required behavior, overlapping paths and acceptance checks alongside
+that rejection, before implementation resumes. Omitted reviewer synthesis
+never creates an extra process retry.
+
+Capture reusable checks with `npm run oracle:validate -- -- <command> [args]`
+after staging the exact candidate, then supply its emitted evidence reference
+to `oracle:review --validation`. The recorder actually runs the command and
+retains original before/after input, executable and environment bindings,
+passing outcome and output hashes. Reuse successful validation only with that
+unchanged native record and the independently verified complete source, test,
+fixture, configuration and tooling dependency closure. Existing logs remain
+review evidence; assigning current hashes to an old log never creates a
+reusable result. A verified captured pass satisfies the requirement to execute
+that check for those exact inputs; preserve it in the review result and repeat
+it only for an invalidated input or a concrete new coverage gap. Rerun affected
+checks when these inputs change; shared
+behavior changes can require broader regression checks. The complete initial `npm test` baseline remains required; verified unaffected observations carry forward through focused repair checks. Evidence reuse
+never carries an approval forward: every updated candidate requires a fresh
+independent whole-candidate decision and exact staged-tree receipt. Public API
+version requests, protected-change approval, provenance and verifier gates
+continue to apply.
+Receipt verification rechecks original native output integrity and exact source
+bindings across hook/CLI contexts; ambient environment differences require
+reassessment during live review and do not rewrite an existing execution's
+provenance.
+Reusable observations treat AGENTS, the constitution and approver policy/schema
+as global controlling inputs. Other canonical Vault authorities remain in the
+exact full-candidate receipt binding and per-path dependency map: changing an
+unrelated status/design document reopens its own review and actual dependents.
+On a follow-up, the launcher automatically reattaches its retained native
+execution records after verifying original record and output hashes, then
+rechecks their current dependency/configuration/environment applicability.
+Omitted attachment alone never requires repeating a passing check. Missing or
+altered originals produce concrete invalidations. Legacy logs, owner approval
+and API-version request evidence are never inferred from command history.
+Review inputs also bind inherited parent AGENTS policy and the exact parent
+family architecture and Oracle command declared above, including absent-file
+tombstones. Their allowlisted absolute paths may identify coverage dependencies;
+changed parent policy invalidates reuse globally, while other external changes
+invalidate their own coverage and actual dependents. This evidence binding
+creates no sibling runtime import, execution or approval authority.
+
 ## Canonical main and project agent context
 
 Work exclusively on `main` in `/Users/cody/Development/Projects/MyCRM`. Do not create, switch to, or use Git worktrees for planning, implementation, validation, review, or release. Existing worktree changes may be read solely for recovery into canonical main; preserve those sources until recovery is verified. Run the implementation agent from this directory and follow this project's skills, validation commands, and Oracle process. Preserve staged, unstaged, and untracked changes, fetch and reconcile remote main before implementation and publication, record the base commit, and validate the complete integrated main before release.
+
+For a focused native check, repeat `--input <exact-project-file>` for every source, test, fixture, configuration and authority file the command consumes before `-- <command>`. New explicit-input captures bind those live/indexed paths plus package configuration, effective environment and executable. Git base/branch and unselected reviewer authority, policy, proposal and owner metadata remain truthful provenance; their changes preserve an unchanged execution fact. Select a policy file when the command consumes it. Existing records retain their original scope. Omit `--input` for the conservative complete-candidate capture. The independent reviewer verifies dependency completeness, and every completed receipt still binds the entire exact current staged tree and governing authority.
