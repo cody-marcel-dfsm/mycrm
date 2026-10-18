@@ -1,19 +1,19 @@
 import assert from "node:assert/strict";
 import {execFile, spawn} from "node:child_process";
-import {mkdir, mkdtemp, readFile, writeFile, rm, chmod, cp, readdir, realpath, rename} from "node:fs/promises";
+import {mkdir, mkdtemp, readFile, writeFile, rm, chmod, cp, readdir, realpath, rename, symlink} from "node:fs/promises";
 import os from "node:os";
 import path from "node:path";
 import {fileURLToPath} from "node:url";
 import {promisify} from "node:util";
 import test from "node:test";
-import {captureInputs, assertInputsMatch, withOracleRun, preparedEvidence} from "../scripts/oracle-inputs.mjs";
+import {captureInputs, assertInputsMatch, withOracleRun, preparedEvidence, observedSourceBindings, bindingHash, pathCustody, evidenceBinding} from "../scripts/oracle-inputs.mjs";
 import {receiptSha256, sha256} from "../scripts/oracle-review.mjs";
-import {seriesDigest} from "../scripts/oracle-series.mjs";
-import {readValidationProofs, inheritNativeEvidence} from "../scripts/oracle-validation.mjs";
+import {seriesDigest, reviewSnapshot} from "../scripts/oracle-series.mjs";
+import {readValidationProofs, inheritNativeEvidence, executableBinding, fileMetadata} from "../scripts/oracle-validation.mjs";
 
 const execute = promisify(execFile);
 const launcher = fileURLToPath(new URL("../scripts/oracle-review.mjs", import.meta.url));
-async function command(cwd, args, env = {}) { return execute(process.execPath, [launcher, ...args], {cwd, env: {...process.env, CODEX_THREAD_ID: "", CODEX_SELECTED_MODEL: "synthetic-test-model", ...env}}); }
+async function command(cwd, args, env = {}) { return execute(process.execPath, [launcher, ...args], {cwd, env: {...process.env, CODEX_THREAD_ID: "", CODEX_SELECTED_MODEL: "synthetic-test-model", CODEX_SELECTED_REASONING_EFFORT: "high", ...env}}); }
 async function fixture(t) {
   const root = await realpath(await mkdtemp(path.join(os.tmpdir(), "my-crm-oracle-test-")));
   t.after(() => rm(root, {recursive: true, force: true}));
@@ -34,6 +34,7 @@ const fs = require('node:fs');
 const path = require('node:path');
 const args=process.argv.slice(2);
 if(process.env.ORACLE_CAPTURE_ARGS) fs.writeFileSync(process.env.ORACLE_CAPTURE_ARGS,JSON.stringify(args));
+if(process.env.ORACLE_CAPTURE_ENV) fs.writeFileSync(process.env.ORACLE_CAPTURE_ENV,JSON.stringify({CODEX_SELECTED_MODEL:process.env.CODEX_SELECTED_MODEL,CODEX_SELECTED_REASONING_EFFORT:process.env.CODEX_SELECTED_REASONING_EFFORT}));
 if(args[args.indexOf('--sandbox')+1]!=='danger-full-access') throw new Error('Oracle must execute natively');
 if(!args.some(arg=>arg.startsWith('developer_instructions=') && arg.includes('independent My CRM project-local Oracle approver'))) throw new Error('Trusted reviewer role missing');
 const out=args[args.indexOf('--output-last-message')+1];
@@ -41,12 +42,22 @@ const proposal=!args.includes('--output-schema');
 if(!proposal && JSON.stringify(JSON.parse(fs.readFileSync(args[args.indexOf('--output-schema')+1]))).includes('"uniqueItems"')) throw new Error('Strict response format does not support uniqueItems');
 if(!proposal && process.env.ORACLE_READY) fs.writeFileSync(process.env.ORACLE_READY,'ready');
 if(!proposal && process.env.ORACLE_MUTATE) fs.writeFileSync(process.env.ORACLE_MUTATE,'changed during review');
+if(process.env.ORACLE_MUTATE_SETTINGS) fs.writeFileSync(process.env.ORACLE_MUTATE_SETTINGS,process.env.ORACLE_SETTINGS_CONTENT);
 const emit=()=>{
   const evidence=proposal?null:JSON.parse(fs.readFileSync(path.join(path.dirname(out),'evidence.json')));
-  const response={verdict:process.env.ORACLE_INCOMPLETE?null:'APPROVED',review_status:process.env.ORACLE_INCOMPLETE?'INCOMPLETE':'COMPLETE',api_version_assessment:{impact:'NONE',request_kind:'NOT_REQUIRED',requested_change:null,request_quote:null,request_evidence:null},summary:'Synthetic candidate assessed.',authentication_impact:false,owner_approval_status:'NOT_REQUIRED',warning:null,findings:[],unreviewed:process.env.ORACLE_INCOMPLETE?['synthetic remaining scope']:[],reused_coverage:[],reused_validations:[],validations:[],resolutions:[],synthesis:null,coverage:(evidence?.review_context.required_paths??[]).map(name=>({path:name,dependencies:[name],dependency_rationale:'Synthetic isolated dependency.',assessment:'Synthetic path assessed.'}))};
+  const response={verdict:process.env.ORACLE_INCOMPLETE?null:'APPROVED',review_status:process.env.ORACLE_INCOMPLETE?'INCOMPLETE':'COMPLETE',api_version_assessment:{impact:'NONE',request_kind:'NOT_REQUIRED',requested_change:null,request_quote:null,request_evidence:null},summary:'Synthetic candidate assessed.',authentication_impact:false,owner_approval_status:'NOT_REQUIRED',warning:null,findings:[],unreviewed:process.env.ORACLE_INCOMPLETE?['synthetic remaining scope']:[],reused_coverage:[],reused_validations:[],validations:[],resolutions:[],scope_dispositions:[],synthesis:null,coverage:(evidence?.review_context.required_paths??[]).map(name=>({path:name,dependencies:[name],dependency_rationale:'Synthetic isolated dependency.',assessment:'Synthetic path assessed.',criteria:['Synthetic acceptance criteria.'],evidence:['Synthetic source inspection.'],finding_ids:[]}))};
   const proof=evidence?.review_context.validation_proofs.find(item=>item.eligible);
   if(proof && !process.env.ORACLE_OMIT_VALIDATION) response.validations=[{id:'native-check',evidence:proof.evidence,command:JSON.stringify(proof.record.command),dependencies:evidence.staged_files,dependency_rationale:'Synthetic complete candidate closure.',assessment:'Native passing execution and output checked.'}];
-  fs.writeFileSync(out,proposal?'Synthetic proposal.\\nAPI_VERSION_ASSESSMENT={"impact":"NONE","request_kind":"NOT_REQUIRED","requested_change":null,"request_quote":null,"request_evidence":null}\\nAUTHENTICATION_IMPACT=NONE\\nOWNER_APPROVAL_STATUS=NOT_REQUIRED\\nORACLE_VERDICT=APPROVED\\n':process.env.ORACLE_MALFORMED?'{}':JSON.stringify(response));
+  if(!proposal && process.env.ORACLE_SOURCE_FINDING) { response.verdict='REJECTED'; response.findings=[{id:'SYNTHETIC-EXIT-1',severity:'medium',code:'SYNTHETIC_EXIT_FINDING',message:'Synthetic source finding.',path:'candidate.txt',reproduction:'Synthetic input.',required_behavior:'Synthetic required behavior.',affected_paths:['candidate.txt'],acceptance_checks:['Synthetic acceptance.'],origin:'initial',missed_finding_reason:null}]; }
+  if(!proposal && process.env.ORACLE_OBSERVED_PATH) { response.review_status='INCOMPLETE'; response.verdict=null; response.findings[0].path=process.env.ORACLE_OBSERVED_PATH; response.findings[0].affected_paths=[process.env.ORACLE_OBSERVED_PATH]; response.unreviewed=[process.env.ORACLE_OBSERVED_PATH]; }
+  if(!proposal && process.env.ORACLE_RESOLVE_OBSERVED) { const findings=[...evidence.review_context.prior_findings,...evidence.review_context.observed_assessments.flatMap(item=>item.findings)]; response.resolutions=[...new Set(findings.map(item=>item.id))].map(id=>({id,status:'RESOLVED',evidence:'Independently assessed synthetic current source and verified repair.'})); }
+  if(!proposal && process.env.ORACLE_DISPOSITION_SCOPE) response.scope_dispositions=evidence.review_context.unavailable_sources.map(item=>({path:item.path,disposition:'UNAVAILABLE',evidence:'Independent current scope disposition; no external source read or invented original facts.'}));
+  if(!proposal && process.env.ORACLE_RETARGET_MIDDLE) { fs.unlinkSync(process.env.ORACLE_RETARGET_MIDDLE); fs.symlinkSync(process.env.ORACLE_MIDDLE_TARGET,process.env.ORACLE_RETARGET_MIDDLE); }
+  if(!proposal && process.env.ORACLE_TAMPER_PROOF_OUTPUT && proof) fs.writeFileSync(proof.record.output_file,'changed nested output during review');
+  if(!proposal && process.env.ORACLE_CHMOD_PROOF_SOURCE) fs.chmodSync(path.join(process.cwd(),'candidate.txt'),0o755);
+  if(proposal || !process.env.ORACLE_NO_OUTPUT) fs.writeFileSync(out,proposal?'Synthetic proposal.\\nAPI_VERSION_ASSESSMENT={"impact":"NONE","request_kind":"NOT_REQUIRED","requested_change":null,"request_quote":null,"request_evidence":null}\\nAUTHENTICATION_IMPACT=NONE\\nOWNER_APPROVAL_STATUS=NOT_REQUIRED\\nORACLE_VERDICT=APPROVED\\n':process.env.ORACLE_MALFORMED?'{}':JSON.stringify(response));
+  if(!proposal && process.env.ORACLE_BREAK_DIAGNOSTICS) fs.mkdirSync(path.join(path.dirname(out),'reviewer.stdout.log'));
+  if(!proposal && process.env.ORACLE_EXIT_AFTER_OUTPUT) process.exit(9);
 };
 if(!proposal && process.env.ORACLE_DELAY) setTimeout(emit,Number(process.env.ORACLE_DELAY)); else emit();
 `);
@@ -80,8 +91,12 @@ test("spawned CLI transports complete review execution policy as trusted develop
     assert.equal(argv[0], "-c");
     assert.ok(argv[1].startsWith("developer_instructions="));
     const developer = JSON.parse(argv[1].slice("developer_instructions=".length));
-    for (const clause of ["initial assessment completes the full relevant scope", "actual source/control delta", "Mechanical guard invalidation", "new re-attestation of sealed unchanged facts", "FAILED or ERROR", "strict-ineligible native records", "current green aggregate", "outside the preverified subset", "Before any command", "concrete changed consumed dependency", "include that reason in the result", "stable IDs", "origin missed", "INCOMPLETE", "fresh independent whole-candidate verdict"]) assert.ok(developer.includes(clause), `${index}: missing trusted clause ${clause}`);
+    assert.ok(argv.includes('model_reasoning_effort="high"'), `${index}: selected reasoning effort was dropped`);
+    for (const clause of ["initial assessment completes the full relevant scope", "actual source/control delta", "Mechanical guard invalidation", "new re-attestation of sealed unchanged facts", "FAILED or ERROR", "strict-ineligible native records", "current green aggregate", "outside the preverified subset", "Before any command", "concrete changed consumed dependency", "include that reason in the result", "stable IDs", "origin missed", "INCOMPLETE", "fresh independent whole-candidate verdict", "Source work by every implementation and author continues", "every arrived change", "path_dispositions", "observed_assessments", "no eligible coverage"]) assert.ok(developer.includes(clause), `${index}: missing trusted clause ${clause}`);
     if (index !== "proposal") assert.ok(!argv.at(-1).includes("Read AGENTS.md, Vault/docs/CONSTITUTION.md, and .agents/skills/oracle/SKILL.md completely"));
+    const record = JSON.parse(await readFile(path.join(repo, '.git/oracle', index === 'proposal' ? 'proposal.json' : 'approval.json')));
+    assert.equal(record.reviewer.reasoning_effort, 'high');
+    assert.equal(record.reviewer_metadata_sha256, sha256(`${JSON.stringify(record.reviewer, null, 2)}\n`));
   }
 });
 
@@ -89,9 +104,9 @@ test("complete bindings reject base, tree, canonical authority, evidence, owner,
   const {repo} = await fixture(t);
   await writeFile(path.join(repo, "Vault/tmp/check.log"), "passed");
   await writeFile(path.join(repo, "Vault/docs/status.md"), "original status authority");
-  const options = {root: repo, base: "base-a", tree: "tree-a", complete: true, validationEvidence: ["@Vault/tmp/check.log"], ownerApprovalEvidence: "exact synthetic approval", proposal: {approved: true}};
+  const options = {root: repo, base: "base-a", tree: "tree-a", complete: true, validationEvidence: ["@Vault/tmp/check.log"], ownerApprovalEvidence: "exact synthetic approval", proposal: {approved: true}, reviewerSettings: {model: 'synthetic-model', reasoning_effort: 'high'}};
   const before = await captureInputs(options);
-  for (const change of [{base: "base-b"}, {tree: "tree-b"}, {ownerApprovalEvidence: "other approval"}, {proposal: {approved: false}}]) {
+  for (const change of [{base: "base-b"}, {tree: "tree-b"}, {ownerApprovalEvidence: "other approval"}, {proposal: {approved: false}}, {reviewerSettings: {model: 'other-model', reasoning_effort: 'high'}}, {reviewerSettings: {model: 'synthetic-model', reasoning_effort: 'low'}}]) {
     assert.throws(() => assertInputsMatch(before, {...before, ...Object.fromEntries(Object.entries(change).map(([key, value]) => [key, value]))}), /drifted/);
     await assert.rejects(async () => assertInputsMatch(before, await captureInputs({...options, ...change})), /drifted/);
   }
@@ -105,26 +120,205 @@ test("complete bindings reject base, tree, canonical authority, evidence, owner,
   await assert.rejects(async () => assertInputsMatch(before, await captureInputs(options)), /drifted/);
 });
 
+test("observed source binding rejects lexical and symlink escapes and binds current absence, content and mode", async (t) => {
+  const {repo, root} = await fixture(t);
+  for (const name of ["../outside.mjs", path.join(root, "outside.mjs"), "a/../helper.mjs", ".git/config", "helper\\escape.mjs"]) await assert.rejects(observedSourceBindings(repo, [name]), /safe project-local path/);
+  const absent = await observedSourceBindings(repo, ["ignored/helper.mjs"]);
+  assert.equal(absent[0].sha256, null);
+  await mkdir(path.join(repo, "ignored")); await writeFile(path.join(repo, "ignored/helper.mjs"), "first");
+  const present = await observedSourceBindings(repo, ["ignored/helper.mjs"]);
+  assert.notEqual(bindingHash(absent), bindingHash(present));
+  await writeFile(path.join(repo, "ignored/helper.mjs"), "changed");
+  assert.notEqual(bindingHash(present), bindingHash(await observedSourceBindings(repo, ["ignored/helper.mjs"])));
+  await writeFile(path.join(repo, "ignored/helper.mjs"), "first"); await chmod(path.join(repo, "ignored/helper.mjs"), 0o755);
+  assert.notEqual(bindingHash(present), bindingHash(await observedSourceBindings(repo, ["ignored/helper.mjs"])));
+  await symlink(root, path.join(repo, "escape"));
+  await assert.rejects(observedSourceBindings(repo, ["escape/outside.mjs"]), /symbolic link/);
+  await symlink(path.join(repo, "candidate.txt"), path.join(repo, "alias.mjs"));
+  await assert.rejects(observedSourceBindings(repo, ["alias.mjs"]), /symbolic link/);
+});
+
+test("transitive custody preserves safe aliases and binds middle links before any target content", async (t) => {
+  const {repo, root} = await fixture(t);
+  await mkdir(path.join(repo, "final")); await writeFile(path.join(repo, "final/result.log"), "unchanged final bytes");
+  await symlink("middle", path.join(repo, "outer")); await symlink("final", path.join(repo, "middle"));
+  const first = await evidenceBinding(repo, "@outer/result.log");
+  await symlink("final", path.join(repo, "other-middle"));
+  await rm(path.join(repo, "middle")); await symlink("other-middle", path.join(repo, "middle"));
+  const second = await evidenceBinding(repo, "@outer/result.log");
+  assert.equal(first.sha256, second.sha256); assert.notEqual(bindingHash(first.custody), bindingHash(second.custody));
+  assert.equal(second.custody.entries.filter((item) => item.type === "symlink").length, 3);
+  assert.throws(() => assertInputsMatch({evidence: first}, {evidence: second}), /drifted/);
+  const external = path.join(root, "external-bridge"); await symlink(path.join(repo, "final"), external);
+  await rm(path.join(repo, "middle")); await symlink(external, path.join(repo, "middle"));
+  await assert.rejects(evidenceBinding(repo, "@outer/result.log"), /crosses owning source scope/);
+  assert.equal((await observedSourceBindings(repo, ["outer/result.log"], {allowUnavailable: ["outer/result.log"]}))[0].availability, "UNAVAILABLE");
+  await assert.rejects(observedSourceBindings(repo, ["outer/result.log"]), /symbolic link/);
+  await rm(path.join(repo, "middle")); await symlink("outer", path.join(repo, "middle"));
+  await assert.rejects(pathCustody(repo, "outer/result.log"), /cycle/);
+  await rm(path.join(repo, "middle")); await symlink(`${repo}/other-middle/../../external-bridge`, path.join(repo, "middle"));
+  await assert.rejects(evidenceBinding(repo, "@outer/result.log"), /crosses owning source scope/);
+});
+
+test("transitive declared-authority custody binds safe middle movement and rejects returning external chains", async (t) => {
+  const {repo, root} = await fixture(t);
+  const external = await mkdtemp(path.join(os.tmpdir(), "my-crm-authority-external-")); t.after(() => rm(external, {recursive: true, force: true}));
+  const final = path.join(root, "authority-final"); await mkdir(path.join(final, "docs/architecture"), {recursive: true});
+  await writeFile(path.join(final, "docs/architecture/oracle-validation.md"), "same declared authority");
+  await symlink("authority-middle", path.join(root, "Vault")); await symlink("authority-final", path.join(root, "authority-middle"));
+  const declared = path.join(root, "Vault/docs/architecture/oracle-validation.md");
+  await writeFile(path.join(repo, "AGENTS.md"), `Synthetic declared coordination: ${declared}`);
+  const options = {root: repo, base: "synthetic-base", complete: true};
+  const before = await captureInputs(options);
+  await symlink("authority-final", path.join(root, "authority-other")); await rm(path.join(root, "authority-middle")); await symlink("authority-other", path.join(root, "authority-middle"));
+  const after = await captureInputs(options);
+  assert.equal(before.authorities.find((item) => item.path === declared).sha256, after.authorities.find((item) => item.path === declared).sha256);
+  assert.throws(() => assertInputsMatch(before, after), /drifted/);
+  const snapshot = (inputs) => reviewSnapshot({candidate: {tree: "synthetic-tree", base: "synthetic-base", files: []}, inputs, files: {}, environment: "synthetic-environment"});
+  assert.notEqual(bindingHash(snapshot(before).file_facts[declared]), bindingHash(snapshot(after).file_facts[declared]));
+  await symlink(final, path.join(external, "bridge")); await rm(path.join(root, "authority-middle")); await symlink(path.join(external, "bridge"), path.join(root, "authority-middle"));
+  await assert.rejects(captureInputs(options), /crosses owning source scope/);
+});
+
+test("native transitive witness custody rejects source crossings and middle movement at publication", async (t) => {
+  const {repo, root, env, prepare, git} = await fixture(t); await prepare();
+  const source = "Vault/tmp/dep/helper.mjs", directory = path.join(repo, "Vault/tmp");
+  await mkdir(path.join(directory, "dep")); await writeFile(path.join(repo, source), "same selected dependency");
+  const executed = await command(repo, ["validate", "--input", source, "--", process.execPath, "-e", "process.stdout.write('synthetic pass')"], env);
+  const evidence = executed.stdout.match(/ORACLE_VALIDATION_EVIDENCE=(.+)/)[1];
+  const original = JSON.parse(await readFile(evidence.slice(1), "utf8")); assert.equal(original.outcome, "PASSED");
+  await rename(path.join(directory, "dep"), path.join(directory, "final"));
+  await symlink("middle", path.join(directory, "dep")); await symlink("final", path.join(directory, "middle"));
+  await symlink("final", path.join(directory, "other-middle"));
+  const external = path.join(root, "external-bridge"); await symlink(path.join(directory, "final"), external);
+  const binding = await evidenceBinding(repo, evidence), nativeDirectory = path.join(repo, ".git/oracle");
+  const safe = await readValidationProofs({root: repo, directory: nativeDirectory, validation: [binding]});
+  assert.equal(safe[0].eligible, false);
+  await assert.rejects(command(repo, ["review", "--validation", evidence], {...env, ORACLE_RETARGET_MIDDLE: path.join(directory, "middle"), ORACLE_MIDDLE_TARGET: "other-middle"}), /provenance changed/);
+  await rm(path.join(directory, "middle")); await symlink("final", path.join(directory, "middle"));
+  await assert.rejects(command(repo, ["review", "--validation", evidence], {...env, ORACLE_RETARGET_MIDDLE: path.join(directory, "middle"), ORACLE_MIDDLE_TARGET: external}), /crosses owning source scope/);
+  await assert.rejects(readValidationProofs({root: repo, directory: nativeDirectory, validation: [binding]}), /crosses owning source scope/);
+  const history = JSON.parse(await readFile(path.join(repo, ".git/oracle/series", `${await git("rev-parse", "HEAD")}.json`), "utf8"));
+  for (const round of history.rounds) {
+    assert.equal(round.execution_status, "ERROR"); assert.equal(round.verdict, null);
+    assert.equal(round.coverage.length, 0); assert.equal(round.observed_assessment.response.verdict, "APPROVED");
+  }
+  assert.equal(JSON.parse(await readFile(evidence.slice(1), "utf8")).outcome, "PASSED");
+  await assert.rejects(readFile(path.join(repo, ".git/oracle/approval.json")), {code: "ENOENT"});
+  await rm(path.join(directory, "middle")); await symlink("final", path.join(directory, "middle"));
+  const outputDirectory = path.dirname(original.output_file), movedOutput = `${outputDirectory}-retained`;
+  await rename(outputDirectory, movedOutput);
+  const outputBridge = path.join(root, "output-external-bridge"); await symlink(movedOutput, outputBridge);
+  await symlink(outputBridge, outputDirectory);
+  await assert.rejects(readValidationProofs({root: repo, directory: nativeDirectory, validation: [binding], checkCurrentExecutable: false}), /crosses owning source scope/);
+});
+
+test("native raw outside-manifest finding requires current absence coverage and rejects late ignored source drift", async (t) => {
+  const {repo, env, git, prepare} = await fixture(t); await prepare();
+  await writeFile(path.join(repo, ".git/info/exclude"), "ignored-helper.mjs\n");
+  const helper = path.join(repo, "ignored-helper.mjs");
+  await writeFile(helper, "original unmanifested bytes");
+  await assert.rejects(command(repo, ["review"], {...env, ORACLE_SOURCE_FINDING: "1", ORACLE_OBSERVED_PATH: "ignored-helper.mjs", ORACLE_EXIT_AFTER_OUTPUT: "1"}), /exited with status 9/);
+  const seriesPath = path.join(repo, ".git/oracle/series", `${await git("rev-parse", "HEAD")}.json`);
+  const original = JSON.parse(await readFile(seriesPath, "utf8")).rounds[0];
+  assert.equal(Object.hasOwn(original.snapshot.files, "ignored-helper.mjs"), false);
+  assert.equal(original.coverage.length, 0); assert.equal(original.findings.length, 0);
+  assert.equal(original.observed_assessment.findings[0].id, "SYNTHETIC-EXIT-1");
+  await rm(helper);
+  await assert.rejects(command(repo, ["review"], {...env, ORACLE_RESOLVE_OBSERVED: "1", ORACLE_MUTATE: helper}), /inputs drifted/);
+  const error = JSON.parse(await readFile(seriesPath, "utf8")).rounds.at(-1);
+  assert.equal(error.execution_status, "ERROR"); assert.equal(error.verdict, null);
+  assert.equal(error.snapshot.files["ignored-helper.mjs"], null);
+  assert.ok(error.observed_assessment.coverage.some((item) => item.path === "ignored-helper.mjs"));
+  await rm(helper);
+  await command(repo, ["review"], {...env, ORACLE_RESOLVE_OBSERVED: "1"});
+  await command(repo, ["verify-index"], env);
+  const approved = JSON.parse(await readFile(path.join(repo, ".git/oracle/approval.json"), "utf8"));
+  assert.equal(approved.input_binding.observed_sources.find((item) => item.path === "ignored-helper.mjs").sha256, null);
+  await writeFile(helper, "new current source");
+  await assert.rejects(command(repo, ["verify-index"], env), /inputs drifted/);
+  await command(repo, ["review"], env);
+  await command(repo, ["verify-index"], env);
+  await writeFile(helper, "changed after independent approval");
+  await assert.rejects(command(repo, ["verify-index"], env), /inputs drifted/);
+});
+
+test("native unavailable claims permit explicit independent disposition without creating source coverage", async (t) => {
+  for (const claim of ["../outside.mjs", "/synthetic-external/helper.mjs", "ignored/link/helper.mjs"]) {
+    const {repo, root, env, git, prepare} = await fixture(t); await prepare();
+    if (claim.startsWith("ignored")) {
+      await writeFile(path.join(repo, ".git/info/exclude"), "ignored/\n"); await mkdir(path.join(repo, "ignored"));
+      await symlink(root, path.join(repo, "ignored/link"));
+    }
+    await assert.rejects(command(repo, ["review"], {...env, ORACLE_SOURCE_FINDING: "1", ORACLE_OBSERVED_PATH: claim, ORACLE_EXIT_AFTER_OUTPUT: "1"}), /exited with status 9/);
+    await assert.rejects(command(repo, ["review"], {...env, ORACLE_RESOLVE_OBSERVED: "1"}), /unavailable scope requires independent disposition/);
+    await command(repo, ["review"], {...env, ORACLE_RESOLVE_OBSERVED: "1", ORACLE_DISPOSITION_SCOPE: "1"});
+    await command(repo, ["verify-index"], env);
+    const receipt = JSON.parse(await readFile(path.join(repo, ".git/oracle/approval.json"), "utf8"));
+    const source = receipt.input_binding.observed_sources.find((item) => item.path === claim);
+    assert.equal(source.availability, "UNAVAILABLE"); assert.equal(Object.hasOwn(source, "sha256"), false);
+    assert.ok(!receipt.coverage.some((item) => item.path === claim));
+    assert.equal(receipt.scope_dispositions[0].path, claim);
+    const history = JSON.parse(await readFile(path.join(repo, ".git/oracle/series", `${await git("rev-parse", "HEAD")}.json`), "utf8"));
+    assert.equal(history.rounds[0].execution_status, "ERROR"); assert.equal(history.rounds[0].verdict, null);
+    assert.equal(history.rounds[0].findings.length, 0); assert.equal(history.rounds[0].observed_assessment.findings[0].id, "SYNTHETIC-EXIT-1");
+  }
+});
+
+test("native current source overrides historical context evidence and preserves overlapping source custody", async (t) => {
+  const {repo, root, env, git, prepare} = await fixture(t); await prepare();
+  const relative = "ignored/helper.mjs", helper = path.join(repo, relative), parent = path.dirname(helper);
+  await writeFile(path.join(repo, ".git/info/exclude"), "ignored/\n"); await mkdir(parent); await writeFile(helper, "current ignored source");
+  await assert.rejects(command(repo, ["review"], {...env, ORACLE_SOURCE_FINDING: "1", ORACLE_OBSERVED_PATH: relative, ORACLE_EXIT_AFTER_OUTPUT: "1"}), /exited with status 9/);
+  const historical = path.join(repo, ".git/oracle/historical-context.json");
+  await writeFile(historical, JSON.stringify({review_context: {required_paths: ["historical-only.mjs"], snapshot: {files: {[relative]: "stale source identity"}}}}));
+  await command(repo, ["review", "--validation", `@${helper}`, "--validation", `@${historical}`], {...env, ORACLE_RESOLVE_OBSERVED: "1"});
+  const receipt = JSON.parse(await readFile(path.join(repo, ".git/oracle/approval.json"), "utf8"));
+  const source = receipt.input_binding.observed_sources.find((item) => item.path === relative);
+  assert.equal(source.sha256, sha256(await readFile(helper))); assert.equal(source.availability, "BOUND");
+  assert.ok(source.ancestors.some((item) => item.path === "ignored"));
+  assert.ok(receipt.coverage.some((item) => item.path === relative)); assert.ok(!receipt.coverage.some((item) => item.path === "historical-only.mjs"));
+  await command(repo, ["verify-index"], env);
+  const originalMode = source.metadata.mode, parentMode = source.ancestors.find((item) => item.path === "ignored").metadata.mode;
+  await chmod(helper, originalMode ^ 0o100);
+  await assert.rejects(command(repo, ["verify-index"], env), /inputs drifted/);
+  await chmod(helper, originalMode); await chmod(parent, parentMode ^ 0o020);
+  await assert.rejects(command(repo, ["verify-index"], env), /inputs drifted/);
+  await chmod(parent, parentMode); await command(repo, ["verify-index"], env);
+  const seriesFile = path.join(repo, ".git/oracle/series", `${await git("rev-parse", "HEAD")}.json`);
+  const rounds = JSON.parse(await readFile(seriesFile, "utf8")).rounds.length;
+  await rename(parent, path.join(repo, "ignored-original")); await writeFile(path.join(repo, ".git/info/exclude"), "ignored\nignored-original/\n");
+  await symlink(root, parent);
+  await assert.rejects(command(repo, ["review", "--validation", `@${historical}`], env), /symbolic link/);
+  assert.equal(JSON.parse(await readFile(seriesFile, "utf8")).rounds.length, rounds);
+  const outcomes = await Promise.all((await readdir(path.join(repo, ".git/oracle/runs"))).map(async (name) => {
+    try { return JSON.parse(await readFile(path.join(repo, ".git/oracle/runs", name, "outcome.json"), "utf8")); } catch { return null; }
+  }));
+  assert.ok(outcomes.some((item) => item?.outcome === "ERROR" && item.reviewer_invoked === false && /symbolic link/.test(item.error?.message)));
+});
+
 test("declared external governing inputs bind proposal, review, execution and receipt custody without loading siblings", async (t) => {
   const {repo, root, env, prepare} = await fixture(t);
   const parentPolicy = path.join(root, "AGENTS.md");
   const family = path.join(root, "Vault/docs/architecture/bos-product-family.md");
+  const coordination = path.join(root, "Vault/docs/architecture/oracle-validation.md");
   const parentOracle = path.join(root, "tools/projects_oracle.py");
   await mkdir(path.dirname(family), {recursive: true}); await mkdir(path.dirname(parentOracle), {recursive: true});
   await writeFile(parentPolicy, "Synthetic inherited policy.");
   await writeFile(family, "Synthetic declared family authority.");
-  await writeFile(path.join(repo, "AGENTS.md"), `Synthetic local policy. Family: ${family}. Oracle: ${parentOracle}.`);
+  await writeFile(coordination, "Synthetic declared review coordination.");
+  await writeFile(path.join(repo, "AGENTS.md"), `Synthetic local policy. Family: ${family}. Coordination: ${coordination}. Oracle: ${parentOracle}.`);
   const options = {root: repo, base: "synthetic-base", complete: true};
   const initial = await captureInputs(options);
   const external = initial.authorities.filter((item) => item.external);
-  assert.deepEqual(external.map((item) => item.path), [parentPolicy, family, parentOracle]);
+  assert.deepEqual(external.map((item) => item.path), [parentPolicy, family, coordination, parentOracle]);
   assert.equal(external.find((item) => item.path === parentOracle).sha256, null);
   assert.deepEqual(initial.owner, null); assert.deepEqual(initial.validation, []);
   const proposalInputs = await captureInputs({...options, complete: false});
   assert.deepEqual(proposalInputs.authorities.filter((item) => item.external), external);
   await writeFile(parentOracle, "Synthetic declared parent tool; never executed.");
   await assert.rejects(async () => assertInputsMatch(initial, await captureInputs(options)), /drifted/);
-  for (const filename of [parentPolicy, family, parentOracle]) {
+  for (const filename of [parentPolicy, family, coordination, parentOracle]) {
     const original = await readFile(filename);
     const before = await captureInputs(options);
     await writeFile(filename, "Changed governing input.");
@@ -161,6 +355,104 @@ test("same checkout runs serialize while separate checkout runs proceed independ
   await withOracleRun(path.join(root, "state-b"), async () => {});
   release(); await first;
   await withOracleRun(directory, async () => {});
+});
+
+test("native movement preserves raw assessed paths as bound support and leaves source work free", async (t) => {
+  const {repo, env, prepare, git} = await fixture(t);
+  const authority = path.join(repo, "Vault/docs/status.md"); await writeFile(authority, "Synthetic original status.");
+  await prepare();
+  const base = await git("rev-parse", "HEAD"), seriesFile = path.join(repo, ".git/oracle/series", `${base}.json`);
+  await assert.rejects(command(repo, ["review"], {...env, ORACLE_MUTATE: authority}), /drifted/);
+  const failed = JSON.parse(await readFile(seriesFile, "utf8")), observed = failed.rounds.at(-1);
+  assert.equal(observed.execution_status, "ERROR"); assert.equal(observed.verdict, null); assert.equal(observed.coverage.length, 0);
+  assert.equal(observed.observed_assessment.response.review_status, "COMPLETE");
+  assert.ok(observed.observed_assessment.coverage.some((item) => item.path === "candidate.txt"));
+  assert.deepEqual(observed.snapshot.file_facts["candidate.txt"], {mode: "100644", type: "blob"});
+  await assert.rejects(readFile(path.join(repo, ".git/oracle/approval.json")), {code: "ENOENT"});
+  // Another implementation can arrive; review neither locks nor rejects its origin.
+  await writeFile(path.join(repo, "arrived.txt"), "Synthetic concurrent implementation."); await git("add", "arrived.txt");
+  await command(repo, ["review"], env); await command(repo, ["verify-index"], env);
+  const approved = JSON.parse(await readFile(path.join(repo, ".git/oracle/approval.json"), "utf8"));
+  assert.ok(approved.inherited_validation_evidence.includes(observed.observed_assessment.response_evidence.value));
+  const history = JSON.parse(await readFile(seriesFile, "utf8"));
+  assert.equal(history.rounds.at(-1).verdict, "APPROVED");
+  assert.ok(history.rounds.at(-1).coverage.some((item) => item.path === "arrived.txt"));
+  assert.equal(history.rounds[0].execution_status, "ERROR");
+});
+
+test("native candidate records staged mode/type facts independently of blob content", async (t) => {
+  const {repo, env, prepare, git} = await fixture(t); await prepare();
+  await command(repo, ["review"], env);
+  const base = await git("rev-parse", "HEAD"), before = await git("hash-object", "candidate.txt");
+  await chmod(path.join(repo, "candidate.txt"), 0o755); await git("add", "candidate.txt");
+  assert.equal(await git("hash-object", "candidate.txt"), before);
+  await assert.rejects(command(repo, ["verify-index"], env), /stale/);
+  await command(repo, ["review"], env); await command(repo, ["verify-index"], env);
+  const history = JSON.parse(await readFile(path.join(repo, ".git/oracle/series", `${base}.json`), "utf8"));
+  assert.equal(history.rounds[0].snapshot.file_facts["candidate.txt"].mode, "100644");
+  assert.equal(history.rounds[1].snapshot.file_facts["candidate.txt"].mode, "100755");
+  assert.deepEqual(history.rounds[1].changed_since_previous, ["candidate.txt"]);
+});
+
+test("unsuccessful reviewer completion retains valid output, original process and finding obligations", async (t) => {
+  for (const failure of ["ORACLE_EXIT_AFTER_OUTPUT", "ORACLE_BREAK_DIAGNOSTICS"]) {
+    const {repo, env, prepare, git} = await fixture(t); await prepare();
+    const base = await git("rev-parse", "HEAD"), seriesFile = path.join(repo, ".git/oracle/series", `${base}.json`);
+    await assert.rejects(command(repo, ["review"], {...env, ORACLE_SOURCE_FINDING: "1", [failure]: "1"}), /ORACLE_PROCESS=ERROR/);
+    const original = JSON.parse(await readFile(seriesFile, "utf8")).rounds.at(-1);
+    assert.equal(original.execution_status, "ERROR"); assert.equal(original.verdict, null); assert.equal(original.coverage.length, 0);
+    assert.equal(original.observed_assessment.response.verdict, "REJECTED");
+    assert.equal(original.observed_assessment.findings[0].id, "SYNTHETIC-EXIT-1");
+    assert.ok(original.observed_assessment.coverage.length > 0);
+    if (failure === "ORACLE_EXIT_AFTER_OUTPUT") assert.equal(original.observed_assessment.execution.exit_code, 9);
+    const responseFile = original.observed_assessment.response_evidence.value.slice(1);
+    assert.equal(sha256(await readFile(responseFile)), original.observed_assessment.response_evidence.sha256);
+    await assert.rejects(readFile(path.join(repo, ".git/oracle/approval.json")), {code: "ENOENT"});
+    await assert.rejects(command(repo, ["review"], env), /explicit resolution evidence/);
+    await command(repo, ["review"], {...env, ORACLE_RESOLVE_OBSERVED: "1"});
+    await command(repo, ["verify-index"], env);
+    const receipt = JSON.parse(await readFile(path.join(repo, ".git/oracle/approval.json"), "utf8"));
+    assert.ok(receipt.inherited_validation_evidence.includes(original.observed_assessment.response_evidence.value));
+    if (original.observed_assessment.execution_evidence) assert.ok(receipt.inherited_validation_evidence.includes(original.observed_assessment.execution_evidence.value));
+  }
+  for (const malformed of ["ORACLE_MALFORMED", "ORACLE_NO_OUTPUT"]) {
+    const {repo, env, prepare, git} = await fixture(t); await prepare();
+    await assert.rejects(command(repo, ["review"], {...env, ORACLE_EXIT_AFTER_OUTPUT: "1", [malformed]: "1"}), /exited with status 9/);
+    const round = JSON.parse(await readFile(path.join(repo, ".git/oracle/series", `${await git("rev-parse", "HEAD")}.json`), "utf8")).rounds.at(-1);
+    assert.equal(round.execution_status, "ERROR"); assert.equal(round.verdict, null); assert.equal(round.observed_assessment, undefined);
+    assert.equal(round.coverage.length, 0); assert.ok(round.error.observation_error);
+    await assert.rejects(readFile(path.join(repo, ".git/oracle/approval.json")), {code: "ENOENT"});
+  }
+});
+
+test("final publication rereads nested native output instead of trusting prepared proof descriptors", async (t) => {
+  const {repo, env, prepare, git} = await fixture(t); await prepare();
+  const sameEnvironment = {...env, ORACLE_TAMPER_PROOF_OUTPUT: "1", ORACLE_OMIT_VALIDATION: "1"};
+  const captured = await command(repo, ["validate", "--", process.execPath, "-e", "console.log('synthetic pass')"], sameEnvironment);
+  const reference = captured.stdout.match(/ORACLE_VALIDATION_EVIDENCE=(.+)/)[1].trim();
+  await assert.rejects(command(repo, ["review", "--validation", reference], sameEnvironment), /native validation output is missing or changed/);
+  const latest = JSON.parse(await readFile(path.join(repo, ".git/oracle/series", `${await git("rev-parse", "HEAD")}.json`), "utf8")).rounds.at(-1);
+  assert.equal(latest.execution_status, "ERROR"); assert.equal(latest.verdict, null);
+  assert.equal(latest.observed_assessment.response.verdict, "APPROVED");
+  assert.equal(latest.coverage.length, 0);
+  await assert.rejects(readFile(path.join(repo, ".git/oracle/approval.json")), {code: "ENOENT"});
+});
+
+test("final publication rechecks native executable and source modes beyond unchanged staged content", async (t) => {
+  for (const kind of ["executable", "source-mode"]) {
+    const {repo, root, env, prepare, git} = await fixture(t); await prepare();
+    const checker = path.join(root, "bin", "synthetic-check");
+    await writeFile(checker, "#!/bin/sh\nexit 0\n"); await chmod(checker, 0o700);
+    if (kind === "source-mode") await git("config", "core.filemode", "false");
+    const sameEnvironment = {...env, ORACLE_OMIT_VALIDATION: "1", ...(kind === "executable" ? {ORACLE_MUTATE: checker} : {ORACLE_CHMOD_PROOF_SOURCE: "1"})};
+    const captured = await command(repo, ["validate", "--", checker], sameEnvironment);
+    const reference = captured.stdout.match(/ORACLE_VALIDATION_EVIDENCE=(.+)/)[1].trim();
+    await assert.rejects(command(repo, ["review", "--validation", reference], sameEnvironment), /native validation source, executable, environment or provenance changed/);
+    assert.equal(await git("diff", "--name-only"), "");
+    const latest = JSON.parse(await readFile(path.join(repo, ".git/oracle/series", `${await git("rev-parse", "HEAD")}.json`), "utf8")).rounds.at(-1);
+    assert.equal(latest.execution_status, "ERROR"); assert.equal(latest.verdict, null); assert.ok(latest.observed_assessment);
+    await assert.rejects(readFile(path.join(repo, ".git/oracle/approval.json")), {code: "ENOENT"});
+  }
 });
 
 test("deterministic preparation reuses identical content and rejects corrupt cached payload", async (t) => {
@@ -619,4 +911,193 @@ test("focused native proof binds live executable/link facts and selected staged 
   assert.match((await readProof()).reason, /mode\/type/);
   assert.deepEqual(await readFile(filename), original);
   assert.equal(record.before.file_metadata["check.sh"].mode, 0o755);
+});
+
+test("literal link-parent components bind actual OS input and evidence targets and preserve missing lookup", async (t) => {
+  const {repo, env} = await fixture(t);
+  await mkdir(path.join(repo, 'real/deep'), {recursive: true});
+  await writeFile(path.join(repo, 'input.txt'), 'normalized target');
+  await writeFile(path.join(repo, 'real/input.txt'), 'actual OS target');
+  await symlink('real/deep', path.join(repo, 'alias'));
+  const name = 'alias/../input.txt', actual = await readFile(`${repo}/${name}`);
+  const custody = await pathCustody(repo, name);
+  assert.equal(custody.resolved_path, path.join(repo, 'real/input.txt'));
+  assert.equal(sha256(await readFile(custody.resolved_path)), sha256(actual));
+  assert.equal((await evidenceBinding(repo, `@${name}`)).sha256, sha256(actual));
+  assert.equal((await fileMetadata(repo, [name]))[name].custody.resolved_path, custody.resolved_path);
+  assert.ok(custody.entries.some(item => item.path === path.join(repo, 'alias') && item.target === 'real/deep'));
+  const missing = 'missing/../input.txt';
+  await assert.rejects(readFile(`${repo}/${missing}`), {code: 'ENOENT'});
+  const absent = await pathCustody(repo, missing, {allowMissing: true});
+  assert.equal(absent.metadata, null);
+  assert.equal(absent.resolved_path, `${repo}/${missing}`);
+  assert.equal((await fileMetadata(repo, [missing]))[missing].type, 'missing');
+  await assert.rejects(evidenceBinding(repo, `@${missing}`), /missing/);
+  const marker = path.join(repo, 'executed.txt');
+  for (const input of [missing, name]) await assert.rejects(command(repo, ['validate', '--input', input, '--', process.execPath, '-e', `require('node:fs').writeFileSync(${JSON.stringify(marker)},'executed')`], env), /missing|canonical project files/);
+  await assert.rejects(readFile(marker), {code: 'ENOENT'});
+  // Addition changes absence into actual OS lookup; no old missing proof survives.
+  await mkdir(path.join(repo, 'missing'));
+  assert.notEqual(bindingHash(absent), bindingHash(await pathCustody(repo, missing, {allowMissing: true})));
+});
+
+test("executable lookup binds declared cwd relative PATH and literal link-parent targets", async (t) => {
+  const {repo} = await fixture(t);
+  await mkdir(path.join(repo, 'tools/final'), {recursive: true});
+  const bytes = '#!/bin/sh\nprintf actual\n';
+  await writeFile(path.join(repo, 'tools/final/check'), bytes); await chmod(path.join(repo, 'tools/final/check'), 0o755);
+  await symlink('final', path.join(repo, 'tools/middle'));
+  await symlink('middle', path.join(repo, 'tools/outer'));
+  const environment = {...process.env, PATH: `tools/outer${path.delimiter}${process.env.PATH}`};
+  assert.equal((await execute('check', [], {cwd: repo, env: environment})).stdout, 'actual');
+  const before = await executableBinding('check', environment, repo);
+  assert.equal(before.path, path.join(repo, 'tools/final/check'));
+  await symlink('final', path.join(repo, 'tools/other'));
+  await rm(path.join(repo, 'tools/middle')); await symlink('other', path.join(repo, 'tools/middle'));
+  const after = await executableBinding('check', environment, repo);
+  assert.equal(before.sha256, after.sha256); assert.notEqual(bindingHash(before), bindingHash(after));
+  await mkdir(path.join(repo, 'real/deep'), {recursive: true});
+  await symlink('real/deep', path.join(repo, 'alias'));
+  await writeFile(path.join(repo, 'real/check'), bytes); await chmod(path.join(repo, 'real/check'), 0o755);
+  await writeFile(path.join(repo, 'check'), '#!/bin/sh\nprintf normalized\n'); await chmod(path.join(repo, 'check'), 0o755);
+  const literal = './alias/../check';
+  assert.equal((await execute(literal, [], {cwd: repo})).stdout, 'actual');
+  const target = await executableBinding(literal, process.env, repo);
+  assert.equal(target.path, path.join(repo, 'real/check'));
+  assert.equal(target.sha256, sha256(await readFile(`${repo}/${literal}`)));
+  await assert.rejects(executableBinding('./missing/../check', process.env, repo), /unavailable/);
+  await assert.rejects(execute('./missing/../check', [], {cwd: repo}), {code: 'ENOENT'});
+  await writeFile(path.join(repo, 'sh'), '#!/bin/sh\nprintf cwd-shadow\n'); await chmod(path.join(repo, 'sh'), 0o755);
+  const withoutPath = {...process.env}; delete withoutPath.PATH;
+  assert.equal((await execute('sh', ['-c', 'printf system-default'], {cwd: repo, env: withoutPath})).stdout, 'system-default');
+  assert.notEqual((await executableBinding('sh', withoutPath, repo)).path, path.join(repo, 'sh'));
+  const emptyPath = {...withoutPath, PATH: ''};
+  assert.equal((await execute('sh', [], {cwd: repo, env: emptyPath})).stdout, 'cwd-shadow');
+  assert.equal((await executableBinding('sh', emptyPath, repo)).path, path.join(repo, 'sh'));
+});
+
+test("native executable aliases bind resolved target index mode and original command cwd", async (t) => {
+  const {repo, env, git} = await fixture(t);
+  await mkdir(path.join(repo, 'tools'));
+  await writeFile(path.join(repo, 'tools/target'), '#!/bin/sh\nprintf executable-pass\n');
+  await chmod(path.join(repo, 'tools/target'), 0o755);
+  await symlink('target', path.join(repo, 'tools/alias'));
+  await git('add', 'tools');
+  const captured = await command(repo, ['validate', '--input', 'candidate.txt', '--', './tools/alias'], env);
+  const evidence = captured.stdout.match(/ORACLE_VALIDATION_EVIDENCE=(.+)/)[1];
+  const original = await readFile(evidence.slice(1)), record = JSON.parse(original);
+  assert.equal(record.outcome, 'PASSED'); assert.equal(record.execution_cwd, repo);
+  assert.equal(record.executable.target_index.path, 'tools/target');
+  assert.match(record.executable.target_index.entry, /^100755 /);
+  const readProof = async () => (await readValidationProofs({root: repo, directory: path.join(repo, '.git/oracle'), validation: [{kind: 'file', value: evidence, sha256: sha256(original)}]}))[0];
+  assert.equal((await readProof()).eligible, true);
+  // Record intake uses the same literal OS semantics as evidence capture.
+  await mkdir(path.join(repo, '.git/oracle/validations/deep'));
+  await symlink(path.join(repo, '.git/oracle/validations/deep'), path.join(repo, 'Vault/tmp/record-directory'));
+  const aliasReference = `@Vault/tmp/record-directory/../${path.basename(evidence.slice(1))}`;
+  const aliasEvidence = await evidenceBinding(repo, aliasReference);
+  const [aliasProof] = await readValidationProofs({root: repo, directory: path.join(repo, '.git/oracle'), validation: [aliasEvidence]});
+  assert.equal(aliasProof.eligible, true);
+  assert.equal(aliasProof.record.record_sha256, record.record_sha256);
+  await git('update-index', '--chmod=-x', 'tools/target');
+  assert.equal((await execute('./tools/alias', [], {cwd: repo})).stdout, 'executable-pass');
+  const current = await readProof();
+  assert.equal(current.eligible, false); assert.notDeepEqual(current.current_provenance.executable.target_index, record.executable.target_index);
+  assert.deepEqual(await readFile(evidence.slice(1)), original);
+  assert.equal(record.outcome, 'PASSED');
+});
+
+test("native relative PATH executes and rechecks the command's declared cwd and middle links", async (t) => {
+  const {repo, env} = await fixture(t);
+  await mkdir(path.join(repo, 'tools/final'), {recursive: true});
+  await writeFile(path.join(repo, 'tools/final/check'), '#!/bin/sh\nprintf relative-path-pass\n');
+  await chmod(path.join(repo, 'tools/final/check'), 0o755);
+  await symlink('final', path.join(repo, 'tools/middle')); await symlink('middle', path.join(repo, 'tools/outer'));
+  const executionEnv = {...env, PATH: `tools/outer${path.delimiter}${env.PATH}`};
+  const captured = await command(repo, ['validate', '--input', 'candidate.txt', '--', 'check'], executionEnv);
+  const evidence = captured.stdout.match(/ORACLE_VALIDATION_EVIDENCE=(.+)/)[1];
+  const original = await readFile(evidence.slice(1)), record = JSON.parse(original);
+  assert.equal(record.outcome, 'PASSED'); assert.equal(record.execution_cwd, repo);
+  assert.match(await readFile(record.output_file, 'utf8'), /relative-path-pass/);
+  const readProof = async () => (await readValidationProofs({root: repo, directory: path.join(repo, '.git/oracle'), validation: [{kind: 'file', value: evidence, sha256: sha256(original)}]}))[0];
+  // This caller's PATH has no helper. Intake truthfully reports unavailable;
+  // the original successful execution and its declared environment stay intact.
+  await assert.rejects(readProof(), /executable is unavailable/);
+  const initial = await executableBinding('check', executionEnv, record.execution_cwd);
+  assert.deepEqual(initial, record.executable);
+  await symlink('final', path.join(repo, 'tools/other'));
+  await rm(path.join(repo, 'tools/middle')); await symlink('other', path.join(repo, 'tools/middle'));
+  const changed = await executableBinding('check', executionEnv, record.execution_cwd);
+  assert.equal(changed.sha256, initial.sha256); assert.notDeepEqual(changed.custody, initial.custody);
+  assert.deepEqual(await readFile(evidence.slice(1)), original);
+});
+
+test("terminal separators preserve OS directory lookup and reject invalid selected files before execution", async (t) => {
+  const {repo, env} = await fixture(t);
+  await writeFile(path.join(repo, 'input.txt'), 'regular source');
+  for (const name of ['input.txt/', 'input.txt//']) {
+    await assert.rejects(readFile(`${repo}/${name}`), {code: 'ENOTDIR'});
+    await assert.rejects(pathCustody(repo, name), {code: 'ENOTDIR'});
+    await assert.rejects(evidenceBinding(repo, `@${name}`), {code: 'ENOTDIR'});
+    const marker = path.join(repo, 'invalid-selector-executed');
+    await assert.rejects(command(repo, ['validate', '--input', name, '--', process.execPath, '-e', `require('node:fs').writeFileSync(${JSON.stringify(marker)},'executed')`], env), /not a directory/);
+    await assert.rejects(readFile(marker), {code: 'ENOENT'});
+  }
+  for (const target of ['input.txt/', `${repo}/input.txt/`]) {
+    const alias = path.join(repo, 'bad-target'); await symlink(target, alias);
+    await assert.rejects(readFile(alias), {code: 'ENOTDIR'});
+    await assert.rejects(pathCustody(repo, 'bad-target'), {code: 'ENOTDIR'});
+    await rm(alias);
+  }
+  await mkdir(path.join(repo, 'directory')); await symlink('directory/', path.join(repo, 'safe-directory'));
+  assert.equal((await pathCustody(repo, 'directory/')).metadata.type, 'directory');
+  assert.equal((await pathCustody(repo, 'safe-directory')).resolved_path, path.join(repo, 'directory'));
+});
+
+test("native default effort round-trips actual launch environment into sessionless child selection", async (t) => {
+  const {repo, root, env, git} = await fixture(t);
+  const home = path.join(root, 'task-home'), childHome = path.join(root, 'child-home');
+  await mkdir(path.join(home, 'sessions'), {recursive: true}); await mkdir(childHome);
+  await writeFile(path.join(home, 'config.toml'), 'model_reasoning_effort = "high"\n');
+  await writeFile(path.join(childHome, 'config.toml'), 'model_reasoning_effort = "high"\n');
+  await writeFile(path.join(home, 'sessions/rollout-synthetic-task.jsonl'), JSON.stringify({type: 'turn_context', payload: {model: 'synthetic-test-model', effort: null}}) + '\n');
+  const capturedArgs = path.join(root, 'default-args.json'), capturedEnv = path.join(root, 'default-env.json');
+  const taskEnv = {...env, CODEX_HOME: home, CODEX_THREAD_ID: 'synthetic-task', CODEX_SELECTED_REASONING_EFFORT: 'low', ORACLE_CAPTURE_ARGS: capturedArgs, ORACLE_CAPTURE_ENV: capturedEnv};
+  const helper = fileURLToPath(new URL('../scripts/codex-child-model.mjs', import.meta.url));
+  for (const mode of ['proposal', 'review']) {
+    await command(repo, mode === 'proposal' ? ['proposal', 'Problem: synthetic settings. Cause: synthetic. Recommended change: preserve default.'] : ['review'], taskEnv);
+    const argv = JSON.parse(await readFile(capturedArgs)), inherited = JSON.parse(await readFile(capturedEnv));
+    assert.equal(argv.some(value => value.startsWith('model_reasoning_effort=')), false);
+    assert.equal(inherited.CODEX_SELECTED_REASONING_EFFORT, '');
+    const record = JSON.parse(await readFile(path.join(repo, '.git/oracle', mode === 'proposal' ? 'proposal.json' : 'approval.json')));
+    assert.equal(record.reviewer.reasoning_effort, null);
+    assert.equal(record.reviewer_metadata_sha256, sha256(`${JSON.stringify(record.reviewer, null, 2)}\n`));
+    const child = await execute(process.execPath, ['--input-type=module', '-e', `import {selectedSettings} from ${JSON.stringify(helper)}; console.log(JSON.stringify(await selectedSettings()));`], {cwd: repo, env: {...process.env, CODEX_HOME: childHome, CODEX_THREAD_ID: 'sessionless-child', ...inherited}});
+    assert.deepEqual(JSON.parse(child.stdout), {model: 'synthetic-test-model', reasoning_effort: null});
+    if (mode === 'proposal') { await writeFile(path.join(repo, 'candidate.txt'), 'after settings proposal\n'); await git('add', 'candidate.txt'); }
+  }
+});
+
+test("native settings movement rejects proposal and completed publication while retaining actual raw assessment", async (t) => {
+  for (const mode of ['proposal', 'review']) {
+    const {repo, root, env, git} = await fixture(t);
+    const home = path.join(root, 'settings-home'); await mkdir(path.join(home, 'sessions'), {recursive: true});
+    const session = path.join(home, 'sessions/rollout-settings-task.jsonl');
+    const turn = effort => JSON.stringify({type: 'turn_context', payload: {model: 'synthetic-test-model', effort}}) + '\n';
+    await writeFile(session, turn('high'));
+    const settingsEnv = {...env, CODEX_HOME: home, CODEX_THREAD_ID: 'settings-task'};
+    if (mode === 'review') {
+      await command(repo, ['proposal', 'Problem: synthetic settings movement. Cause: synthetic. Recommended change: bind current settings.'], settingsEnv);
+      await writeFile(path.join(repo, 'candidate.txt'), 'after settings proposal\n'); await git('add', 'candidate.txt');
+    }
+    const moved = {...settingsEnv, ORACLE_MUTATE_SETTINGS: session, ORACLE_SETTINGS_CONTENT: turn('low')};
+    await assert.rejects(command(repo, mode === 'proposal' ? ['proposal', 'Problem: synthetic movement. Cause: synthetic. Recommended change: bind settings.'] : ['review'], moved), /inputs drifted/);
+    await assert.rejects(readFile(path.join(repo, '.git/oracle', mode === 'proposal' ? 'proposal.json' : 'approval.json')), {code: 'ENOENT'});
+    if (mode === 'review') {
+      const series = JSON.parse(await readFile(path.join(repo, '.git/oracle/series', `${await git('rev-parse', 'HEAD')}.json`)));
+      const round = series.rounds.at(-1);
+      assert.equal(round.execution_status, 'ERROR'); assert.equal(round.verdict, null); assert.deepEqual(round.coverage, []);
+      assert.equal(round.observed_assessment.response.verdict, 'APPROVED');
+    }
+  }
 });

@@ -9,6 +9,11 @@ Governing constitution: `Vault/docs/CONSTITUTION.md`.
 Project-local Oracle command: `npm run oracle:review`.
 Project-local proposal command: `npm run oracle:proposal -- "<proposal>"`.
 
+Maintained family review-coordination design:
+`/Users/cody/Development/Projects/Vault/docs/architecture/oracle-validation.md`.
+This declared read-only governing document supplies review criteria and creates
+no sibling source, runtime, package or approval dependency.
+
 The Oracle is an independent approval process. Ordinary implementation,
 review, release, and shipping agents call the command; they never load, adopt,
 quote, or impersonate `.agents/skills/oracle/SKILL.md`. The command launches
@@ -165,6 +170,16 @@ access to `.git` or the ability to rewrite the gate itself.
 
 ## Oracle review continuity
 
+Source work by every author and implementation continues throughout review.
+Review imposes no source-file or code-line lock, checkout freeze or work pause.
+Include and validate all arrived changes in the complete current candidate.
+Use the maintained local design in `Vault/docs/oracle-review-continuity.md` and
+implementation map in `Vault/docs/tasks/oracle-review-coordination.md`.
+Actual prior-attempt delta and cumulative pending repair delta are distinct.
+Raw ERROR-attempt observations retain original candidate, reported status,
+criteria, dependencies, evidence and finding identities as supporting material;
+only fresh independent applicability assessment establishes current coverage.
+
 The launcher designates its isolated reviewer through trusted developer
 configuration. Ordinary agents keep invoking the command and never adopt the
 approver skill. The private `.git/oracle/series/` records preserve a review
@@ -219,7 +234,7 @@ Omitted attachment alone never requires repeating a passing check. Missing or
 altered originals produce concrete invalidations. Legacy logs, owner approval
 and API-version request evidence are never inferred from command history.
 Review inputs also bind inherited parent AGENTS policy and the exact parent
-family architecture and Oracle command declared above, including absent-file
+family architecture, review-coordination design and Oracle command declared above, including absent-file
 tombstones. Their allowlisted absolute paths may identify coverage dependencies;
 changed parent policy invalidates reuse globally, while other external changes
 invalidate their own coverage and actual dependents. This evidence binding
