@@ -1,7 +1,7 @@
 import {randomUUID} from "node:crypto";
-import {mkdir, readFile} from "node:fs/promises";
+import {readFile, realpath} from "node:fs/promises";
 import path from "node:path";
-import {atomicJson, bindingHash} from "./oracle-inputs.mjs";
+import {atomicJson, bindingHash, contentHash, observedSourceBindings, pathCustody, readMetadataFile} from "./oracle-inputs.mjs";
 import {legacyPolicy} from "./oracle-policy.mjs";
 
 // Private maintainer state. It carries evidence; approval still requires a fresh
@@ -17,12 +17,72 @@ export function verifySeries(record, base) {
       dependenciesOf(item, round.snapshot, item.path ?? null);
       if (item.input_sha256 !== (item.binding_kind === "declared-command-inputs-v1" ? commandWitness(round.snapshot, item.dependencies) : item.binding_kind === "execution-inputs-v2" ? executionWitness(round.snapshot, item.dependencies) : witness(round.snapshot, item.dependencies))) throw new Error("Oracle review-series dependency witness is malformed or changed");
     }
+    if (round.observed_assessment) {
+      const observed = round.observed_assessment;
+      if (!round.error || round.verdict !== null || round.review_status !== "INCOMPLETE" || !observed.response_evidence?.value ||
+          observed.response_sha256 !== bindingHash(observed.response) || !Array.isArray(observed.coverage) || !Array.isArray(observed.validations) || !Array.isArray(observed.findings)) throw new Error("Oracle raw assessment custody is malformed or changed");
+      for (const item of observed.coverage) {
+        dependenciesOf(item, round.snapshot, item.path);
+        if (item.input_sha256 !== witness(round.snapshot, item.dependencies)) throw new Error("Oracle raw assessment dependency witness changed");
+      }
+    }
   }
   return record;
 }
 
 function witness(snapshot, dependencies) {
-  return bindingHash({context: snapshot.context, files: Object.fromEntries(dependencies.map((name) => [name, snapshot.files[name] ?? null]))});
+  return bindingHash({context: snapshot.context, files: Object.fromEntries(dependencies.map((name) => [name, snapshot.files[name] ?? null])),
+    ...(snapshot.file_facts ? {file_facts: Object.fromEntries(dependencies.map((name) => [name, snapshot.file_facts[name] ?? null]))} : {})});
+}
+
+function samePathIdentity(before, after, name) {
+  return (before.files[name] ?? null) === (after.files[name] ?? null) && bindingHash(before.file_facts?.[name] ?? null) === bindingHash(after.file_facts?.[name] ?? null);
+}
+
+function changedDependencies(before, after, names) { return names.filter((name) => !samePathIdentity(before, after, name)); }
+
+export async function observationSourcePaths({directory, base, series = null, withBindingState = false}) {
+  if (!series) {
+    try { series = verifySeries(JSON.parse(await readMetadataFile(path.join(directory, "series", `${base}.json`), "utf8", {root: path.dirname(directory)})), base); }
+    catch (error) { if (error.code === "ENOENT") return withBindingState ? {paths: [], established: []} : []; throw error; }
+  }
+  const findings = new Map(), external = new Set(), known = new Set(), names = new Set();
+  for (const round of series.rounds) {
+    for (const name of round.snapshot.external_paths ?? []) external.add(name);
+    for (const name of Object.keys(round.snapshot.files)) known.add(name);
+    for (const name of round.snapshot.observed_source_paths ?? []) names.add(name);
+    for (const finding of [...round.observed_assessment?.findings ?? [], ...round.findings]) findings.set(finding.id, finding);
+    for (const resolution of round.response?.resolutions ?? []) if (resolution.status === "RESOLVED") findings.delete(resolution.id);
+  }
+  for (const finding of findings.values()) for (const name of [finding.path, ...finding.affected_paths]) if (name) names.add(name);
+  const previous = series.rounds.at(-1);
+  for (const name of previous?.unreviewed ?? previous?.response?.unreviewed ?? []) {
+    // Unfinished scope can also contain prose. Existing names and explicit file
+    // syntax participate in source closure; semantic labels remain unfinished.
+    if (known.has(name) || name.includes("/") || /\.[A-Za-z0-9_-]+$/.test(name)) names.add(name);
+  }
+  const paths = [...names].filter((name) => !external.has(name)).sort();
+  return withBindingState ? {paths, established: paths.filter((name) => known.has(name))} : paths;
+}
+
+export async function inheritObservedEvidence({directory, base, requestedEvidence = [], root = directory}) {
+  let series;
+  try { series = verifySeries(JSON.parse(await readMetadataFile(path.join(directory, "series", `${base}.json`), "utf8", {root: path.dirname(directory)})), base); }
+  catch (error) { if (error.code === "ENOENT") return {evidence: [], invalidated: []}; throw error; }
+  const runs = path.join(await realpath(directory), "runs"), present = new Set(requestedEvidence);
+  const evidence = [], invalidated = [];
+  for (const round of series.rounds) for (const [kind, original] of [["response", round.observed_assessment?.response_evidence], ["process", round.observed_assessment?.execution_evidence]]) {
+    if (!original) continue;
+    try {
+      const custody = await pathCustody(root, original.value.replace(/^@/, ""), {scopeRoot: runs, allowFinalLink: false});
+      const filename = custody.resolved_path;
+      if (!filename.startsWith(`${runs}${path.sep}`) || path.basename(filename) !== `${kind}.json` || contentHash(await readMetadataFile(filename, {}, {root: path.dirname(directory)})) !== original.sha256) throw new Error(`original raw ${kind} location or content changed`);
+      if (!present.has(original.value)) { evidence.push(original.value); present.add(original.value); }
+    } catch (error) {
+      invalidated.push({kind: "observed-assessment", id: `round-${round.round}`, evidence_kind: kind, reason: error.code === "ENOENT" ? `original raw ${kind} is missing` : error.message});
+    }
+  }
+  return {evidence, invalidated};
 }
 
 function executionContext(snapshot) { const {owner: _authorization, ...context} = snapshot.context; return context; }
@@ -61,6 +121,7 @@ export function retainedObservations(series, kind) {
     // Explicitly unfinished semantic path assessment supersedes earlier source
     // coverage. An ERROR or omitted observation alone never erases its origin.
     if (kind === "coverage" && round.response) for (const name of round.response.unreviewed ?? []) latest.delete(name);
+    if (kind === "coverage") for (const name of round.observed_assessment?.response.unreviewed ?? []) latest.delete(name);
   }
   return [...latest.values()];
 }
@@ -88,10 +149,13 @@ function dependenciesOf(item, snapshot, requiredPath = null) {
 
 function bindItem(item, snapshot, requiredPath = null) {
   const dependencies = dependenciesOf(item, snapshot, requiredPath);
+  if (requiredPath && (!Array.isArray(item.criteria) || !item.criteria.length || !Array.isArray(item.evidence) || !item.evidence.length ||
+      !Array.isArray(item.finding_ids) || [...item.criteria, ...item.evidence, ...item.finding_ids].some((value) => typeof value !== "string" || !value.trim()) ||
+      new Set(item.finding_ids).size !== item.finding_ids.length)) throw new Error("Oracle fresh coverage requires explicit criteria, result evidence and finding identities");
   return {...item, input_sha256: witness(snapshot, dependencies)};
 }
 
-export function reviewSnapshot({candidate, inputs, files, environment}) {
+export function reviewSnapshot({candidate, inputs, files, fileFacts = null, environment}) {
   const controllingPolicies = new Set(["AGENTS.md", "Vault/docs/CONSTITUTION.md", ".agents/skills/oracle/SKILL.md"]);
   // Exact receipt inputs retain every canonical authority. Reusable observations
   // bind global controlling policy here and their particular design/status
@@ -102,19 +166,35 @@ export function reviewSnapshot({candidate, inputs, files, environment}) {
   snapshot.external_paths = inputs.authorities.filter((item) => item.external).map((item) => item.path).sort();
   for (const name of candidate.files) snapshot.files[name] ??= null;
   for (const authority of inputs.authorities) snapshot.files[authority.path] = authority.sha256;
+  if (fileFacts) snapshot.file_facts = Object.fromEntries(Object.keys(snapshot.files).map((name) => [name, fileFacts[name] ?? null]));
+  for (const authority of inputs.authorities) if (authority.custody) {
+    snapshot.file_facts ??= {};
+    snapshot.file_facts[authority.path] = {...snapshot.file_facts[authority.path] ?? {}, custody: authority.custody};
+  }
   return snapshot;
 }
 
-export async function prepareSeries({directory, candidate, inputs, files, environment, validationProofs = [], proposalRecord = null, inheritedInvalidations = [], root = process.cwd()}) {
+export async function prepareSeries({directory, candidate, inputs, files, fileFacts = null, environment, validationProofs = [], proposalRecord = null, inheritedInvalidations = [], root = process.cwd()}) {
   const filename = path.join(directory, "series", `${candidate.base}.json`);
   let series;
-  try { series = verifySeries(JSON.parse(await readFile(filename, "utf8")), candidate.base); }
+  try { series = verifySeries(JSON.parse(await readMetadataFile(filename, "utf8", {root: path.dirname(directory)})), candidate.base); }
   catch (error) { if (error.code !== "ENOENT") throw error; }
   series ??= {schema: "my-crm.oracle-series/v1", series_id: randomUUID(), base_commit: candidate.base, rounds: []};
   const previous = series.rounds.at(-1) ?? null;
   // Proposal records may change during an in-scope repair. Preserve series
   // continuity and show scope changes explicitly for independent reassessment.
-  const snapshot = reviewSnapshot({candidate, inputs, files, environment});
+  const snapshot = reviewSnapshot({candidate, inputs, files, fileFacts, environment});
+  const {paths: observedPaths, established} = await observationSourcePaths({series, withBindingState: true});
+  const observedSources = inputs.observed_sources ?? await observedSourceBindings(root, observedPaths, {allowUnavailable: observedPaths.filter((name) => !established.includes(name))});
+  const unavailableSources = observedSources.filter((item) => item.availability === "UNAVAILABLE");
+  if (observedSources.length) {
+    snapshot.observed_source_paths = observedSources.map((item) => item.path);
+    for (const item of observedSources) if (item.availability !== "UNAVAILABLE" && !Object.hasOwn(snapshot.files, item.path)) {
+      snapshot.files[item.path] = item.sha256;
+      snapshot.file_facts ??= {};
+      snapshot.file_facts[item.path] = {metadata: item.metadata, ancestors: item.ancestors};
+    }
+  }
   const {context} = snapshot;
   let equivalence = null, comparablePrevious = previous?.snapshot.context;
   if (previous && context.reviewer_policy_sha256 && (!comparablePrevious.reviewer_policy_sha256 || comparablePrevious.reviewer_policy_version !== context.reviewer_policy_version)) {
@@ -136,9 +216,13 @@ export async function prepareSeries({directory, candidate, inputs, files, enviro
       if (origin.snapshot.external_paths?.includes(name) && !snapshot.external_paths.includes(name)) snapshot.external_paths.push(name);
     }
   }
-  const changed = previous ? [...new Set([...Object.keys(previous.snapshot.files), ...Object.keys(snapshot.files)])].filter((name) => (previous.snapshot.files[name] ?? null) !== (snapshot.files[name] ?? null)).sort() : [...candidate.files];
+  const changed = previous ? changedDependencies(previous.snapshot, snapshot, [...new Set([...Object.keys(previous.snapshot.files), ...Object.keys(snapshot.files)])]).sort() : [...candidate.files];
   for (const name of changed) snapshot.files[name] ??= null;
   const invalidated = [...inheritedInvalidations];
+  const unfinishedScope = previous?.unreviewed ?? previous?.response?.unreviewed ?? [];
+  for (const name of unfinishedScope) if (series.rounds.some((round) => round.observed_assessment?.response.unreviewed.includes(name))) {
+    invalidated.push({kind: "coverage", id: name, reason: "a retained raw attempt reported unfinished scope; fresh independent path and criterion assessment is required"});
+  }
   const sourceContexts = new Map(), recovered = [];
   const comparable = async (origin) => {
     if (sourceContexts.has(origin.round)) return sourceContexts.get(origin.round);
@@ -155,8 +239,11 @@ export async function prepareSeries({directory, candidate, inputs, files, enviro
     const original = await comparable(origin), sourceContext = {...original.context};
     const additiveOwner = sourceContext.owner == null && context.owner != null;
     if (additiveOwner) sourceContext.owner = context.owner;
-    const valid = bindingHash(sourceContext) === bindingHash(context) && item.dependencies.every((name) => (origin.snapshot.files[name] ?? null) === (snapshot.files[name] ?? null));
-    if (!valid) invalidated.push({kind: "coverage", id: item.path, reason: original.policyProof && !original.policyProof.sha256 ? "effective reviewer policy provenance is unavailable; coverage requires reassessment" : bindingHash(sourceContext) !== bindingHash(context) ? "authority, reviewer policy, replaced/removed owner evidence, configuration, or environment changed" : "a declared input or dependency changed"});
+    const changedInputs = changedDependencies(origin.snapshot, snapshot, item.dependencies);
+    const changedContext = [...new Set([...Object.keys(sourceContext), ...Object.keys(context)])].filter((name) => bindingHash(sourceContext[name] ?? null) !== bindingHash(context[name] ?? null));
+    const valid = !changedContext.length && !changedInputs.length;
+    if (!valid) invalidated.push({kind: "coverage", id: item.path, changed_dependencies: changedInputs, changed_context: changedContext,
+      reason: original.policyProof && !original.policyProof.sha256 ? "effective reviewer policy provenance is unavailable; coverage requires reassessment" : changedContext.length ? `review context changed: ${changedContext.join(", ")}` : `a declared input or dependency changed (content, mode or type): ${changedInputs.join(", ")}`});
     else {
       eligibleCoverage.push({...item, input_sha256: witness(snapshot, item.dependencies)});
       if (origin !== previous || additiveOwner) recovered.push({path: item.path, from_round: origin.round, original_tree: origin.snapshot.tree, additive_owner_evidence: additiveOwner, policy_provenance: original.policyProof});
@@ -201,15 +288,44 @@ export async function prepareSeries({directory, candidate, inputs, files, enviro
     initialAssessmentComplete = true;
   }
   const pendingChanged = [...new Set([...changed, ...(previous?.review_status === "INCOMPLETE" ? previous.pending_changed_paths ?? previous.changed_since_previous : [])])].sort();
+  const requiredPaths = [...new Set([...candidate.files, ...pendingChanged, ...observedPaths.filter((name) => !unavailableSources.some((item) => item.path === name)), ...unfinishedScope.filter((name) => Object.hasOwn(snapshot.files, name)), ...(!previous ? snapshot.external_paths.filter((name) => snapshot.files[name] !== null) : [])])].sort();
+  const observedAssessments = series.rounds.flatMap((round) => {
+    const observed = round.observed_assessment;
+    if (!observed) return [];
+    const evidence = inputs.validation.find((entry) => entry.kind === "file" && entry.value === observed.response_evidence.value && entry.sha256 === observed.response_evidence.sha256);
+    const executionEvidence = observed.execution_evidence;
+    const executionBound = executionEvidence && inputs.validation.some((entry) => entry.kind === "file" && entry.value === executionEvidence.value && entry.sha256 === executionEvidence.sha256);
+    return [{id: `round-${round.round}`, round: round.round, execution_status: "ERROR", source_verdict: null,
+      reported_review_status: observed.response.review_status, reported_verdict: observed.response.verdict,
+      observed_tree: round.snapshot.tree, observed_snapshot_sha256: bindingHash(round.snapshot), round_sha256: bindingHash(round),
+      changed_context: [...new Set([...Object.keys(round.snapshot.context), ...Object.keys(context)])].filter((name) => bindingHash(round.snapshot.context[name] ?? null) !== bindingHash(context[name] ?? null)),
+      proposal_criteria_changed: round.snapshot.proposal_sha256 !== snapshot.proposal_sha256,
+      response_evidence: observed.response_evidence, original_response_sha256: observed.response_sha256, custody_intact: Boolean(evidence && (!executionEvidence || executionBound)),
+      execution: observed.execution ?? null, execution_evidence: executionEvidence ?? null, execution_custody_intact: Boolean(executionBound),
+      coverage: observed.coverage.map((item) => ({...item, changed_dependencies: changedDependencies(round.snapshot, snapshot, item.dependencies)})),
+      findings: observed.findings, unreviewed: observed.response.unreviewed,
+      applicability: "Supporting observations only. Independently re-attest current path/dependency/criteria/evidence applicability; no automatic coverage, native witness or approval promotion."}];
+  });
+  const retainedCoverage = new Map(retainedObservations(series, "coverage").map(({item}) => [item.path, item]));
+  const pathDispositions = [...requiredPaths, ...unavailableSources.map((item) => item.path)].map((name) => {
+    const eligible = eligibleCoverage.find((item) => item.path === name), invalidation = invalidated.find((item) => item.kind === "coverage" && item.id === name);
+    const unavailable = unavailableSources.find((item) => item.path === name);
+    const disposition = unavailable ? "unavailable" : previous && changed.includes(name) ? previous.snapshot.files[name] == null && snapshot.files[name] != null ? "new" : "changed" : eligible ? "reusable" : retainedCoverage.has(name) ? "dependent" : "unreviewed";
+    return {path: name, disposition, current: unavailable ? {known: false, availability: "UNAVAILABLE", reason: unavailable.reason} : {known: Object.hasOwn(snapshot.files, name), content: snapshot.files[name] ?? null, facts: snapshot.file_facts?.[name] ?? null},
+      previous: previous ? {known: Object.hasOwn(previous.snapshot.files, name), content: previous.snapshot.files[name] ?? null, facts: previous.snapshot.file_facts?.[name] ?? null} : null,
+      reason: unavailable?.reason ?? invalidation?.reason ?? (disposition === "reusable" ? "Recorded content/dependencies/guards match; independently verify semantic and criterion applicability." : disposition === "new" || disposition === "changed" ? "Observed content, membership, mode or type changed since the prior attempted snapshot." : "No verified current path coverage; assess applicable scope and retained supporting observations."),
+      supporting_observations: observedAssessments.filter((item) => item.coverage.some((entry) => entry.path === name) || item.findings.some((entry) => entry.path === name || entry.affected_paths.includes(name)) || item.unreviewed.includes(name)).map((item) => item.id)};
+  });
   const history = new Map();
   for (const round of series.rounds) {
+    for (const finding of round.observed_assessment?.findings ?? []) history.set(finding.id, {...finding, last_status: "OBSERVED", last_round: round.round, resolution_evidence: null});
     for (const finding of round.findings) history.set(finding.id, {...finding, last_status: "OPEN", last_round: round.round, resolution_evidence: null});
     for (const resolution of round.response?.resolutions ?? []) {
       const finding = history.get(resolution.id);
       if (finding) history.set(resolution.id, {...finding, last_status: resolution.status, last_round: round.round, resolution_evidence: resolution.evidence});
     }
   }
-  return {filename, series, snapshot, proposalRecord, public: {
+  return {filename, metadataRoot: path.dirname(directory), series, snapshot, proposalRecord, public: {
     series_id: series.series_id, round: series.rounds.length + 1,
     mode: !previous ? "initial" : previous.review_status === "INCOMPLETE" ? "resume" : "followup",
     previous_candidate: previous?.snapshot.tree ?? null, previous_binding: previous ? bindingHash(previous.snapshot) : null,
@@ -217,6 +333,7 @@ export async function prepareSeries({directory, candidate, inputs, files, enviro
     changed_since_previous: changed, proposal_scope_changed: Boolean(previous && previous.snapshot.proposal_sha256 !== inputs.proposal_sha256),
     previous_proposal: previous?.proposal_record?.proposal ?? null, current_proposal: proposalRecord?.proposal ?? null,
     pending_changed_paths: pendingChanged, initial_assessment_complete: initialAssessmentComplete,
+    path_dispositions: pathDispositions, observed_assessments: observedAssessments, unavailable_sources: unavailableSources,
     last_complete_verdict: series.rounds.findLast((round) => round.review_status === "COMPLETE")?.verdict ?? null,
     latest_repair_plan: previous?.repair_plan ?? null,
     prior_findings: previous?.findings ?? [], eligible_coverage: eligibleCoverage, eligible_validations: eligibleValidation, invalidated,
@@ -225,14 +342,22 @@ export async function prepareSeries({directory, candidate, inputs, files, enviro
     reviewer_policy_equivalence: equivalence,
     recovered_coverage: recovered, owner_evidence_changed: Boolean(previous && bindingHash(previous.snapshot.context.owner) !== bindingHash(context.owner)), fresh_protected_authority_assessment_required: true,
     preverified_validations: preverifiedValidations,
-    unfinished_scope: previous?.unreviewed ?? previous?.response?.unreviewed ?? [],
+    unfinished_scope: unfinishedScope,
     unsuccessful_repair_rounds: repairRejections, synthesis_required: repairRejections >= 2,
-    required_paths: [...new Set([...candidate.files, ...pendingChanged, ...(!previous ? snapshot.external_paths.filter((name) => snapshot.files[name] !== null) : [])])].sort(),
+    required_paths: requiredPaths,
   }};
 }
 
 export function assessRound(context, response, validation) {
   const {public: current, snapshot} = context;
+  const priorFindings = [...current.prior_findings];
+  for (const observed of current.observed_assessments ?? []) for (const finding of observed.findings) {
+    const resolved = current.finding_history.find((item) => item.id === finding.id && item.last_status === "RESOLVED" && item.last_round > observed.round);
+    if (resolved) continue;
+    const known = priorFindings.find((item) => item.id === finding.id);
+    if (known && (known.code !== finding.code || known.path !== finding.path)) throw new Error("Oracle raw finding identity disagrees with retained finding history");
+    if (!known) priorFindings.push(finding);
+  }
   if (!["COMPLETE", "INCOMPLETE"].includes(response.review_status) ||
       (response.review_status === "INCOMPLETE" ? response.verdict !== null : !["APPROVED", "REJECTED"].includes(response.verdict))) throw new Error("Oracle review completion state and verdict disagree");
   if (response.review_status === "COMPLETE" && response.unreviewed.length) throw new Error("Oracle complete assessment has unreviewed scope");
@@ -245,6 +370,10 @@ export function assessRound(context, response, validation) {
   }
   const missing = current.required_paths.filter((name) => !coverage.some((item) => item.path === name));
   if (response.review_status === "COMPLETE" && missing.length) throw new Error(`Oracle complete assessment lacks coverage: ${missing.join(", ")}`);
+  const scopeDispositions = response.scope_dispositions ?? [];
+  if (!Array.isArray(scopeDispositions) || new Set(scopeDispositions.map((item) => item.path)).size !== scopeDispositions.length ||
+      scopeDispositions.some((item) => !current.unavailable_sources.some((source) => source.path === item.path) || item.disposition !== "UNAVAILABLE" || !item.evidence?.trim())) throw new Error("Oracle unavailable scope requires unique current paths and independent disposition evidence");
+  if (response.review_status === "COMPLETE") for (const item of current.unavailable_sources) if (!scopeDispositions.some((entry) => entry.path === item.path)) throw new Error(`Oracle unavailable scope requires independent disposition: ${item.path}`);
   const validations = response.validations.map((item) => {
     const evidence = validation.find((entry) => entry.kind === "file" && entry.value === item.evidence);
     if (!evidence) throw new Error(`Oracle validation reuse requires supplied hash-bound file evidence: ${item.evidence}`);
@@ -267,12 +396,14 @@ export function assessRound(context, response, validation) {
   if (new Set(validations.map((item) => item.id)).size !== validations.length) throw new Error("Oracle validation IDs must be unique");
   for (const observation of current.preverified_validations) if (!validations.some((item) => item.evidence === observation.evidence)) validations.push(observation);
   const findings = response.findings;
+  const knownFindingIds = new Set([...findings, ...priorFindings, ...current.finding_history].map((item) => item.id));
+  for (const item of response.coverage) if (item.finding_ids.some((id) => !knownFindingIds.has(id))) throw new Error("Oracle coverage references an unknown finding identity");
   if (new Set(findings.map((item) => item.id)).size !== findings.length) throw new Error("Oracle finding IDs must be unique");
   if (response.verdict === "APPROVED" && findings.length) throw new Error("Oracle approved assessment contains unresolved findings");
   if (response.verdict === "REJECTED" && !findings.length) throw new Error("Oracle source rejection requires consolidated source findings");
   const resolutions = response.resolutions;
-  if (new Set(resolutions.map((item) => item.id)).size !== resolutions.length || resolutions.some((item) => !current.prior_findings.some((finding) => finding.id === item.id))) throw new Error("Oracle finding resolutions are duplicated or unknown");
-  for (const prior of current.prior_findings) {
+  if (new Set(resolutions.map((item) => item.id)).size !== resolutions.length || resolutions.some((item) => !priorFindings.some((finding) => finding.id === item.id))) throw new Error("Oracle finding resolutions are duplicated or unknown");
+  for (const prior of priorFindings) {
     const resolution = resolutions.find((item) => item.id === prior.id);
     const finding = findings.find((item) => item.id === prior.id);
     if (response.review_status === "COMPLETE" && (!resolution || !resolution.evidence?.trim())) throw new Error(`Oracle prior finding requires explicit resolution evidence: ${prior.id}`);
@@ -289,7 +420,7 @@ export function assessRound(context, response, validation) {
   for (const finding of findings) {
     const historical = current.finding_history.find((item) => item.id === finding.id);
     if (historical && (historical.code !== finding.code || historical.path !== finding.path)) throw new Error(`Oracle stable historical finding ID changed identity: ${finding.id}`);
-    const existing = current.prior_findings.some((item) => item.id === finding.id);
+    const existing = priorFindings.some((item) => item.id === finding.id);
     if (!existing && current.initial_assessment_complete && finding.origin === "initial") throw new Error("Oracle follow-up finding must identify repair impact or a missed finding");
     if (finding.origin === "missed" && !finding.missed_finding_reason?.trim()) throw new Error("Oracle missed finding requires a first-pass coverage explanation");
     const affected = [...new Set([finding.path, ...finding.affected_paths].filter(Boolean))];
@@ -304,9 +435,9 @@ export function assessRound(context, response, validation) {
   return {coverage, validations, findings: [...findings, ...retained]};
 }
 
-export async function saveRound(context, response, assessed, {error = null} = {}) {
+export async function saveRound(context, response, assessed, {error = null, observed = null, beforePublish = null} = {}) {
   try {
-    const current = verifySeries(JSON.parse(await readFile(context.filename, "utf8")), context.series.base_commit);
+    const current = verifySeries(JSON.parse(await readMetadataFile(context.filename, "utf8", {root: context.metadataRoot})), context.series.base_commit);
     if (current.sha256 !== context.series.sha256) throw new Error("Oracle review-series history changed during review");
   } catch (failure) {
     if (failure.code !== "ENOENT" || context.series.sha256) throw failure;
@@ -329,24 +460,30 @@ export async function saveRound(context, response, assessed, {error = null} = {}
   const round = {
     round: context.public.round, mode: context.public.mode, snapshot: context.snapshot,
     review_status: response?.review_status ?? "INCOMPLETE", verdict: response?.verdict ?? null,
+    execution_status: error ? "ERROR" : response?.review_status ?? "INCOMPLETE",
     coverage: assessed?.coverage ?? context.public.eligible_coverage,
     validations: assessed?.validations ?? [...new Map([...context.public.eligible_validations, ...context.public.preverified_validations].map((item) => [item.id, item])).values()],
     findings: assessed?.findings ?? context.public.prior_findings,
     response, error, invalidated: context.public.invalidated, changed_since_previous: context.public.changed_since_previous,
-    unreviewed: response?.unreviewed ?? context.public.unfinished_scope,
+    unreviewed: response?.unreviewed ?? [...new Set([...context.public.unfinished_scope, ...observed?.response.unreviewed ?? []])],
     pending_changed_paths: context.public.pending_changed_paths,
     proposal_record: context.proposalRecord,
     reviewer_policy_equivalence: context.public.reviewer_policy_equivalence,
     repair_plan: repairPlan,
+    ...(observed ? {observed_assessment: {...observed.assessed, response: observed.response, response_sha256: bindingHash(observed.response), response_evidence: observed.response_evidence,
+      execution: observed.execution ?? null, execution_evidence: observed.execution_evidence ?? null}} : {}),
   };
   const series = {...context.series, rounds: [...context.series.rounds, round]};
   series.sha256 = seriesDigest(series);
-  await mkdir(path.dirname(context.filename), {recursive: true, mode: 0o700});
-  await atomicJson(context.filename, series);
+  await beforePublish?.(series);
+  await atomicJson(context.filename, series, {root: context.metadataRoot});
   return series;
 }
 
 export const reviewSeriesPolicy = [
+  "Owner review direction, 2026-10-17: Source work by every implementation and author continues during review and after INCOMPLETE or ERROR. Impose no source-file or code-line lock, checkout freeze or work pause. Include and validate every arrived change in the integrated current candidate. The private publication-state lock serializes reviewer records only. Inspect path_dispositions alongside changed_since_previous (actual prior attempted-snapshot delta) and pending_changed_paths (cumulative repair delta). Hash equality or an absent graph edge supplies no proof of semantic independence; investigate uncertain dependencies narrowly and explain expanded coverage. State each path's reviewed behavior, criteria, source/configuration dependencies, result evidence and finding identities.",
+  "observed_assessments retains raw schema-valid ERROR-attempt observations under their original tree, dependency witnesses, original response hash and actual execution status. Its reported verdict describes only the original raw response. Intact original response files are automatically rebound as supporting evidence; missing or changed custody is explicit. These records create no eligible coverage, passing aggregate, native witness or approval. Independently compare actual current source, consumed dependencies, criteria and evidence, then emit fresh re-attested coverage and stable findings where applicable. Account for every retained raw finding through explicit OPEN or RESOLVED resolution evidence; independent examination may establish, repair or dismiss an observed issue without promoting its original status. Preserve every original status and explain concrete changed-identity reasons. Finish with the independent decision for the entire exact current candidate.",
+  "Initially unknown unsafe or unbindable raw source claims retain stable IDs as UNAVAILABLE scope, with no external reads, source identity or coverage. Independently disposition every unavailable_sources entry in scope_dispositions with its exact path, disposition UNAVAILABLE and current scope evidence, and separately resolve each retained raw finding. Never invent original source presence or promote raw coverage. Previously bound source becoming unsafe remains an execution ERROR. Current prepared source bindings control assessment; historical context supplied as evidence supplies no replacement source manifest. A source also supplied as evidence retains full source mode and ancestor custody.",
   "Authoritative execution policy: The initial assessment completes the full relevant scope and consolidates all established actionable findings. Followup starts with the actual source/control delta, then affected dependencies, open findings and unfinished coverage. Mechanical guard invalidation requires independent applicability checks and new re-attestation of sealed unchanged facts; it does not by itself require rereading all source or authority or rerunning tests. Original passing-case support from FAILED or ERROR aggregates, strict-ineligible native records or historical logs can support independently verified unchanged behavior; retain every original status and scope and never promote native eligibility. Absence of a current green aggregate or being outside the preverified subset is never an execution reason. Before any command, name the concrete changed consumed dependency or new uncovered behavior being checked and include that reason in the result. Use compact context projections; consult full original records or source only for a specific unresolved fact. Fresh exact-candidate, owner, authentication and public-API request decisions remain independent and mandatory.",
   "The authority manifest automatically binds inherited parent AGENTS policy and the exact family architecture/Oracle command declared by local AGENTS. External authorities use their allowlisted absolute paths as dependency identities, including absent-file tombstones. Read applicable governing evidence without importing or executing sibling runtime source or adopting another approver skill. Parent policy controls reusable source coverage; new scoped execution facts bind declared command inputs independently of unselected reviewer provenance. Other external authorities invalidate their own coverage and declared dependents. Their presence supplies no owner/API request approval.",
   "Inspect review_context.prior_assessment before rereading unchanged owner/authentication/API authority bundles. Its origin seals, factual candidate/guard equality and stored classifications are historical navigation, with no approval or eligibility override. Verify current differences and make every fresh protected-impact, owner/API and whole-candidate decision independently; absent classifications remain absent.",
@@ -364,10 +501,11 @@ const text = {type: "string", minLength: 1};
 const strings = {type: "array", items: text};
 const dependencyFields = {dependencies: {...strings, minItems: 1}, dependency_rationale: text};
 export const reviewSeriesSchemaProperties = {
+  scope_dispositions: {type: "array", items: {type: "object", additionalProperties: false, required: ["path", "disposition", "evidence"], properties: {path: text, disposition: {type: "string", enum: ["UNAVAILABLE"]}, evidence: text}}},
   review_status: {type: "string", enum: ["COMPLETE", "INCOMPLETE"]},
   unreviewed: strings, reused_coverage: strings, reused_validations: strings,
   synthesis: {type: ["string", "null"]},
-  coverage: {type: "array", items: {type: "object", additionalProperties: false, required: ["path", "dependencies", "dependency_rationale", "assessment"], properties: {path: text, ...dependencyFields, assessment: text}}},
+  coverage: {type: "array", items: {type: "object", additionalProperties: false, required: ["path", "dependencies", "dependency_rationale", "assessment", "criteria", "evidence", "finding_ids"], properties: {path: text, ...dependencyFields, assessment: text, criteria: {...strings, minItems: 1}, evidence: {...strings, minItems: 1}, finding_ids: strings}}},
   validations: {type: "array", items: {type: "object", additionalProperties: false, required: ["id", "evidence", "command", "dependencies", "dependency_rationale", "assessment"], properties: {id: text, evidence: text, command: text, ...dependencyFields, assessment: text}}},
   resolutions: {type: "array", items: {type: "object", additionalProperties: false, required: ["id", "status", "evidence"], properties: {id: text, status: {type: "string", enum: ["OPEN", "RESOLVED"]}, evidence: text}}},
 };

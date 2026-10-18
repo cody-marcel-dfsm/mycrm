@@ -46,7 +46,7 @@ test("historical Git policy equivalence preserves unaffected coverage and fails 
   const files = Object.fromEntries(await Promise.all(names.map(async (name) => [`scripts/${name}`, await git("rev-parse", `${tree}:scripts/${name}`)])));
   const directory = path.join(root, ".git/oracle");
   const options = {root, directory, candidate: {base: "synthetic-base", tree, files: ["a.mjs", "b.mjs"]}, inputs: {authorities: [], tool_sha256: bindingHash(sources.map(contentHash)), tool_source_files: names, owner: null, validation: [], proposal_sha256: null}, files: {...files, "a.mjs": "a1", "b.mjs": "b1"}, environment: "synthetic-env"};
-  const coverage = (name, dependencies = [name]) => ({path: name, dependencies, dependency_rationale: "Complete synthetic source closure.", assessment: "Reviewed synthetic behavior."});
+  const coverage = (name, dependencies = [name]) => ({path: name, dependencies, dependency_rationale: "Complete synthetic source closure.", assessment: "Reviewed synthetic behavior.", criteria: ["Synthetic behavior."], evidence: ["Synthetic source inspection."], finding_ids: []});
   const response = {review_status: "COMPLETE", verdict: "APPROVED", coverage: [coverage("a.mjs", ["a.mjs", "scripts/oracle-review.mjs"]), coverage("b.mjs")], findings: [], resolutions: [], validations: [], reused_validations: [], reused_coverage: [], synthesis: null, unreviewed: []};
   const initial = await prepareSeries(options); await saveRound(initial, response, assessRound(initial, response, []));
   const fingerprint = policyFingerprint(sources[1], sources[2]);
@@ -104,7 +104,7 @@ test("extractor changes rederive original Git policy instead of trusting older o
   await git("init", "-q"); await git("add", "scripts"); const tree = await git("write-tree");
   const files = Object.fromEntries(await Promise.all(names.map(async (name) => [`scripts/${name}`, await git("rev-parse", `${tree}:scripts/${name}`)])));
   const options = {root, directory: path.join(root, ".git/oracle"), candidate: {base: "base", tree, files: ["b.mjs"]}, files: {...files, "b.mjs": "b1"}, inputs: {authorities: [], owner: null, validation: [], proposal_sha256: null, tool_sha256: bindingHash(sources.map(contentHash)), tool_source_files: names, reviewer_policy_sha256: "older-opaque-algorithm", reviewer_policy_version: "older-extractor"}, environment: "env"};
-  const response = {review_status: "COMPLETE", verdict: "APPROVED", coverage: [{path: "b.mjs", dependencies: ["b.mjs"], dependency_rationale: "Complete document closure.", assessment: "Read."}], findings: [], resolutions: [], validations: [], reused_validations: [], reused_coverage: [], synthesis: null, unreviewed: []};
+  const response = {review_status: "COMPLETE", verdict: "APPROVED", coverage: [{path: "b.mjs", dependencies: ["b.mjs"], dependency_rationale: "Complete document closure.", assessment: "Read.", criteria: ["Synthetic document criteria."], evidence: ["Synthetic source inspection."], finding_ids: []}], findings: [], resolutions: [], validations: [], reused_validations: [], reused_coverage: [], synthesis: null, unreviewed: []};
   const initial = await prepareSeries(options); await saveRound(initial, response, assessRound(initial, response, []));
   const current = {...options, inputs: {...options.inputs, reviewer_policy_sha256: policyFingerprint(sources[1], sources[2]), reviewer_policy_version: await policyVersion()}};
   const next = await prepareSeries(current);
@@ -157,7 +157,7 @@ test("indirect providers and launcher transformations change verified historical
   const files = Object.fromEntries(await Promise.all(names.map(async (name) => [`scripts/${name}`, await git("rev-parse", `${tree}:scripts/${name}`)])));
   const fingerprint = policyFingerprint(sources[1], sources[2]);
   const options = {root, directory: path.join(root, ".git/oracle"), candidate: {base: "base", tree, files: ["status.md"]}, files: {...files, "status.md": "same"}, inputs: {authorities: [], owner: null, validation: [], proposal_sha256: null, tool_sha256: bindingHash(sources.map(contentHash)), tool_source_files: names, reviewer_policy_sha256: fingerprint, reviewer_policy_version: await policyVersion()}, environment: "env"};
-  const response = {review_status: "COMPLETE", verdict: "APPROVED", coverage: [{path: "status.md", dependencies: ["status.md"], dependency_rationale: "Complete synthetic closure.", assessment: "Read."}], findings: [], resolutions: [], validations: [], reused_validations: [], reused_coverage: [], synthesis: null, unreviewed: []};
+  const response = {review_status: "COMPLETE", verdict: "APPROVED", coverage: [{path: "status.md", dependencies: ["status.md"], dependency_rationale: "Complete synthetic closure.", assessment: "Read.", criteria: ["Synthetic document criteria."], evidence: ["Synthetic source inspection."], finding_ids: []}], findings: [], resolutions: [], validations: [], reused_validations: [], reused_coverage: [], synthesis: null, unreviewed: []};
   const initial = await prepareSeries(options); await saveRound(initial, response, assessRound(initial, response, []));
   const variants = [
     `${sources[1]}\nfunction stringify(value) { value.stringify = () => "changed"; } stringify(JSON);`,
@@ -166,10 +166,11 @@ test("indirect providers and launcher transformations change verified historical
     `${sources[1]}\n((value) => { value.stringify = () => "changed"; })(JSON);`,
     `import * as runtime from "node:process"; runtime.env.CODEX_SELECTED_MODEL = "changed";\n${sources[1]}`,
     `import provider from "./synthetic-provider.mjs"; provider.install("changed");\n${sources[1]}`,
-    sources[1].replace('function execOracle(args, run) {', 'function execOracle(args, run) { args.push("-c", "developer_instructions=changed");'),
-    sources[1].replace('function execOracle(args, run) {', 'function execOracle(args, run) { args.splice(args.indexOf("--sandbox"), 2);'),
+    sources[1].replace(/function execOracle\(([^)]*)\) \{/, 'function execOracle($1) { args.push("-c", "developer_instructions=changed");'),
+    sources[1].replace(/function execOracle\(([^)]*)\) \{/, 'function execOracle($1) { args.splice(args.indexOf("--sandbox"), 2);'),
   ];
   for (const review of variants) {
+    assert.notEqual(review, sources[1], "Every synthetic policy mutation must actually alter the current launcher");
     let changed; try { changed = policyFingerprint(review, sources[2]); } catch { changed = null; }
     assert.notEqual(changed, fingerprint);
     await writeFile(path.join(root, "scripts/oracle-review.mjs"), review);

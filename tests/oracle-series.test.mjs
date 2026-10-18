@@ -1,13 +1,14 @@
 import assert from "node:assert/strict";
-import {mkdtemp, readFile, rm, writeFile} from "node:fs/promises";
+import {mkdir, mkdtemp, readFile, rm, writeFile, symlink} from "node:fs/promises";
 import os from "node:os";
 import path from "node:path";
 import test from "node:test";
-import {prepareSeries, reviewSnapshot, assessRound, saveRound, verifySeries} from "../scripts/oracle-series.mjs";
+import {prepareSeries, reviewSnapshot, assessRound, saveRound, verifySeries, inheritObservedEvidence} from "../scripts/oracle-series.mjs";
+import {contentHash} from "../scripts/oracle-inputs.mjs";
 
-const coverage = (name, dependencies = [name]) => ({path: name, dependencies, dependency_rationale: "Synthetic complete dependency closure.", assessment: "Synthetic behavior and failure paths checked."});
+const coverage = (name, dependencies = [name]) => ({path: name, dependencies, dependency_rationale: "Synthetic complete dependency closure.", assessment: "Synthetic behavior and failure paths checked.", criteria: ["Synthetic acceptance and failure criteria."], evidence: ["Synthetic source inspection."], finding_ids: []});
 const finding = (id = "F-1", extra = {}) => ({id, severity: "high", code: id, message: "Synthetic defect.", path: "a.mjs", reproduction: "Invoke the synthetic failing input.", required_behavior: "Return the expected synthetic output.", affected_paths: ["a.mjs"], acceptance_checks: ["Exercise the synthetic failure."], origin: "initial", missed_finding_reason: null, ...extra});
-const response = (extra = {}) => ({review_status: "COMPLETE", verdict: "APPROVED", coverage: [coverage("a.mjs"), coverage("b.mjs")], reused_coverage: [], validations: [], reused_validations: [], findings: [], resolutions: [], unreviewed: [], synthesis: null, ...extra});
+const response = (extra = {}) => ({review_status: "COMPLETE", verdict: "APPROVED", coverage: [coverage("a.mjs"), coverage("b.mjs")], reused_coverage: [], validations: [], reused_validations: [], findings: [], resolutions: [], unreviewed: [], scope_dispositions: [], synthesis: null, ...extra});
 
 async function fixture(t) {
   const directory = await mkdtemp(path.join(os.tmpdir(), "my-crm-review-series-"));
@@ -40,6 +41,138 @@ test("complete first scan consolidates findings and repair review carries only v
   assert.ok(next.public.finding_history.every((item) => item.last_status === "RESOLVED"));
   assert.throws(() => assessRound(repaired, {...approved, resolutions: []}, []), /resolution evidence/);
   assert.throws(() => assessRound(repaired, {...approved, coverage: [], reused_coverage: ["a.mjs", "b.mjs"]}, []), /reused coverage is invalid/);
+});
+
+test("raw moved-input assessments retain custody and findings without promoting coverage or approval", async (t) => {
+  const {prepare, options, inputs, record, directory} = await fixture(t);
+  const initial = await prepare(), raw = response({verdict: "REJECTED", findings: [finding()]});
+  const assessed = assessRound(initial, raw, inputs.validation);
+  const run = path.join(directory, "runs", "observed"); await mkdir(run, {recursive: true});
+  const filename = path.join(run, "response.json"), bytes = JSON.stringify(raw);
+  await writeFile(filename, bytes);
+  const reference = {value: `@${filename}`, sha256: contentHash(bytes)};
+  const saved = await saveRound(initial, null, null, {error: {message: "Inputs moved after assessment."}, observed: {response: raw, assessed, response_evidence: reference}});
+  const error = saved.rounds.at(-1);
+  assert.equal(error.execution_status, "ERROR"); assert.equal(error.review_status, "INCOMPLETE"); assert.equal(error.verdict, null);
+  assert.equal(error.coverage.length, 0); assert.equal(error.findings.length, 0);
+  assert.equal(error.observed_assessment.response.verdict, "REJECTED"); assert.equal(error.observed_assessment.findings[0].id, "F-1");
+  const inherited = await inheritObservedEvidence({directory, base: options.candidate.base});
+  assert.deepEqual(inherited.evidence, [reference.value]); assert.deepEqual(inherited.invalidated, []);
+  const nextInputs = {...inputs, validation: [...inputs.validation, {...reference, kind: "file"}]};
+  const nextOptions = {inputs: nextInputs, files: {...options.files, "a.mjs": "a2", "arrived.mjs": "third-party"}, candidate: {...options.candidate, tree: "tree-arrived", files: [...options.candidate.files, "arrived.mjs"]}};
+  const current = await prepare(nextOptions);
+  assert.equal(current.public.eligible_coverage.length, 0); assert.equal(current.public.observed_assessments[0].custody_intact, true);
+  assert.deepEqual(current.public.observed_assessments[0].coverage.find((item) => item.path === "b.mjs").changed_dependencies, []);
+  assert.deepEqual(current.public.observed_assessments[0].coverage.find((item) => item.path === "a.mjs").changed_dependencies, ["a.mjs"]);
+  assert.deepEqual(current.public.changed_since_previous, ["a.mjs", "arrived.mjs"]);
+  assert.deepEqual(current.public.pending_changed_paths, ["a.mjs", "arrived.mjs", "b.mjs"]);
+  assert.equal(current.public.path_dispositions.find((item) => item.path === "arrived.mjs").disposition, "new");
+  assert.equal(current.public.path_dispositions.find((item) => item.path === "b.mjs").disposition, "unreviewed");
+  const fresh = response({coverage: current.public.required_paths.map((name) => coverage(name)), resolutions: [{id: "F-1", status: "RESOLVED", evidence: "Independent current-source inspection verifies the original reported issue is repaired."}]});
+  assert.throws(() => assessRound(current, {...fresh, resolutions: []}, nextInputs.validation), /explicit resolution evidence/);
+  await record(current, fresh);
+  const later = await prepare(nextOptions);
+  assert.doesNotThrow(() => assessRound(later, response({coverage: [], reused_coverage: later.public.required_paths}), nextInputs.validation));
+  await writeFile(filename, "changed raw response");
+  const changed = await inheritObservedEvidence({directory, base: options.candidate.base});
+  assert.deepEqual(changed.evidence, []); assert.match(changed.invalidated[0].reason, /content changed/);
+  await rm(filename);
+  assert.match((await inheritObservedEvidence({directory, base: options.candidate.base})).invalidated[0].reason, /missing/);
+});
+
+test("candidate mode and type changes selectively invalidate consumers and classify membership movement", async (t) => {
+  const {prepare, options, record} = await fixture(t);
+  const fileFacts = Object.fromEntries(Object.keys(options.files).map((name) => [name, {mode: "100644", type: "blob"}]));
+  const original = {fileFacts};
+  await record(await prepare(original), response({coverage: [coverage("a.mjs"), coverage("b.mjs", ["b.mjs", "a.mjs"])]}));
+  const current = await prepare({fileFacts: {...fileFacts, "a.mjs": {mode: "100755", type: "blob"}}});
+  assert.deepEqual(current.public.changed_since_previous, ["a.mjs"]); assert.equal(current.public.eligible_coverage.length, 0);
+  assert.equal(current.public.path_dispositions.find((item) => item.path === "a.mjs").disposition, "changed");
+  assert.equal(current.public.path_dispositions.find((item) => item.path === "b.mjs").disposition, "dependent");
+  assert.ok(current.public.invalidated.every((item) => item.reason.includes("a.mjs")));
+  const typed = await prepare({fileFacts: {...fileFacts, "a.mjs": {mode: "120000", type: "blob"}}});
+  assert.deepEqual(typed.public.changed_since_previous, ["a.mjs"]);
+  const renamed = await prepare({fileFacts, candidate: {...options.candidate, files: ["b.mjs", "renamed.mjs"]}, files: {...options.files, "a.mjs": null, "renamed.mjs": "a1"}});
+  assert.deepEqual(renamed.public.changed_since_previous, ["a.mjs", "renamed.mjs"]);
+  assert.equal(renamed.public.path_dispositions.find((item) => item.path === "renamed.mjs").disposition, "new");
+});
+
+test("fresh coverage records criteria and result evidence and rejects unknown finding identities", async (t) => {
+  const {prepare} = await fixture(t), current = await prepare();
+  assert.throws(() => assessRound(current, response({coverage: [{...coverage("a.mjs"), criteria: []}, coverage("b.mjs")]}), []), /explicit criteria/);
+  assert.throws(() => assessRound(current, response({coverage: [{...coverage("a.mjs"), finding_ids: ["unknown"]}, coverage("b.mjs")]}), []), /unknown finding identity/);
+});
+
+test("raw unfinished scope survives movement and supersedes older path coverage until independent assessment", async (t) => {
+  const {prepare, record, options} = await fixture(t);
+  await record(await prepare(), response());
+  const attempted = await prepare();
+  const raw = response({review_status: "INCOMPLETE", verdict: null, coverage: [coverage("a.mjs")], unreviewed: ["b.mjs", "test.mjs", "final semantic interaction"]});
+  await saveRound(attempted, null, null, {error: {message: "Input movement."}, observed: {response: raw, assessed: assessRound(attempted, raw, []), response_evidence: {value: "@missing-response.json", sha256: "synthetic"}}});
+  const current = await prepare({files: {...options.files, "config.json": "changed-independent-config"}});
+  assert.deepEqual(current.public.unfinished_scope, raw.unreviewed);
+  assert.ok(!current.public.eligible_coverage.some((item) => item.path === "b.mjs"));
+  assert.ok(current.public.required_paths.includes("test.mjs"));
+  const repaired = response({coverage: current.public.required_paths.map((name) => coverage(name))});
+  await record(current, repaired);
+  assert.deepEqual((await prepare({files: {...options.files, "config.json": "changed-independent-config"}})).public.unfinished_scope, []);
+});
+
+test("raw finding-only and explicit file scope require fresh absence coverage outside original membership", async (t) => {
+  const {prepare, record, options} = await fixture(t);
+  for (const kind of ["prior-required", "dependency-only", "outside-finding", "outside-affected", "outside-unreviewed"]) {
+    const directory = path.join(options.directory, kind), root = path.join(directory, "source");
+    await mkdir(root, {recursive: true});
+    const name = kind === "prior-required" ? "a.mjs" : kind === "dependency-only" ? "test.mjs" : "ignored-helper.mjs";
+    const attempted = await prepare({directory, root});
+    const raw = response({review_status: "INCOMPLETE", verdict: null, coverage: [coverage("b.mjs")],
+      findings: kind === "outside-unreviewed" ? [] : [finding("OBS-ABSENT", {path: kind === "outside-affected" ? "a.mjs" : name, affected_paths: [name]})], unreviewed: kind === "outside-affected" ? [] : [name]});
+    await saveRound(attempted, null, null, {error: {message: "Synthetic movement before adoption."}, observed: {response: raw, assessed: assessRound(attempted, raw, []), response_evidence: {value: "@synthetic.json", sha256: "synthetic"}}});
+    const files = {...options.files}; delete files[name];
+    const next = {directory, root, files, candidate: {...options.candidate, tree: "renamed-tree", files: kind === "prior-required" ? ["b.mjs", "renamed.mjs"] : options.candidate.files}};
+    if (kind === "prior-required") files["renamed.mjs"] = "a1";
+    const current = await prepare(next);
+    assert.ok(current.public.required_paths.includes(name), kind);
+    assert.equal(current.snapshot.files[name], null);
+    assert.ok(!current.public.eligible_coverage.some((item) => item.path === name));
+    const disposition = current.public.path_dispositions.find((item) => item.path === name);
+    assert.deepEqual(disposition.supporting_observations, ["round-1"]);
+    assert.equal(disposition.previous.known, !kind.startsWith("outside"));
+    const resolutions = raw.findings.map(({id}) => ({id, status: "RESOLVED", evidence: "Independent current absence, rename and caller inspection resolves the observed issue."}));
+    const fresh = response({coverage: current.public.required_paths.map((item) => coverage(item)), resolutions});
+    assert.throws(() => assessRound(current, {...fresh, coverage: fresh.coverage.filter((item) => item.path !== name)}, []), /lacks coverage/);
+    if (resolutions.length) assert.throws(() => assessRound(current, {...fresh, resolutions: []}, []), /resolution evidence/);
+    await record(current, fresh);
+    const later = await prepare(next);
+    assert.equal(later.snapshot.files[name], null);
+    assert.doesNotThrow(() => assessRound(later, response({coverage: later.public.required_paths.map((item) => coverage(item))}), []));
+  }
+});
+
+test("unknown unsafe claims retain stable observations and require independent unavailable-scope disposition", async (t) => {
+  const {prepare, record, options} = await fixture(t);
+  const root = path.join(options.directory, "source"); await mkdir(root);
+  await symlink(options.directory, path.join(root, "escape"));
+  const claims = ["../outside.mjs", "/synthetic-external/helper.mjs", "escape/helper.mjs"];
+  const initial = await prepare({root});
+  const raw = response({review_status: "INCOMPLETE", verdict: null, findings: claims.map((name, index) => finding(`UNBOUND-${index}`, {path: name, affected_paths: [name]})), unreviewed: claims});
+  await saveRound(initial, null, null, {error: {message: "Synthetic reviewer execution failure."}, observed: {response: raw, assessed: assessRound(initial, raw, []), response_evidence: {value: "@synthetic.json", sha256: "synthetic"}}});
+  const current = await prepare({root});
+  assert.equal(current.public.unavailable_sources.length, 3);
+  for (const name of claims) {
+    assert.ok(!Object.hasOwn(current.snapshot.files, name));
+    assert.ok(!current.public.required_paths.includes(name));
+    assert.equal(current.public.path_dispositions.find((item) => item.path === name).current.availability, "UNAVAILABLE");
+  }
+  assert.equal(current.public.observed_assessments[0].findings.length, 3);
+  const resolutions = raw.findings.map(({id}) => ({id, status: "RESOLVED", evidence: "Independently confirmed initial claim has no authorized owner-local source scope; original source facts remain unavailable."}));
+  const fresh = response({coverage: current.public.required_paths.map((name) => coverage(name)), resolutions});
+  assert.throws(() => assessRound(current, fresh, []), /unavailable scope requires independent disposition/);
+  fresh.scope_dispositions = claims.map((name) => ({path: name, disposition: "UNAVAILABLE", evidence: "Independent current scope assessment confirms an unbindable claim without external reads or invented source coverage."}));
+  assert.throws(() => assessRound(current, {...fresh, resolutions: []}, []), /resolution evidence/);
+  assert.throws(() => assessRound(current, {...fresh, coverage: [...fresh.coverage, coverage(claims[0])]}, []), /complete dependency paths/);
+  await record(current, fresh);
+  assert.equal((await prepare({root})).public.finding_history.filter((item) => item.last_status === "RESOLVED").length, 3);
 });
 
 test("coverage and validation witnesses invalidate dependency, authority, tool, configuration and environment changes", async (t) => {
@@ -210,7 +343,7 @@ test("finding attribution distinguishes mechanical guards and approved requireme
     else await record(middle, response({review_status: "INCOMPLETE", verdict: null, coverage: kind === "fresh-identical-incomplete" ? structuredClone(original.coverage) : [], reused_coverage: kind === "fresh-identical-incomplete" ? [] : ["a.mjs", "b.mjs"], unreviewed: ["config.json"]}));
     const current = await prepare(updated);
     assert.equal(current.public.proposal_scope_changed, false);
-    const rejected = response({verdict: "REJECTED", findings: [finding(`F-${kind}`, {origin: "repair"})], synthesis: "The new approved requirement introduces this accepted invariant."});
+    const rejected = response({verdict: "REJECTED", coverage: current.public.required_paths.map((name) => coverage(name)), findings: [finding(`F-${kind}`, {origin: "repair"})], synthesis: "The new approved requirement introduces this accepted invariant."});
     if (kind === "fresh-identical-incomplete") assert.throws(() => assessRound(current, rejected, []), /missed-finding/);
     else assert.doesNotThrow(() => assessRound(current, rejected, []), kind);
   }
@@ -234,7 +367,7 @@ test("unfinished coverage preserves historical approved scope for finding attrib
     assert.ok(current.public.unfinished_scope.includes("a.mjs"));
     assert.ok(!current.public.eligible_coverage.some((item) => item.path === "a.mjs"));
     const introduced = finding(`F-${kind}`, {origin: "repair"});
-    const rejected = response({verdict: "REJECTED", findings: [introduced], synthesis: "Approved requirement B introduces the additional accepted invariant absent from requirement A."});
+    const rejected = response({verdict: "REJECTED", coverage: current.public.required_paths.map((name) => coverage(name)), findings: [introduced], synthesis: "Approved requirement B introduces the additional accepted invariant absent from requirement A."});
     if (kind === "new-requirement") {
       const persisted = await record(current, rejected);
       assert.equal(persisted.rounds.at(-1).findings[0].origin, "repair");

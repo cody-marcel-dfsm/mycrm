@@ -5,24 +5,24 @@ import {fileURLToPath} from "node:url";
 import path from "node:path";
 import process from "node:process";
 import {promisify} from "node:util";
-import {selectedModel} from "./codex-child-model.mjs";
-import {atomicJson, withOracleRun, captureInputs, assertInputsMatch, preparedEvidence, bindingHash} from "./oracle-inputs.mjs";
-import {prepareSeries, reviewSnapshot, assessRound, saveRound, verifySeries, reviewSeriesPolicy, reviewSeriesSchemaProperties, seriesFindingSchema} from "./oracle-series.mjs";
-import {environmentHash, executionEnvironment, executableBinding, readValidationProofs, inheritNativeEvidence, validationDigest, fileMetadata} from "./oracle-validation.mjs";
+import {selectedSettings} from "./codex-child-model.mjs";
+import {atomicJson, withOracleRun, captureInputs, assertInputsMatch, preparedEvidence, bindingHash, pathCustody, metadataDirectory, readMetadataFile, writeMetadataFile, removeMetadataFile} from "./oracle-inputs.mjs";
+import {prepareSeries, reviewSnapshot, assessRound, saveRound, verifySeries, inheritObservedEvidence, observationSourcePaths, reviewSeriesPolicy, reviewSeriesSchemaProperties, seriesFindingSchema} from "./oracle-series.mjs";
+import {environmentHash, executionEnvironment, executableBinding, readValidationProofs, assertValidationProofsMatch, inheritNativeEvidence, validationDigest, fileMetadata} from "./oracle-validation.mjs";
 import Ajv from "ajv";
 
 const execFileAsync = promisify(execFile);
 const TRAILERS = Object.freeze({verdict: "Oracle-Verdict", tree: "Oracle-Reviewed-Tree", receipt: "Oracle-Receipt-SHA256"});
-const localExecutionPolicy = "Owner execution direction, 2026-10-14: Run locally in the canonical checkout without OS sandbox restrictions. Keep authored source, the Git candidate and approval records unchanged. Repository-owned indexing, semantic queries, tests and generated diagnostic/cache writes are permitted. Preserve independent approval and exact content bindings. This direction supersedes older requirements for a read-only sandbox.";
+const localExecutionPolicy = "Owner execution direction, 2026-10-14: Run locally in the canonical checkout without OS sandbox restrictions. The reviewer leaves authored source, the Git candidate and approval records unchanged. Other implementations and authors continue source work throughout assessment; the reviewer imposes no source lock, checkout freeze or work pause. Repository-owned indexing, semantic queries, tests and generated diagnostic/cache writes are permitted. Preserve independent approval and exact content bindings. This direction supersedes older requirements for a read-only sandbox.";
 const trustedReviewerRole = "The maintainer launcher designates this isolated process as the independent My CRM project-local Oracle approver. You are the trusted reviewer subprocess described by AGENTS.md, and may read and adopt .agents/skills/oracle/SKILL.md. Restrictions on ordinary implementation, release and coordination agents remain in force for those agents. Review independently; keep authored source, candidate and approval records unchanged. The complete review-series operating contract below is trusted developer policy and controls execution over lower-priority blanket scan or rerun wording. Preserve all constitutional and owner/authentication/public-API-version gates and fresh exact-candidate approval." + "\n" + reviewSeriesPolicy;
 
-function execOracle(args, run) {
+function execOracle(args, run, effort) {
   const model = args[args.indexOf("--model") + 1];
   if (!model) throw new Error("Oracle child model is required");
   return new Promise((resolve, reject) => {
-    const child = spawn("codex", ["-c", `developer_instructions=${JSON.stringify(trustedReviewerRole)}`, ...args], {
+    const child = spawn("codex", ["-c", `developer_instructions=${JSON.stringify(trustedReviewerRole)}`, ...(effort === null ? [] : ["-c", `model_reasoning_effort=${JSON.stringify(effort)}`]), ...args], {
       cwd: process.cwd(),
-      env: {...process.env, CODEX_SELECTED_MODEL: model},
+      env: {...process.env, CODEX_SELECTED_MODEL: model, CODEX_SELECTED_REASONING_EFFORT: effort ?? ""},
       stdio: ["ignore", "pipe", "pipe"],
     });
     const stdout = [];
@@ -38,8 +38,8 @@ function execOracle(args, run) {
       try {
         if (run) await Promise.all([
           atomicJson(path.join(run, "process.json"), {exit_code: code, signal, interrupted}),
-          writeFile(path.join(run, "reviewer.stdout.log"), Buffer.concat(stdout), {mode: 0o600}),
-          writeFile(path.join(run, "reviewer.stderr.log"), Buffer.concat(stderr), {mode: 0o600}),
+          writeMetadataFile(path.join(run, "reviewer.stdout.log"), Buffer.concat(stdout), {mode: 0o600}),
+          writeMetadataFile(path.join(run, "reviewer.stderr.log"), Buffer.concat(stderr), {mode: 0o600}),
         ]);
       } catch (error) { return reject(error); }
       if (interrupted) return reject(new Error("Independent Oracle process was cancelled"));
@@ -52,15 +52,15 @@ function execOracle(args, run) {
   });
 }
 
-async function reviewerMetadata(model, schema = null) {
-  return {model, sandbox: "danger-full-access", ephemeral: true, ignore_user_config: true, role: "independent-project-oracle", role_instruction_sha256: sha256(trustedReviewerRole), response_schema_sha256: schema ? sha256(`${JSON.stringify(schema, null, 2)}\n`) : null, model_helper_sha256: sha256(await readFile(new URL("./codex-child-model.mjs", import.meta.url))), node_version: process.version};
+async function reviewerMetadata(settings, schema = null) {
+  return {...settings, sandbox: "danger-full-access", ephemeral: true, ignore_user_config: true, role: "independent-project-oracle", role_instruction_sha256: sha256(trustedReviewerRole), response_schema_sha256: schema ? sha256(`${JSON.stringify(schema, null, 2)}\n`) : null, model_helper_sha256: sha256(await readFile(new URL("./codex-child-model.mjs", import.meta.url))), node_version: process.version};
 }
 
-async function recordReviewer(run, model, schema = null) {
-  const reviewer = await reviewerMetadata(model, schema);
+async function recordReviewer(run, settings, schema = null) {
+  const reviewer = await reviewerMetadata(settings, schema);
   const filename = path.join(run, "reviewer.json");
   await atomicJson(filename, reviewer);
-  return {reviewer, reviewer_metadata_sha256: sha256(await readFile(filename))};
+  return {reviewer, reviewer_metadata_sha256: sha256(await readMetadataFile(filename))};
 }
 
 export function stableJson(value) {
@@ -195,24 +195,32 @@ async function assertExactStagedCandidate() {
 
 async function candidateFiles(candidate) {
   const entries = (await git(["ls-tree", "-rz", candidate.tree])).split("\0").filter(Boolean);
-  return Object.fromEntries(entries.map((entry) => [entry.slice(entry.indexOf("\t") + 1), entry.slice(0, entry.indexOf("\t")).split(" ").at(-1)]));
+  const parsed = entries.map((entry) => {
+    const [mode, type, object] = entry.slice(0, entry.indexOf("\t")).split(" ");
+    return {name: entry.slice(entry.indexOf("\t") + 1), mode, type, object};
+  });
+  return {files: Object.fromEntries(parsed.map(({name, object}) => [name, object])), fileFacts: Object.fromEntries(parsed.map(({name, mode, type}) => [name, {mode, type}]))};
 }
 
 async function oracleDirectory() {
   const gitDirectory = await git(["rev-parse", "--absolute-git-dir"]);
   const directory = path.resolve(process.cwd(), gitDirectory, "oracle");
-  await mkdir(directory, {recursive: true, mode: 0o700});
+  await metadataDirectory(gitDirectory, directory);
   return directory;
 }
 
 async function receiptPath() { return path.join(await oracleDirectory(), "approval.json"); }
-async function readReceipt() { return JSON.parse(await readFile(await receiptPath(), "utf8")); }
+async function readReceipt() {
+  const directory = await oracleDirectory();
+  return JSON.parse(await readMetadataFile(path.join(directory, "approval.json"), "utf8", {root: path.dirname(directory)}));
+}
 async function proposalPath() { return path.join(await oracleDirectory(), "proposal.json"); }
 async function readProposalRecord() {
-  const record = JSON.parse(await readFile(await proposalPath(), "utf8"));
+  const directory = await oracleDirectory();
+  const record = JSON.parse(await readMetadataFile(path.join(directory, "proposal.json"), "utf8", {root: path.dirname(directory)}));
   verifyProposalRecord(record, await git(["rev-parse", "HEAD"]));
   if (record.schema === "my-crm.oracle-proposal/v2") {
-    assertInputsMatch(record.input_binding, await captureInputs({root: process.cwd(), base: await git(["rev-parse", "HEAD"]), validationEvidence: record.validation_evidence, ownerApprovalEvidence: record.owner_approval_evidence}));
+    assertInputsMatch(record.input_binding, await captureInputs({root: process.cwd(), base: await git(["rev-parse", "HEAD"]), validationEvidence: record.validation_evidence, ownerApprovalEvidence: record.owner_approval_evidence, reviewerSettings: record.input_binding.reviewer_settings}));
   }
   return record;
 }
@@ -253,33 +261,37 @@ function reviewArguments(args) {
 }
 
 async function review(args = [], {run, phase}) {
-  const {validationEvidence, requestedValidationEvidence, inherited, ownerApprovalEvidence, proposalRecord, candidate, directory} = await phase("precheck_ms", async () => {
+  const {validationEvidence, requestedValidationEvidence, inherited, ownerApprovalEvidence, proposalRecord, candidate, directory, observedPaths, establishedObservedPaths} = await phase("precheck_ms", async () => {
     const {validationEvidence: requestedValidationEvidence, ownerApprovalEvidence} = reviewArguments(args);
     const proposalRecord = await readProposalRecord();
     const candidate = await assertExactStagedCandidate();
     const directory = await oracleDirectory();
-    const inherited = await inheritNativeEvidence({root: process.cwd(), directory, base: candidate.base, requestedEvidence: requestedValidationEvidence});
-    return {validationEvidence: [...requestedValidationEvidence, ...inherited.evidence], requestedValidationEvidence, inherited, ownerApprovalEvidence, proposalRecord, candidate, directory};
+    const native = await inheritNativeEvidence({root: process.cwd(), directory, base: candidate.base, requestedEvidence: requestedValidationEvidence});
+    const observed = await inheritObservedEvidence({directory, base: candidate.base, root: process.cwd(), requestedEvidence: [...requestedValidationEvidence, ...native.evidence]});
+    const inherited = {evidence: [...native.evidence, ...observed.evidence], invalidated: [...native.invalidated, ...observed.invalidated]};
+    const {paths: observedPaths, established: establishedObservedPaths} = await observationSourcePaths({directory, base: candidate.base, withBindingState: true});
+    return {validationEvidence: [...requestedValidationEvidence, ...inherited.evidence], requestedValidationEvidence, inherited, ownerApprovalEvidence, proposalRecord, candidate, directory, observedPaths, establishedObservedPaths};
   });
   const capture = async () => {
     const current = await assertExactStagedCandidate();
-    return captureInputs({root: process.cwd(), base: current.base, tree: current.tree, validationEvidence, ownerApprovalEvidence, proposal: await readProposalRecord(), complete: true});
+    const inputs = await captureInputs({root: process.cwd(), base: current.base, tree: current.tree, validationEvidence, ownerApprovalEvidence, proposal: await readProposalRecord(), complete: true, observedPaths, establishedObservedPaths});
+    return {...inputs, reviewer_settings: await selectedSettings()};
   };
   const inputs = await phase("snapshot_ms", capture);
-  const model = await phase("model_selection_ms", selectedModel);
-  const reviewerRecord = await recordReviewer(run, model, responseSchema);
+  const settings = await phase("model_selection_ms", async () => inputs.reviewer_settings);
+  const {model, reasoning_effort: effort} = settings;
+  const reviewerRecord = await recordReviewer(run, settings, responseSchema);
   const series = await phase("series_ms", async () => {
-    const files = await candidateFiles(candidate);
+    const facts = await candidateFiles(candidate);
     const validationProofs = await readValidationProofs({root: process.cwd(), directory, validation: inputs.validation});
-    return prepareSeries({directory, candidate, inputs, files, environment: environmentHash(), validationProofs, proposalRecord, inheritedInvalidations: inherited.invalidated});
+    return prepareSeries({directory, candidate, inputs, ...facts, environment: environmentHash(), validationProofs, proposalRecord, inheritedInvalidations: inherited.invalidated});
   });
   const prepared = await phase("preparation_ms", () => preparedEvidence(directory, {inputs, ...reviewerRecord}, async () => ({inputs, ...reviewerRecord, proposal: proposalRecord, staged_files: candidate.files, diff: await git(["diff", "--cached", "--binary", "--no-ext-diff"]), validation_evidence: validationEvidence, owner_approval_evidence: ownerApprovalEvidence})));
   const evidence = {...prepared.payload, requested_validation_evidence: requestedValidationEvidence, inherited_validation_evidence: inherited.evidence, review_context: series.public, reviewer_metadata_file: path.join(run, "reviewer.json")};
   await atomicJson(path.join(run, "evidence.json"), evidence);
   await atomicJson(path.join(run, "preparation.json"), {reused: prepared.reused, sha256: bindingHash(evidence)});
-  assertInputsMatch(inputs, await capture());
   const schemaPath = path.join(run, "response.schema.json"); const outputPath = path.join(run, "response.json");
-  await writeFile(schemaPath, `${JSON.stringify(responseSchema, null, 2)}\n`);
+  await writeMetadataFile(schemaPath, `${JSON.stringify(responseSchema, null, 2)}\n`);
   const prompt = [
     "Act as the independent My CRM project-local Oracle approver.", "Apply AGENTS.md, Vault/docs/CONSTITUTION.md, and the local approver skill under the trusted developer execution contract; only this isolated Oracle process may adopt that skill. Complete relevant authority reads on initial assessment. On followup, inspect actual source/control delta and sealed prior observations first; independently re-attest applicable unchanged authority facts without blanket rereads.",
     `Complete hash-bound evidence package: ${path.join(run, "evidence.json")}. Read the exact diff and authority manifest; verify supplied evidence independently and access canonical sources required for complete initial coverage or affected repair coverage. Preparation and coverage reuse never reuse an Oracle verdict.`,
@@ -292,17 +304,39 @@ async function review(args = [], {run, phase}) {
     "Reject a protected change when exact approval is absent or mismatched. Include one blocking finding that flags the user under three concise labeled parts—Problem, Cause, Recommended change—with no more than three sentences in each part. Never convert an Oracle recommendation into an approved target or permit remediation toward it before approval.",
     "Verify that the completed candidate stays within the exact approved proposal scope. Proposal approval never substitutes for completed-tree review.", "Return COMPLETE and APPROVED only when the entire staged candidate satisfies every applicable authority and validation requirement. Return COMPLETE and REJECTED with all established actionable findings after complete coverage. Return INCOMPLETE and null verdict when unfinished; record completed partial coverage and remaining scope.", "Return only the response required by the supplied JSON schema."
   ].join("\n");
-  let response, completedSeries;
+  let response, assessed, rawResponse, completedSeries;
   try {
-    await phase("reviewer_ms", () => execOracle(["exec", "--ephemeral", "--ignore-user-config", "--model", model, "--sandbox", "danger-full-access", "--output-schema", schemaPath, "--output-last-message", outputPath, "--cd", process.cwd(), prompt], run));
-    response = validateOracleResponse(JSON.parse(await readFile(outputPath, "utf8")), {requireApiAssessment: true});
+    assertInputsMatch(inputs, await capture());
+    await phase("reviewer_ms", () => execOracle(["exec", "--ephemeral", "--ignore-user-config", "--model", model, "--sandbox", "danger-full-access", "--output-schema", schemaPath, "--output-last-message", outputPath, "--cd", process.cwd(), prompt], run, effort));
+    rawResponse = await readMetadataFile(outputPath, "utf8");
+    response = validateOracleResponse(JSON.parse(rawResponse), {requireApiAssessment: true});
     await verifyApiVersionRequestEvidence(response, inputs.validation.filter((item) => requestedValidationEvidence.includes(item.value)));
     if (!new Ajv({strict: false}).validate(responseSchema, response)) throw new Error("Independent Oracle response does not satisfy its response schema");
-    const assessed = assessRound(series, response, inputs.validation);
+    assessed = assessRound(series, response, inputs.validation);
     await phase("postcheck_ms", async () => assertInputsMatch(inputs, await capture()));
-    completedSeries = await saveRound(series, response, assessed);
+    completedSeries = await saveRound(series, response, assessed, {beforePublish: async () => {
+      const currentProofs = await readValidationProofs({root: process.cwd(), directory, validation: inputs.validation});
+      assertValidationProofsMatch(series.public.validation_proofs, currentProofs);
+      assertInputsMatch(inputs, await capture());
+    }});
   } catch (error) {
-    await saveRound(series, null, null, {error: {name: error.name, message: error.message}});
+    let observationError = null, execution = null, executionEvidence = null;
+    if (!assessed) {
+      try {
+        rawResponse = await readMetadataFile(outputPath, "utf8");
+        response = validateOracleResponse(JSON.parse(rawResponse), {requireApiAssessment: true});
+        await verifyApiVersionRequestEvidence(response, inputs.validation.filter((item) => requestedValidationEvidence.includes(item.value)));
+        if (!new Ajv({strict: false}).validate(responseSchema, response)) throw new Error("Independent Oracle response does not satisfy its response schema");
+        assessed = assessRound(series, response, inputs.validation);
+      } catch (failure) { observationError = {name: failure.name, message: failure.message}; }
+    }
+    if (assessed) {
+      try {
+        const filename = path.join(run, "process.json"), bytes = await readMetadataFile(filename, "utf8");
+        execution = JSON.parse(bytes); executionEvidence = {value: `@${filename}`, sha256: sha256(bytes)};
+      } catch (failure) { observationError ??= {name: failure.name, message: `Original reviewer process custody is unavailable: ${failure.message}`}; }
+    }
+    await saveRound(series, null, null, {error: {name: error.name, message: error.message, observation_error: observationError}, observed: assessed ? {response, assessed, response_evidence: {value: `@${outputPath}`, sha256: sha256(rawResponse)}, execution, execution_evidence: executionEvidence} : null});
     throw error;
   }
   if (response.warning) process.stderr.write(`${response.warning}\n`);
@@ -313,7 +347,9 @@ async function review(args = [], {run, phase}) {
   if (response.review_status === "INCOMPLETE") { process.exitCode = 1; return response; }
   const receipt = {schema: "my-crm.oracle-approval/v2", ...reviewerRecord, input_binding: inputs, proposal_record_sha256: proposalRecord.record_sha256, repository: "my-crm", reviewed_tree: candidate.tree, base_commit: candidate.base, ...response, review_series_sha256: completedSeries.sha256, review_series_id: completedSeries.series_id, review_round: series.public.round, validation_evidence: validationEvidence, requested_validation_evidence: requestedValidationEvidence, inherited_validation_evidence: inherited.evidence, owner_approval_evidence: ownerApprovalEvidence};
   receipt.receipt_sha256 = receiptSha256(receipt);
-  await phase("publication_ms", async () => { assertInputsMatch(inputs, await capture()); await atomicJson(await receiptPath(), receipt); });
+  // The final exact-input check precedes series publication above. Live receipt
+  // verification independently rejects source movement after that observation.
+  await phase("publication_ms", async () => { await atomicJson(await receiptPath(), receipt); });
   process.stdout.write(`ORACLE_VERDICT=${receipt.verdict} tree=${receipt.reviewed_tree} receipt=${receipt.receipt_sha256}\n`);
   if (receipt.verdict !== "APPROVED") process.exitCode = 1;
   return receipt;
@@ -337,17 +373,22 @@ async function captureValidation(args, {run, phase}) {
   const capture = async () => {
     if (selected.length) {
       const root = await realpath(process.cwd());
-      const paths = [...new Set([...selected, "package.json", "package-lock.json"].map((name) => {
+      const paths = [...new Set(await Promise.all([...selected, "package.json", "package-lock.json"].map(async (name) => {
         const filename = path.resolve(root, name), relative = path.relative(root, filename);
         if (!relative || relative.startsWith(`..${path.sep}`) || path.isAbsolute(relative) || relative.split(path.sep).includes(".git")) throw new Error("Validation inputs must be exact files in the canonical project");
+        // Inspect the caller's actual OS spelling before any normalization.
+        // Selected sources have always required canonical project files.
+        const custody = await pathCustody(root, name, {allowMissing: true, excluded: [path.join(root, ".git")]});
+        if (custody.metadata === null && selected.includes(name)) throw new Error("A selected validation input is missing");
+        if (custody.resolved_path !== filename || name.split(path.sep).some((part) => part === "." || part === "..")) throw new Error("Validation inputs must be regular canonical project files");
         return relative;
-      }))].sort();
+      })))].sort();
       const files = {}, selected_index = {};
       for (const name of paths) {
         const filename = path.join(root, name);
         try {
-          const metadata = await lstat(filename);
-          if (!metadata.isFile() || metadata.isSymbolicLink() || await realpath(filename) !== filename) throw new Error("Validation inputs must be regular canonical project files");
+          const custody = await pathCustody(root, name, {excluded: [path.join(root, ".git")]});
+          if (custody.metadata?.type !== "regular" || custody.resolved_path !== filename) throw new Error("Validation inputs must be regular canonical project files");
           files[name] = await git(["hash-object", "--", name]);
         } catch (error) { if (error.code !== "ENOENT") throw error; files[name] = null; }
         selected_index[name] = await git(["ls-files", "--stage", "--", name]);
@@ -358,40 +399,42 @@ async function captureValidation(args, {run, phase}) {
       // Coverage identities use canonical authority digests for selected authorities.
       for (const authority of inputs.authorities) if (Object.hasOwn(files, authority.path)) files[authority.path] = authority.sha256;
       let proposal = null;
-      try { proposal = sha256(await readFile(await proposalPath())); } catch (error) { if (error.code !== "ENOENT") throw error; }
+      try { proposal = sha256(await readMetadataFile(await proposalPath())); } catch (error) { if (error.code !== "ENOENT") throw error; }
       reviewProvenance.push({base_commit: base, branch: await git(["branch", "--show-current"]), inputs, proposal_file_sha256: proposal});
       return {tree: null, scope: "declared-inputs-v2", files, context: {environment: environmentHash()}, selected_index, selected_paths: paths, file_metadata: await fileMetadata(root, paths)};
     }
     const candidate = await assertExactStagedCandidate();
     const inputs = await captureInputs({root: process.cwd(), base: candidate.base, tree: candidate.tree, ownerApprovalEvidence: options.ownerApprovalEvidence, complete: true});
-    const snapshot = reviewSnapshot({candidate, inputs, files: await candidateFiles(candidate), environment: environmentHash()});
+    const snapshot = reviewSnapshot({candidate, inputs, ...await candidateFiles(candidate), environment: environmentHash()});
     return {...snapshot, file_metadata: await fileMetadata(process.cwd(), Object.keys(snapshot.files))};
   };
   const before = await phase("snapshot_ms", capture);
-  const executable = await executableBinding(command[0]);
+  const executionCwd = await realpath(process.cwd());
+  const executable = await executableBinding(command[0], executionEnvironment(), executionCwd);
   let result, failure;
   const startedAt = new Date().toISOString();
   const controller = new AbortController();
   const cancel = () => controller.abort();
   process.once("SIGINT", cancel); process.once("SIGTERM", cancel);
-  try { result = await phase("validation_ms", () => execFileAsync(command[0], command.slice(1), {cwd: process.cwd(), env: executionEnvironment(), encoding: "utf8", maxBuffer: 64 * 1024 * 1024, signal: controller.signal})); }
+  try { result = await phase("validation_ms", () => execFileAsync(command[0], command.slice(1), {cwd: executionCwd, env: executionEnvironment(), encoding: "utf8", maxBuffer: 64 * 1024 * 1024, signal: controller.signal})); }
   catch (error) { failure = error; result = {stdout: error.stdout ?? "", stderr: error.stderr ?? ""}; }
   finally { process.removeListener("SIGINT", cancel); process.removeListener("SIGTERM", cancel); }
   const outputFile = path.join(run, "validation.output.log");
   const output = `${result.stdout}\n--- stderr ---\n${result.stderr}`;
-  await writeFile(outputFile, output, {mode: 0o600});
+  await writeMetadataFile(outputFile, output, {mode: 0o600});
   let after = null, afterExecutable = null, driftError = null;
-  try { after = await capture(); afterExecutable = await executableBinding(command[0]); } catch (error) { driftError = error.message; }
+  try { after = await capture(); afterExecutable = await executableBinding(command[0], executionEnvironment(), executionCwd); } catch (error) { driftError = error.message; }
   const unchanged = after && bindingHash(before) === bindingHash(after) && bindingHash(executable) === bindingHash(afterExecutable);
-  const record = {schema: "my-crm.oracle-validation/v1", provenance: "launcher-owned-command-execution", command,
+  const record = {schema: "my-crm.oracle-validation/v1", provenance: "launcher-owned-command-execution", command, execution_cwd: executionCwd,
     ...(selected.length ? {review_provenance: {before: reviewProvenance[0] ?? null, after: reviewProvenance[1] ?? null}} : {}),
     file_metadata_policy: "live-mode-and-type-v1",
     started_at: startedAt, finished_at: new Date().toISOString(), before, after, executable, after_executable: afterExecutable,
     outcome: failure ? "FAILED" : unchanged ? "PASSED" : "INPUT_DRIFT", exit_code: failure ? typeof failure.code === "number" ? failure.code : null : 0, signal: failure?.signal ?? null,
-    error: failure?.message ?? driftError, output_file: outputFile, output_sha256: sha256(output)};
+    error: failure?.message ?? driftError, output_file: outputFile, output_sha256: sha256(output),
+    output_custody: await pathCustody(process.cwd(), outputFile, {scopeRoot: path.join(await oracleDirectory(), "runs"), allowFinalLink: false})};
   record.record_sha256 = validationDigest(record);
   const directory = path.join(await oracleDirectory(), "validations");
-  await mkdir(directory, {recursive: true, mode: 0o700});
+  await metadataDirectory(path.dirname(await oracleDirectory()), directory);
   const filename = path.join(directory, `${record.record_sha256}.json`);
   await atomicJson(filename, record);
   process.stdout.write(`ORACLE_VALIDATION=${record.outcome}\nORACLE_VALIDATION_EVIDENCE=@${filename}\n`);
@@ -403,10 +446,13 @@ async function reviewProposal(request, args = [], {run, phase}) {
   const {validationEvidence, ownerApprovalEvidence} = await phase("precheck_ms", async () => {
     if (!request?.trim()) throw new Error("Oracle proposal review requires a proposal");
     const arguments_ = reviewArguments(args);
-    await rm(await proposalPath(), {force: true});
+    await removeMetadataFile(await proposalPath(), {force: true});
     return arguments_;
   });
-  const capture = async () => captureInputs({root: process.cwd(), base: await git(["rev-parse", "HEAD"]), validationEvidence, ownerApprovalEvidence});
+  const capture = async () => {
+    const inputs = await captureInputs({root: process.cwd(), base: await git(["rev-parse", "HEAD"]), validationEvidence, ownerApprovalEvidence});
+    return {...inputs, reviewer_settings: await selectedSettings()};
+  };
   const inputs = await phase("snapshot_ms", capture);
   const outputPath = path.join(run, "response.txt");
   await atomicJson(path.join(run, "inputs.json"), inputs);
@@ -425,11 +471,13 @@ async function reviewProposal(request, args = [], {run, phase}) {
     "Explain the decision under concise Problem, Cause, and Recommended change headings. End with exactly four machine-readable lines: API_VERSION_ASSESSMENT=<single-line JSON object matching the five fields above>; AUTHENTICATION_IMPACT=NONE or AUTHENTICATION_IMPACT=AUTHENTICATION; OWNER_APPROVAL_STATUS=NOT_REQUIRED, APPROVED, or MISSING; and ORACLE_VERDICT=APPROVED or ORACLE_VERDICT=REJECTED."
   ].join("\n");
   let response;
-  const model = await phase("model_selection_ms", selectedModel);
-  const reviewerRecord = await recordReviewer(run, model);
+  const settings = await phase("model_selection_ms", async () => inputs.reviewer_settings);
+  const {model, reasoning_effort: effort} = settings;
+  const reviewerRecord = await recordReviewer(run, settings);
   try {
-    await phase("reviewer_ms", () => execOracle(["exec", "--ephemeral", "--ignore-user-config", "--model", model, "--sandbox", "danger-full-access", "--output-last-message", outputPath, "--cd", process.cwd(), prompt], run));
-    const output = await readFile(outputPath, "utf8");
+    assertInputsMatch(inputs, await capture());
+    await phase("reviewer_ms", () => execOracle(["exec", "--ephemeral", "--ignore-user-config", "--model", model, "--sandbox", "danger-full-access", "--output-last-message", outputPath, "--cd", process.cwd(), prompt], run, effort));
+    const output = await readMetadataFile(outputPath, "utf8");
     const verdict = output.match(/(?:^|\n)ORACLE_VERDICT=(APPROVED|REJECTED)\s*$/)?.[1];
     const impact = output.match(/(?:^|\n)AUTHENTICATION_IMPACT=(NONE|AUTHENTICATION)\s*$/m)?.[1];
     const ownerStatus = output.match(/(?:^|\n)OWNER_APPROVAL_STATUS=(NOT_REQUIRED|APPROVED|MISSING)\s*$/m)?.[1];
@@ -470,18 +518,21 @@ async function verifyLiveReceipt(tree) {
   const receipt = verifyReceipt(await readReceipt(), tree);
   if (receipt.schema !== "my-crm.oracle-approval/v2" || !receipt.input_binding) throw new Error("Legacy Oracle receipt requires a fresh input-bound review; historical commit stamps remain valid");
   if (typeof receipt.reviewer?.model !== "string" || !receipt.reviewer.model.trim() || !["read-only", "danger-full-access"].includes(receipt.reviewer.sandbox) || receipt.reviewer.ephemeral !== true || receipt.reviewer.ignore_user_config !== true) throw new Error("Oracle reviewer provenance is invalid");
+  if (!Object.hasOwn(receipt.reviewer, "reasoning_effort") || receipt.reviewer.reasoning_effort !== null && (typeof receipt.reviewer.reasoning_effort !== "string" || !receipt.reviewer.reasoning_effort.trim())) throw new Error("Oracle reviewer reasoning effort provenance is invalid");
+  if (bindingHash(receipt.input_binding.reviewer_settings ?? null) !== bindingHash({model: receipt.reviewer.model, reasoning_effort: receipt.reviewer.reasoning_effort})) throw new Error("Oracle reviewer settings do not match the prepared input binding");
   if (receipt.review_status !== "COMPLETE" || receipt.reviewer.role !== "independent-project-oracle" || receipt.reviewer.role_instruction_sha256 !== sha256(trustedReviewerRole)) throw new Error("Live Oracle approval requires a complete assessment and trusted independent reviewer role");
   if (receipt.reviewer_metadata_sha256 !== sha256(`${JSON.stringify(receipt.reviewer, null, 2)}\n`) || receipt.reviewer.model_helper_sha256 !== sha256(await readFile(new URL("./codex-child-model.mjs", import.meta.url)))) throw new Error("Oracle reviewer metadata or helper provenance changed");
   const proposal = await readProposalRecord();
   if (receipt.proposal_record_sha256 !== proposal.record_sha256) throw new Error("Oracle approved proposal changed; fresh review is required");
   const current = await assertExactStagedCandidate();
   if (receipt.base_commit !== current.base || tree !== current.tree) throw new Error("Oracle receipt base or current staged tree changed; fresh review is required");
-  assertInputsMatch(receipt.input_binding, await captureInputs({root: process.cwd(), base: current.base, tree: current.tree, validationEvidence: receipt.validation_evidence, ownerApprovalEvidence: receipt.owner_approval_evidence, proposal, complete: true}));
+  assertInputsMatch(receipt.input_binding, await captureInputs({root: process.cwd(), base: current.base, tree: current.tree, validationEvidence: receipt.validation_evidence, ownerApprovalEvidence: receipt.owner_approval_evidence, proposal, complete: true, observedPaths: receipt.input_binding.observed_sources?.map((item) => item.path) ?? [], establishedObservedPaths: receipt.input_binding.observed_sources?.filter((item) => item.availability !== "UNAVAILABLE").map((item) => item.path) ?? [], reviewerSettings: receipt.input_binding.reviewer_settings}));
   // Receipt verification checks the original immutable evidence and output.
   // Hook/CLI ambient environment and current command resolution are irrelevant
   // to the provenance of an already reviewed exact-tree result.
   await readValidationProofs({root: process.cwd(), directory: await oracleDirectory(), validation: receipt.input_binding.validation, checkCurrentExecutable: false});
-  const series = verifySeries(JSON.parse(await readFile(path.join(await oracleDirectory(), "series", `${current.base}.json`), "utf8")), current.base);
+  const directory = await oracleDirectory();
+  const series = verifySeries(JSON.parse(await readMetadataFile(path.join(directory, "series", `${current.base}.json`), "utf8", {root: path.dirname(directory)})), current.base);
   if (series.sha256 !== receipt.review_series_sha256 || series.series_id !== receipt.review_series_id || series.rounds.at(-1)?.round !== receipt.review_round || series.rounds.at(-1)?.snapshot.tree !== tree || series.rounds.at(-1)?.review_status !== "COMPLETE" || series.rounds.at(-1)?.verdict !== "APPROVED") throw new Error("Oracle review-series evidence changed; fresh review is required");
   return receipt;
 }
@@ -526,7 +577,7 @@ async function main() {
     return withOracleRun(directory, (context) => command === "review" ? review(process.argv.slice(3), context) : reviewProposal(argument, process.argv.slice(4), context), {
       kind: command,
       // Every admitted review invalidates active completion before preparation.
-      onAdmitted: () => rm(path.join(directory, "approval.json"), {force: true}),
+      onAdmitted: () => removeMetadataFile(path.join(directory, "approval.json"), {force: true}),
     });
   }
   if (command === "validate") return withOracleRun(await oracleDirectory(), (context) => captureValidation(process.argv.slice(3), context), {kind: "validation"});

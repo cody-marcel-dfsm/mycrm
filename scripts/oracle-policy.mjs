@@ -139,17 +139,17 @@ function policyConstruction(source, names, promptCount = 0, externalNames = []) 
     for (const match of masked.matchAll(/(?:\b(?:const|let|var)\s+|(?:^|[;{}])\s*)([A-Za-z_$][\w$]*)\s*=(?!=|>)/g)) {
       const target = match[1]; if (guarded.has(target)) continue;
       let value; try { value = expression(source, match.index + match[0].length); } catch { continue; }
-      const visible = directArguments(value).replace(/\b(?:JSON\.(?:stringify|parse)|Object\.(?:keys|values|entries|fromEntries|hasOwn|freeze)|path\.(?:isAbsolute|join|relative|resolve|dirname|sep|delimiter)|process\.(?:version|platform|arch|execPath|exitCode)|selectedModel)\b/g, "");
+      const visible = directArguments(value).replace(/\b(?:JSON\.(?:stringify|parse)|Object\.(?:keys|values|entries|fromEntries|hasOwn|freeze)|path\.(?:isAbsolute|join|relative|resolve|dirname|basename|sep|delimiter)|process\.(?:version|platform|arch|execPath|exitCode)|selectedModel)\b/g, "");
       const root = [...guarded].find((name) => (providers.includes(name) || Object.hasOwn(aliasRoots, name)) && new RegExp(`(?<![.\\w$])${name}\\b(?!\\s*:)`).test(visible));
       if (root) { guarded.add(target); allowed.add(match.index + match[0].indexOf(target)); aliases[target] = value; aliasRoots[target] = aliasRoots[root] ?? root; expanded = true; }
     }
   }
-  const readMethods = new Set(["JSON.stringify", "JSON.parse", "Object.keys", "Object.values", "Object.entries", "Object.fromEntries", "Object.hasOwn", "Object.freeze", "process.cwd", "process.once", "process.removeListener", "process.stdout.write", "process.stderr.write", "process.argv.slice", "path.isAbsolute", "path.join", "path.relative", "path.resolve", "path.dirname"]);
+  const readMethods = new Set(["JSON.stringify", "JSON.parse", "Object.keys", "Object.values", "Object.entries", "Object.fromEntries", "Object.hasOwn", "Object.freeze", "process.cwd", "process.once", "process.removeListener", "process.stdout.write", "process.stderr.write", "process.argv.slice", "path.isAbsolute", "path.join", "path.relative", "path.resolve", "path.dirname", "path.basename"]);
   const calls = [...masked.matchAll(/\b(Object\.(?:assign|defineProperty|defineProperties)|Reflect\.(?:set|deleteProperty)|[A-Za-z_$][\w$]*)\s*\(/g)].map((call) => {
     const body = expression(source, call.index + call[0].length, ")");
     const receiver = masked.slice(0, call.index).match(/([A-Za-z_$][\w$]*(?:\.[A-Za-z_$][\w$]*)*)\.$/)?.[1];
     const canonicalCall = receiver ? `${aliasRoots[receiver] ?? receiver}.${call[1]}` : call[1];
-    const direct = directArguments(body).replace(/\b(?:JSON\.(?:stringify|parse)|Object\.(?:keys|values|entries|fromEntries|hasOwn|freeze)|path\.(?:isAbsolute|join|relative|resolve|dirname|sep|delimiter)|process\.(?:version|platform|arch|execPath|exitCode)|selectedModel)\b/g, "");
+    const direct = directArguments(body).replace(/\b(?:JSON\.(?:stringify|parse)|Object\.(?:keys|values|entries|fromEntries|hasOwn|freeze)|path\.(?:isAbsolute|join|relative|resolve|dirname|basename|sep|delimiter)|process\.(?:version|platform|arch|execPath|exitCode)|selectedModel)\b/g, "");
     return {name: call[1], canonicalCall, arguments: new Set([...direct.matchAll(/(?<![.\w$])([A-Za-z_$][\w$]*)\b(?!\s*:)/g)].map((item) => item[1])), prefix: masked.slice(Math.max(0, call.index - 10), call.index)};
   });
   for (const name of guarded) {
@@ -163,7 +163,7 @@ function policyConstruction(source, names, promptCount = 0, externalNames = []) 
 
     for (const call of masked.matchAll(new RegExp(`(${target}\\s*(?:\\.[A-Za-z_$][\\w$]*|\\[[^\\]]*\\])\\s*(?:\\?\\.)?)\\(`, "g"))) {
       const method = call[1].replace(/\s/g, "").replace(new RegExp(`^${name}\\b`), aliasRoots[name] ?? name);
-      if (!readMethods.has(method)) throw new Error("Unsupported reviewer policy provider or alias method");
+      if (!readMethods.has(method)) throw new Error(`Unsupported reviewer policy provider or alias method: ${method}`);
     }
     for (const call of calls) {
       if (!readMethods.has(call.canonicalCall) && call.arguments.has(name) && !["Object.keys", "JSON.stringify", "keys", "stringify", "sha256", "recordReviewer", "validate", "execOracle", "spawn"].includes(call.name) && !guarded.has(call.name)) {

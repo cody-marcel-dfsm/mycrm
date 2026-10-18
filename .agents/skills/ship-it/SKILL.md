@@ -230,11 +230,16 @@ history. Every resubmission still needs a fresh independent decision for the
 whole current candidate and an exact current receipt; reused evidence supplies
 no approval authority.
 
-When an assessment returns INCOMPLETE, resume the same unchanged candidate until
-the Oracle returns COMPLETE. Treat partial findings as provisional and collect
-the consolidated assessment before implementing repairs. If continuation is
-impossible, document the concrete execution failure and perform only the minimum
-recovery needed to resume that unchanged assessment.
+When an assessment returns INCOMPLETE or ERROR, retain verified coverage and raw
+observations with their original candidate, dependencies, criteria, evidence and
+actual execution status. Continue the same review series against the next current
+candidate while all implementations and authors continue source work. Impose no
+source-file or code-line locks, checkout freezes or work pauses. Compare actual
+source movement and cumulative pending repairs, independently re-attest applicable
+observations, and examine new or affected scope. Collect consolidated findings
+and repair them together under the existing workflow. Every included change,
+including changes from other implementations, receives review and validation;
+final approval binds the entire exact current candidate.
 
 ## Commit and publish
 
