@@ -153,6 +153,74 @@ test("published client_action_required recovery is closed, sanitized, and delega
   assert.throws(() => validateCrmResolutionEnvelope({...response, error: {...response.error, provider_error: "private"}}), /schema|shape is invalid|private key/i);
 });
 
+test("canonical read recovery accepts omitted approval scope and numeric semantic segments without creating authority", async () => {
+  const response = structuredClone(actionRequiredFixture);
+  response.identity = "s".repeat(255);
+  response.current_step.operation = "crm.2fa.read";
+  response.resolution = {
+    goal: "resolve_crm_evidence",
+    instruction: "Read current synthetic CRM evidence.",
+    operation: "2crm.2fa.read",
+    requires_user_approval: false,
+    after_success: response.resolution.after_success
+  };
+  const original = structuredClone(response);
+  const validated = validateCrmResolutionEnvelope(response);
+  assert.deepEqual(validated.resolution.approval_scope, []);
+  assert.deepEqual(response, original);
+  const calls = [];
+  let reviews = 0;
+  const client = new CrmJourneyClient({bos: {
+    verifyExecutionIntent: async (intent) => {
+      reviews += 1;
+      assert.equal(intent.requireGoalCompletion, true);
+      assert.equal(intent.requireUserApproval, false);
+      assert.deepEqual(intent.resolution.approval_scope, []);
+      return true;
+    },
+    invokeReturnedAction: async (...args) => { calls.push(args); return {status: 200}; }
+  }});
+  await client.invokeResolutionAction(response);
+  assert.equal(reviews, 1);
+  assert.deepEqual(calls, [[original.resolution.after_success]]);
+  const denied = new CrmJourneyClient({bos: {verifyExecutionIntent: async () => false, invokeReturnedAction: async () => {throw new Error("Unverified goal reached transport");}}});
+  await assert.rejects(denied.invokeResolutionAction(response), /Trusted BOS/);
+});
+
+test("resolution approval scope stays explicit and nonempty when approval is required", () => {
+  for (const scope of [undefined, null, [], [""], ["purpose", "purpose"], "purpose"]) {
+    const response = structuredClone(actionRequiredFixture);
+    if (scope === undefined) delete response.resolution.approval_scope;
+    else response.resolution.approval_scope = scope;
+    assert.throws(() => validateCrmResolutionEnvelope(response), /approval_scope/);
+  }
+  const response = structuredClone(actionRequiredFixture);
+  response.resolution.requires_user_approval = false;
+  response.resolution.approval_scope = null;
+  assert.throws(() => validateCrmResolutionEnvelope(response), /approval_scope/);
+  response.resolution.approval_scope = [];
+  assert.deepEqual(validateCrmResolutionEnvelope(response).resolution.approval_scope, []);
+});
+
+test("canonical resolution identity and semantic operation bounds preserve public values", () => {
+  for (const identity of ["s".repeat(255), "😀".repeat(255)]) {
+    assert.equal(validateCrmResolutionEnvelope({...actionRequiredFixture, identity}).identity, identity);
+  }
+  for (const identity of ["s".repeat(256), "😀".repeat(256)]) {
+    assert.throws(() => validateCrmResolutionEnvelope({...actionRequiredFixture, identity}), /identity is too long/);
+  }
+  for (const operation of ["crm.2fa.read", "2crm.3records.read", `crm.${"r".repeat(251)}`]) {
+    const response = structuredClone(actionRequiredFixture);
+    response.resolution.operation = operation;
+    assert.equal(validateCrmResolutionEnvelope(response).resolution.operation, operation);
+  }
+  for (const operation of [`crm.${"r".repeat(252)}`, "crm..read", "crm/2fa/read", "CRM.2fa.read", "crm.é.read", "crm"]) {
+    const response = structuredClone(actionRequiredFixture);
+    response.resolution.operation = operation;
+    assert.throws(() => validateCrmResolutionEnvelope(response), /operation is invalid/);
+  }
+});
+
 test("journey recovery preserves exact canonical messages and keeps every other field fail-closed", () => {
   const contextHandle = `bos_ctx_v2_${"a".repeat(64)}`;
   const messages = [
