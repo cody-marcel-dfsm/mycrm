@@ -21,21 +21,32 @@ API version unless explicitly requested. Package release versions and
 independent authentication-envelope identifiers are separate. Preserve exact
 request evidence for independent proposal and completed-tree assessment.
 
-## Protected-change approval gate
+## Technical review and protected deployment authority
 
-This invocation authorizes release execution for already authorized work. It
-does not authorize architecture, public API-contract, authentication, or
-authorization changes, including compatibility work introduced during
-remediation. If the candidate contains one without the user's exact approval,
-stop and request approval under **Problem**, **Cause**, and **Recommended
-change**, with no more than three concise sentences per heading; require the
-local Oracle to reject it until approval is verified.
+Complete independent technical proposal/source review, receipts, commits and
+review-branch publication without human approval gates. The direct owner rule
+of 2026-10-18 requires human authority only for actual specifically protected
+deployment effects. Broad architecture, public API-contract, authentication or
+authorization labels, filenames, ordinary corrections and compatible repairs
+alone create no requirement. Missing human permission is a nonblocking deployment
+warning; technical defects and the explicit public API-version REQUEST gate retain
+their existing outcomes.
 
-Before release mutation, submit the concise Problem, Cause, and Recommended
-change through `npm run oracle:proposal -- "<proposal>"`. Continue approved
-in-scope work automatically. Escalate to the user only when the Oracle flags a
-genuinely new protected decision; proposal approval never replaces the
-completed staged-tree review.
+Before implementation, submit concise Problem, Cause and Recommended change
+sections through `npm run oracle:proposal`. Continue technically approved work
+within the user's task authorization automatically. Record exact credential-trust,
+permission-authority, tenant-isolation or incompatible-contract effects in the
+native technical receipt. The owner-local `npm run oracle:deployment -- <ref>`
+checks the full sealed release history, effective effects and exact human authority
+before main promotion, release-artifact publication or local installation.
+
+If a specific deployment decision is missing, finish the source and technical
+assessment first, then present only that exact deployment decision under Problem,
+Cause and Recommended change, with no more than three sentences per section.
+Reuse an existing applicable direct request or approval. Later permission is
+verified through `npm run oracle:authorize-deployment -- <ref> --owner-approval
+@<exact-evidence-file>` and stored separately; preserve the technical receipt and
+unchanged coverage. Never request human approval to perform or finish review.
 
 Complete the MyCRM release loop inside
 the My CRM repository root.
@@ -82,18 +93,14 @@ records and effects.
 
 ## Security gate
 
-The shipping agent never classifies authentication impact and never emits an
-Oracle warning or verdict. It calls `npm run oracle:review`; the independent
-Oracle process alone applies the security gate in `Vault/docs/CONSTITUTION.md`,
-emits any protected-change warning, and returns the verdict for the exact
-staged tree. The ship-it invocation does not replace the developer owner's
-direct approval of an exact protected security change.
-
-Before staging or committing any payload that contains the authentication
-rollback governed by `MYCRM-AUTH-005`, locate the documented developer-owner
-approval of the complete rollback diff. Stop and request that exact approval
-when it is absent. The ship-it invocation authorizes the release actions; it
-does not supply this protected-change approval.
+The shipping agent never classifies authentication impact or impersonates the
+Oracle. It invokes the independent local reviewer, which completes technical
+assessment and identifies actual protected deployment effects. The invocation
+supplies no new human authority for a specifically protected runtime effect.
+Review the maintained `Vault/docs/review-deployment-approval.md` design and tasks.
+MYCRM-AUTH-005 historical rollback authority remains relevant only to an actual
+effective protected rollback being deployed; it never blocks technical review or
+commit eligibility. Preserve product authentication and cost controls.
 
 ## Preflight
 
@@ -113,7 +120,7 @@ does not supply this protected-change approval.
    files and preserve intent. Block credentials, private data, accidental large
    artifacts, material correctness defects, and constitutional violations.
 5. When a dirty checkout is behind the remote default branch, preserve it
-   intact and prepare the release in a suitable current-base checkout. Account
+   intact and integrate the remote semantically on canonical main. Account
    for every amended file while reconciling its intended behavior with current
    code; retain newer remote safeguards and stop when an overlap cannot be
    resolved safely. Rerun affected tests and Oracle review. Never publish an
@@ -122,14 +129,14 @@ does not supply this protected-change approval.
    repository's governed workflow and repeat affected gates.
 6. Never discard, reset, stash, or overwrite user work. Resolve safe in-scope
    release failures and repeat the affected gates.
-7. When the payload includes `MYCRM-AUTH-005`, verify the documented direct
-   owner approval covers the complete rollback diff before staging or commit.
+7. Verify applicable exact authority for actual effective protected deployment
+   effects at main/release promotion and installation, after complete technical review.
 
 ## Create the immutable release
 
-1. When on `main`, create `codex/release-v<next-version>` while preserving the
-   complete worktree. Reuse a current non-default branch only when its upstream
-   and pull-request target are unambiguous.
+1. Work on canonical `main` throughout implementation, validation, review and
+   release. Publish a `codex/release-v<next-version>` ref from the approved commit
+   without switching the canonical checkout; never create a worktree.
 2. Default to a patch increment unless the user or compatibility policy calls
    for another semantic version.
 3. Update the version consistently in `package.json`, `package-lock.json`,
@@ -150,7 +157,10 @@ npm run install:verify
 git diff --check
 ```
 
-Use `npm run install:local` only after the versioned candidate is built and the
+The maintainer wrapper calls the public install:local helper only after exact
+source/effect admission. The public helper remains available from a fresh published
+checkout without private review metadata. Use `npm run install:reviewed` only after
+the versioned candidate is built and the
 installed BOS dependency is ready, then run `npm run install:verify`.
 
 Install the repository hooks with `npm run hooks:install`, stage the complete
@@ -214,7 +224,8 @@ owner/API approval evidence and unstructured legacy logs are never inferred.
 Additive exact owner metadata preserves unrelated source coverage. Native
 execution facts depend on actual declared inputs, configuration, environment
 and provenance; a declared owner-file dependency still invalidates on change.
-Every fresh complete receipt independently rechecks current protected authority.
+Every fresh complete receipt independently assesses actual protected effects;
+missing human deployment authority never blocks its technical verdict.
 Restage, sync the Vault after Vault changes, rerun affected validation and call
 the utility again. Shared behavior changes justify broader regression checks;
 establish the required complete integrated `npm test` baseline, retain verified
@@ -250,16 +261,20 @@ final approval binds the entire exact current candidate.
    concise release commit. The hooks append and validate the exact-tree Oracle
    stamp. Never amend, squash, rebase, force-push, skip hooks, forge an Oracle
    stamp, or create an empty commit.
-3. Push the release branch to `origin` and open a pull request into `main`.
+3. Push the approved release ref to `origin` and open a pull request into `main`.
+   Review/source refs remain publishable with missing human deployment permission.
    Include the version, behavior delivered, package digest, Oracle verdict, and
    validation evidence.
 4. Wait for every required check. Correct in-scope failures on the same branch,
    repeat validation and Oracle review after mutations, push, and wait again.
 5. Merge only when GitHub reports the pull request mergeable and all required
-   checks pass. Verify remote `main` contains the release.
-6. Switch to `main`, fast-forward from `origin/main`, confirm a clean synchronized
-   checkout, verify the release branch is merged, and delete only that local
-   release branch with the safe merged-branch command.
+   checks pass. Immediately before main promotion or release-artifact publication,
+   run `npm run oracle:deployment -- <exact-release-ref>`; stop only the protected
+   mutation if exact authority is missing. The pre-push hook enforces the same
+   admission for main and semantic release tags. Verify remote main contains the release.
+6. Remain on canonical main, fast-forward from origin/main, confirm a clean
+   synchronized checkout, verify the release ref is merged, and delete only an
+   owned merged release ref through the safe merged-ref workflow.
 
 The repository shipment remains incomplete while any release commit exists
 only locally. Require local `main` and `origin/main` to resolve to the same
@@ -269,7 +284,7 @@ commit and verify that the complete release branch is reachable from remote
 ## Verify the merged installation
 
 1. Build the merged release again and verify its manifest and content digest.
-2. Install or upgrade with `npm run install:local`, then run
+2. Install or upgrade with `npm run install:reviewed`, then run
    `npm run install:verify`. Never uninstall a working version first and never
    rewrite plugin-cache files.
 3. Re-run the installed read-only smoke path against the authenticated BOS

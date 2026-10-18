@@ -1,6 +1,6 @@
 {
   "name": "my-crm",
-  "version": "0.2.49",
+  "version": "0.2.50",
   "description": "Understand CRM records and next actions through BOS; ad hoc dynamic workflows require live BOS contracts",
   "license": "Apache-2.0",
   "type": "module",
@@ -21,6 +21,7 @@
     "check:privacy": "node scripts/check-privacy.mjs",
     "check:release": "node scripts/check-release.mjs",
     "install:local": "node scripts/codex-local-install.mjs install",
+    "install:reviewed": "node scripts/codex-maintainer-install.mjs",
     "install:verify": "node scripts/codex-local-install.mjs verify",
     "hooks:install": "node scripts/install-hooks.mjs",
     "oracle:review": "node scripts/oracle-review.mjs review",
@@ -39,7 +40,9 @@
     "check:muse": "node scripts/build-muse.mjs --check",
     "build:clients": "node scripts/build-clients.mjs",
     "check:clients": "node scripts/build-clients.mjs --check",
-    "oracle:verify-proposal": "node scripts/oracle-review.mjs verify-proposal"
+    "oracle:verify-proposal": "node scripts/oracle-review.mjs verify-proposal",
+    "oracle:deployment": "node scripts/oracle-deployment.mjs check",
+    "oracle:authorize-deployment": "node scripts/oracle-review.mjs authorize-deployment"
   },
   "engines": {
     "node": ">=20"

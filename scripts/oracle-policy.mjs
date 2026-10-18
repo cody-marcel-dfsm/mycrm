@@ -6,7 +6,7 @@ import {promisify} from "node:util";
 import {createHash} from "node:crypto";
 
 const execute = promisify(execFile);
-export const policyModules = ["oracle-inputs.mjs", "oracle-review.mjs", "oracle-series.mjs", "oracle-validation.mjs", "oracle-policy.mjs", "codex-child-model.mjs"];
+export const policyModules = ["oracle-inputs.mjs", "oracle-review.mjs", "oracle-series.mjs", "oracle-validation.mjs", "oracle-policy.mjs", "codex-child-model.mjs", "oracle-deployment.mjs"];
 const hash = (value) => createHash("sha256").update(value).digest("hex");
 const canonical = (value) => Array.isArray(value) ? `[${value.map(canonical).join(",")}]` : value && typeof value === "object" ? `{${Object.keys(value).sort().map((key) => `${JSON.stringify(key)}:${canonical(value[key])}`).join(",")}}` : JSON.stringify(value);
 
@@ -186,7 +186,7 @@ export function policyFingerprint(review, series, implementation) {
   };
   const launches = [...review.matchAll(/\b(?:spawn|execOracle)\(/g)];
   material.launches = launches.filter((match) => !review.slice(Math.max(0, match.index - 16), match.index).match(/function\s+$/)).map((match) => expression(review, match.index + match[0].length, ")"));
-  if (material.launches.length !== 3) throw new Error("Cannot establish complete reviewer launch policy");
+  if (material.launches.length !== 4) throw new Error("Cannot establish complete reviewer launch policy");
   // An imported provider can mutate emitters through arbitrary side effects,
   // including calls with no provider argument. Alias inspection cannot prove
   // that closure. Bind the complete ordered controlling emission modules for
