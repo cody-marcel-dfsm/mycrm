@@ -102,10 +102,10 @@ test("ordinary agents call an isolated Oracle utility and never impersonate the 
   assert.match(workflow, /npm run oracle:verify-commit/);
   assert.match(workflow, /fetch-depth: 2/);
   assert.match(oracleUtility, /"--ignore-user-config"/);
-  assert.match(oracleUtility, /architecture and public API-contract changes as protected changes/i);
+  assert.match(oracleUtility, /Broad architecture\/authentication\/public-contract labels/);
   assert.match(oracleUtility, /Problem, Cause, Recommended change/i);
   assert.match(oracleUtility, /no more than three sentences in each part/i);
-  assert.match(oracleUtility, /Never convert an Oracle recommendation into an approved target/i);
+  assert.match(oracleUtility, /Missing permission is a nonblocking deployment warning/);
   assert.match(shipIt, /architecture/i);
   assert.match(shipIt, /public API-contract/i);
   assert.match(shipIt, /authentication/i);
@@ -116,13 +116,18 @@ test("ordinary agents call an isolated Oracle utility and never impersonate the 
   assert.doesNotMatch(oracleSkill, /\.\.\/\.agents\/skills\/oracle\/SKILL\.md/);
 });
 
-test("Oracle alone classifies authentication impact and owner-approval sufficiency", () => {
+test("technical verdict and receipt are independent of human deployment permission", () => {
   assert.doesNotThrow(() => validateOracleResponse({verdict: "APPROVED", authentication_impact: false, owner_approval_status: "NOT_REQUIRED"}));
   assert.doesNotThrow(() => validateOracleResponse({verdict: "APPROVED", authentication_impact: true, owner_approval_status: "APPROVED"}));
   assert.doesNotThrow(() => validateOracleResponse({verdict: "REJECTED", authentication_impact: true, owner_approval_status: "MISSING"}));
-  assert.throws(() => validateOracleResponse({verdict: "APPROVED", authentication_impact: true, owner_approval_status: "MISSING"}), /requires owner_approval_status APPROVED/);
-  assert.throws(() => validateOracleResponse({verdict: "REJECTED", authentication_impact: true, owner_approval_status: "NOT_REQUIRED"}), /cannot mark owner approval NOT_REQUIRED/);
-  assert.throws(() => validateOracleResponse({verdict: "APPROVED", authentication_impact: false, owner_approval_status: "APPROVED"}), /must mark owner approval NOT_REQUIRED/);
+  assert.doesNotThrow(() => validateOracleResponse({verdict: "APPROVED", authentication_impact: true, owner_approval_status: "MISSING"}));
+  assert.doesNotThrow(() => validateOracleResponse({verdict: "REJECTED", authentication_impact: true, owner_approval_status: "NOT_REQUIRED"}));
+  assert.doesNotThrow(() => validateOracleResponse({verdict: "APPROVED", authentication_impact: false, owner_approval_status: "APPROVED"}));
+  const receipt = {...approvedReceipt(), review_status: "COMPLETE", authentication_impact: true, owner_approval_status: "MISSING"};
+  receipt.receipt_sha256 = receiptSha256(receipt);
+  assert.doesNotThrow(() => verifyCommitMessage({message: stampCommitMessage("Synthetic technically reviewed source", receipt), tree: receipt.reviewed_tree, receipt}));
+  const rejected = {...receipt, verdict: "REJECTED"}; rejected.receipt_sha256 = receiptSha256(rejected);
+  assert.throws(() => verifyReceipt(rejected, rejected.reviewed_tree), /verdict/);
 });
 
 

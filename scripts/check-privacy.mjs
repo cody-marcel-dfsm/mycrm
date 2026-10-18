@@ -4,11 +4,89 @@ import path from "node:path";
 import process from "node:process";
 
 import {readJson, repositoryRoot} from "./release-utils.mjs";
+import {readMetadataFile, pathCustody, contentHash} from "./oracle-inputs.mjs";
+import {verifySeries} from "./oracle-series.mjs";
 
 const policyFile = path.join(repositoryRoot, "config/privacy-policy.json");
 const ignoredDirectories = new Set([".git", "node_modules", "coverage", ".Trash"]);
 const textExtensions = new Set([".cjs", ".js", ".json", ".md", ".mjs", ".toml", ".ts", ".tsx", ".txt", ".yaml", ".yml"]);
 const emailPattern = /\b[A-Z0-9._%+-]+@([A-Z0-9.-]+\.[A-Z]{2,})\b/giu;
+const nativeRunNames = new Set(["inputs.json", "process.json", "response.txt", "response.json", "response.schema.json", "reviewer.json", "reviewer.stdout.log", "reviewer.stderr.log", "timings.json", "outcome.json", "evidence.json", "preparation.json", "authorization.schema.json", "authorization.response.json", "authorization.evidence.json"]);
+const nativeUuid = /^[a-f0-9]{8}-[a-f0-9]{4}-[a-f0-9]{4}-[a-f0-9]{4}-[a-f0-9]{12}$/;
+
+async function nativeProvenance(root) {
+  const owner = path.join(root, ".git"), series = new Set();
+  try {
+    const location = path.join(owner, "oracle", "series");
+    await pathCustody(owner, location, {scopeRoot: owner, allowFinalLink: false});
+    for (const name of await readdir(location)) {
+      if (!/^[a-f0-9]{40}\.json$/.test(name)) continue;
+      try {
+        const record = JSON.parse(await readMetadataFile(path.join(location, name), "utf8", {root: owner}));
+        verifySeries(record, name.slice(0, -5));
+        if (record.rounds.length && nativeUuid.test(record.series_id)) series.add(record.series_id);
+      } catch { /* Unverified native claims supply no privacy allowance. */ }
+    }
+  } catch { /* A package without owner-local native metadata has no allowance. */ }
+  const runFile = async (filename, expectedHash) => {
+    if (typeof filename !== "string" || !path.isAbsolute(filename) || !/^[a-f0-9]{64}$/.test(expectedHash ?? "")) return false;
+    const relative = path.relative(path.join(owner, "oracle", "runs"), filename);
+    const parts = relative.split(path.sep);
+    if (parts.length !== 2 || !nativeUuid.test(parts[0]) || !nativeRunNames.has(parts[1]) || filename !== path.join(owner, "oracle", "runs", ...parts)) return false;
+    try {
+      await pathCustody(owner, filename, {scopeRoot: owner, allowFinalLink: false});
+      if (contentHash(await readMetadataFile(filename, {}, {root: owner})) !== expectedHash) return false;
+      const run = path.dirname(filename);
+      const outcome = JSON.parse(await readMetadataFile(path.join(run, "outcome.json"), "utf8", {root: owner}));
+      const reviewer = JSON.parse(await readMetadataFile(path.join(run, "reviewer.json"), "utf8", {root: owner}));
+      const execution = JSON.parse(await readMetadataFile(path.join(run, "process.json"), "utf8", {root: owner}));
+      return ["review", "proposal", "deployment-authorization"].includes(outcome.kind) && outcome.reviewer_invoked === true && typeof outcome.started_at === "string" && typeof outcome.finished_at === "string" && reviewer.role === "independent-project-oracle" && /^[a-f0-9]{64}$/.test(reviewer.role_instruction_sha256 ?? "") && (Number.isInteger(execution.exit_code) || execution.signal !== null && typeof execution.signal === "string");
+    } catch { return false; }
+  };
+  return {series, runFile};
+}
+
+async function uuidAuditContent(content, relative, provenance) {
+  if (!relative.startsWith(`Vault${path.sep}tmp${path.sep}`) || !relative.endsWith(".json")) return content;
+  let record;
+  try { record = JSON.parse(content); } catch { return content; }
+  // Keep original token positions: JSON.parse alone discards duplicate members.
+  const tokens = []; let cursor = 0, duplicate = false;
+  const whitespace = () => { while (/\s/u.test(content[cursor] ?? "") && cursor < content.length) cursor++; };
+  const string = (location, key = false) => {
+    whitespace(); const begin = cursor++;
+    while (cursor < content.length) { const character = content[cursor++]; if (character === "\\") cursor++; else if (character === '"') break; }
+    const token = {begin, end: cursor, location, key, value: JSON.parse(content.slice(begin, cursor))}; tokens.push(token); return token.value;
+  };
+  const value = (location) => {
+    whitespace();
+    if (content[cursor] === '"') { string(location); return; }
+    if (content[cursor] === "{") {
+      cursor++; whitespace(); const keys = new Set();
+      while (content[cursor] !== "}") {
+        const key = string(location, true); if (keys.has(key)) duplicate = true; keys.add(key);
+        whitespace(); cursor++; value([...location, key]); whitespace(); if (content[cursor] !== ",") break; cursor++;
+      }
+      cursor++; return;
+    }
+    if (content[cursor] === "[") {
+      cursor++; whitespace(); let index = 0;
+      while (content[cursor] !== "]") { value([...location, index++]); whitespace(); if (content[cursor] !== ",") break; cursor++; }
+      cursor++; return;
+    }
+    while (cursor < content.length && !/[\s,\]}]/u.test(content[cursor])) cursor++;
+  };
+  value([]);
+  const allowed = new Set();
+  if (!duplicate) for (const token of tokens) {
+    if (token.key) continue;
+    if (record?.schema === "my-crm.shipment-completion/v1" && JSON.stringify(token.location) === '["oracle","series_id"]' && provenance.series.has(token.value)) allowed.add(token);
+    if (record?.schema === "my-crm.proposal-evidence-custody/v1" && token.location.length === 3 && token.location[0] === "files" && Number.isInteger(token.location[1]) && token.location[2] === "original" && await provenance.runFile(token.value, record.files?.[token.location[1]]?.sha256)) allowed.add(token);
+  }
+  let audited = content;
+  for (const token of [...allowed].sort((left, right) => right.begin - left.begin)) audited = `${audited.slice(0, token.begin)}"verified-native-provenance"${audited.slice(token.end)}`;
+  return `${audited}\n${tokens.filter((token) => !allowed.has(token)).map(({value: decoded}) => decoded).join("\n")}`;
+}
 
 async function walk(directory, {includeDist}, files = []) {
   for (const entry of await readdir(directory, {withFileTypes: true})) {
@@ -41,16 +119,18 @@ export async function checkPrivacy({root = repositoryRoot, includeDist = false, 
   const evidencePatterns = policy.forbidden_evidence_patterns.map(({id, pattern}) => ({id, regex: new RegExp(pattern, "gu")}));
   const denylist = denylistValues ?? await externalDenylist(policy.external_denylist_environment);
   const failures = [];
+  const provenance = await nativeProvenance(root);
   const files = await walk(root, {includeDist});
   for (const file of files) {
     const content = await readFile(file, "utf8");
-    const relative = path.relative(repositoryRoot, file);
+    const relative = path.relative(root, file);
+    const uuidContent = await uuidAuditContent(content, relative, provenance);
     for (const match of content.matchAll(emailPattern)) {
       if (!allowedDomains.has(match[1].toLowerCase())) failures.push(`${relative} contains a non-synthetic email address`);
     }
     for (const {id, regex} of patterns) {
       regex.lastIndex = 0;
-      if (regex.test(content)) failures.push(`${relative} contains forbidden identity pattern ${id}`);
+      if (regex.test(id === "uuid-value" ? uuidContent : content)) failures.push(`${relative} contains forbidden identity pattern ${id}`);
     }
     if (relative.startsWith(`Vault${path.sep}evidence${path.sep}`) || relative.startsWith(`Vault${path.sep}reviews${path.sep}`)) {
       for (const {id, regex} of evidencePatterns) {

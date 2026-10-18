@@ -22,12 +22,26 @@ authentication impact, emits protected-change warnings, and returns the
 verdict bound to the exact staged Git tree.
 
 Before mutation, submit the proposed Problem, Cause, and Recommended change to
-the proposal command. Continue automatically when the Oracle approves work
-within the user's existing task authorization. Stop and request the user's
-exact approval only when the Oracle flags a genuinely new architecture, public
-API, authentication, or authorization decision; keep each labeled section to
-three concise sentences. Proposal review writes a separate local record and
-never substitutes for the completed staged-tree receipt.
+the proposal command. Continue automatically after technical approval within
+the user's task authorization. Complete proposal/source review, receipt issuance,
+commit eligibility and review-branch publication independently of human deployment
+permission. Identify actual protected deployment decisions separately; the owning
+publication/install workflow checks exact human authority before mutation.
+Proposal review writes a separate local record and never substitutes for the
+completed staged-tree receipt.
+
+Owner direction, 2026-10-18: “Reviews should never require approvals. I's the
+deployment that requires approval, but only for very specific changes”.
+Maintained design: `Vault/docs/review-deployment-approval.md`; implementation
+tasks: `Vault/docs/tasks/review-deployment-approval.md`. Actual credential-trust,
+permission-authority, tenant-isolation or incompatible-public-contract effects
+receive source/effect-bound deployment checks. Broad labels, filenames,
+authentication impact alone, ordinary corrections and compatible repairs create
+no approval requirement. Missing deployment authority never becomes a technical
+finding or rejection. Late authorization preserves the immutable completed
+technical receipt and unchanged coverage. Preserve technical defects, exact
+candidate/output custody, independent roles, API-version REQUEST, runtime security
+and separate cost controls.
 
 ## API-version request requirement
 
@@ -66,7 +80,8 @@ never load the Projects approver skill directly.
 - The owner-approved family authentication topology uses one BOS-managed
   connection for every accessible MCP. My CRM's MCP delegates authentication
   to the BOS plugin and declares no separate login, OAuth binding, token, or
-  credential lifecycle. Any future change requires direct owner approval.
+  credential lifecycle. Deployment of a specifically protected future effect
+  requires applicable direct owner authority; technical review completes first.
 - Projects-level coordination access creates no sibling source, filesystem,
   build, package, runtime, database, or release dependency.
 
@@ -217,7 +232,7 @@ checks when these inputs change; shared
 behavior changes can require broader regression checks. The complete initial `npm test` baseline remains required; verified unaffected observations carry forward through focused repair checks. Evidence reuse
 never carries an approval forward: every updated candidate requires a fresh
 independent whole-candidate decision and exact staged-tree receipt. Public API
-version requests, protected-change approval, provenance and verifier gates
+version requests, specifically protected deployment authority, provenance and verifier gates
 continue to apply.
 Receipt verification rechecks original native output integrity and exact source
 bindings across hook/CLI contexts; ambient environment differences require

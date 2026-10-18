@@ -136,7 +136,7 @@ export async function withOracleRun(requested, action, {kind = null, onAdmitted 
         await atomicJson(path.join(run, "timings.json"), timings);
         await atomicJson(path.join(run, "outcome.json"), {
           kind, started_at: startedAt, finished_at: new Date().toISOString(),
-          outcome: failure ? "ERROR" : result?.review_status === "INCOMPLETE" ? "INCOMPLETE" : result?.verdict ?? "COMPLETED",
+          outcome: failure ? "ERROR" : result?.review_status === "INCOMPLETE" ? "INCOMPLETE" : result?.verdict ?? result?.decision ?? "COMPLETED",
           reviewer_invoked: Object.hasOwn(timings, "reviewer_ms"),
           error: failure ? {name: failure.name, message: failure.message} : null,
         });

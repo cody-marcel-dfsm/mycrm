@@ -10,6 +10,7 @@ import {captureInputs, assertInputsMatch, withOracleRun, preparedEvidence, obser
 import {receiptSha256, sha256} from "../scripts/oracle-review.mjs";
 import {seriesDigest, reviewSnapshot} from "../scripts/oracle-series.mjs";
 import {readValidationProofs, inheritNativeEvidence, executableBinding, fileMetadata} from "../scripts/oracle-validation.mjs";
+import {admitDeployment} from "../scripts/oracle-deployment.mjs";
 
 const execute = promisify(execFile);
 const launcher = fileURLToPath(new URL("../scripts/oracle-review.mjs", import.meta.url));
@@ -44,8 +45,16 @@ if(!proposal && process.env.ORACLE_READY) fs.writeFileSync(process.env.ORACLE_RE
 if(!proposal && process.env.ORACLE_MUTATE) fs.writeFileSync(process.env.ORACLE_MUTATE,'changed during review');
 if(process.env.ORACLE_MUTATE_SETTINGS) fs.writeFileSync(process.env.ORACLE_MUTATE_SETTINGS,process.env.ORACLE_SETTINGS_CONTENT);
 const emit=()=>{
+  if(args[args.indexOf('--output-schema')+1]?.endsWith('authorization.schema.json')) {
+    const proof=JSON.parse(fs.readFileSync(path.join(path.dirname(out),'authorization.evidence.json')));
+    const missing=Boolean(process.env.ORACLE_AUTHORIZATION_MISSING);
+    const file=proof.inputs.owner.value.slice(1);
+    fs.writeFileSync(out,JSON.stringify({decision:missing?'MISSING':'AUTHORIZED',summary:'Synthetic exact authorization assessment.',approved_effect_keys:missing?[]:proof.pending_protected_effects.map(item=>item.key),authority:missing?null:{evidence:file,quote:fs.readFileSync(file,'utf8').trim()}}));
+    return;
+  }
   const evidence=proposal?null:JSON.parse(fs.readFileSync(path.join(path.dirname(out),'evidence.json')));
-  const response={verdict:process.env.ORACLE_INCOMPLETE?null:'APPROVED',review_status:process.env.ORACLE_INCOMPLETE?'INCOMPLETE':'COMPLETE',api_version_assessment:{impact:'NONE',request_kind:'NOT_REQUIRED',requested_change:null,request_quote:null,request_evidence:null},summary:'Synthetic candidate assessed.',authentication_impact:false,owner_approval_status:'NOT_REQUIRED',warning:null,findings:[],unreviewed:process.env.ORACLE_INCOMPLETE?['synthetic remaining scope']:[],reused_coverage:[],reused_validations:[],validations:[],resolutions:[],scope_dispositions:[],synthesis:null,coverage:(evidence?.review_context.required_paths??[]).map(name=>({path:name,dependencies:[name],dependency_rationale:'Synthetic isolated dependency.',assessment:'Synthetic path assessed.',criteria:['Synthetic acceptance criteria.'],evidence:['Synthetic source inspection.'],finding_ids:[]}))};
+  const response={verdict:process.env.ORACLE_INCOMPLETE?null:'APPROVED',review_status:process.env.ORACLE_INCOMPLETE?'INCOMPLETE':'COMPLETE',api_version_assessment:{impact:'NONE',request_kind:'NOT_REQUIRED',requested_change:null,request_quote:null,request_evidence:null},summary:'Synthetic candidate assessed.',authentication_impact:false,owner_approval_status:'NOT_REQUIRED',warning:null,findings:[],protected_deployment_effects:[],deployment_effect_dispositions:[],unreviewed:process.env.ORACLE_INCOMPLETE?['synthetic remaining scope']:[],reused_coverage:[],reused_validations:[],validations:[],resolutions:[],scope_dispositions:[],synthesis:null,coverage:(evidence?.review_context.required_paths??[]).map(name=>({path:name,dependencies:[name],dependency_rationale:'Synthetic isolated dependency.',assessment:'Synthetic path assessed.',criteria:['Synthetic acceptance criteria.'],evidence:['Synthetic source inspection.'],finding_ids:[]}))};
+  if(!proposal && process.env.ORACLE_MISSING_DEPLOYMENT) { response.authentication_impact=true; response.owner_approval_status='MISSING'; response.protected_deployment_effects=[{id:'SYNTHETIC-PERMISSION',category:'PERMISSION_AUTHORITY',description:'Synthetic exact permission authority effect.',affected_paths:[process.env.ORACLE_EFFECT_PATH||'candidate.txt'],authority:null}]; }
   const proof=evidence?.review_context.validation_proofs.find(item=>item.eligible);
   if(proof && !process.env.ORACLE_OMIT_VALIDATION) response.validations=[{id:'native-check',evidence:proof.evidence,command:JSON.stringify(proof.record.command),dependencies:evidence.staged_files,dependency_rationale:'Synthetic complete candidate closure.',assessment:'Native passing execution and output checked.'}];
   if(!proposal && process.env.ORACLE_SOURCE_FINDING) { response.verdict='REJECTED'; response.findings=[{id:'SYNTHETIC-EXIT-1',severity:'medium',code:'SYNTHETIC_EXIT_FINDING',message:'Synthetic source finding.',path:'candidate.txt',reproduction:'Synthetic input.',required_behavior:'Synthetic required behavior.',affected_paths:['candidate.txt'],acceptance_checks:['Synthetic acceptance.'],origin:'initial',missed_finding_reason:null}]; }
@@ -65,6 +74,7 @@ if(!proposal && process.env.ORACLE_DELAY) setTimeout(emit,Number(process.env.ORA
   const git = async (...args) => (await execute("git", args, {cwd: repo})).stdout.trim();
   await git("init", "-q"); await git("add", ".");
   await git("-c", "user.name=Synthetic", "-c", "user.email=synthetic@example.invalid", "commit", "-qm", "fixture");
+  await git("update-ref", "refs/remotes/origin/main", await git("rev-parse", "HEAD"));
   const env = {PATH: `${bin}${path.delimiter}${process.env.PATH}`};
   const prepare = async (cwd = repo) => {
     await command(cwd, ["proposal", "Problem: synthetic. Cause: synthetic. Recommended change: synthetic."], env);
@@ -780,7 +790,11 @@ test("scoped command observations separate review provenance and bind selected e
     assert.equal(firstSeries.rounds.at(-1).validations.length, 1, `Original scoped observation is applicable: ${change}`);
     if (change === "parent-authority") await writeFile(path.join(root, "AGENTS.md"), "Synthetic changed parent review authority.\n");
     if (change === "base-and-candidate") {
-      await git("-c", "user.name=Synthetic", "-c", "user.email=synthetic@example.invalid", "commit", "-qm", "synthetic new base");
+      const message = path.join(repo, ".git/synthetic-reviewed-base-message");
+      await writeFile(message, "Synthetic new reviewed base\n");
+      await command(repo, ["stamp-message", message], runEnv);
+      await command(repo, ["verify-message", message], runEnv);
+      await git("-c", "user.name=Synthetic", "-c", "user.email=synthetic@example.invalid", "commit", "-q", "-F", message);
       await writeFile(path.join(repo, "unrelated.txt"), "Synthetic unrelated candidate.\n"); await git("add", "unrelated.txt");
       assert.notEqual(record.review_provenance.before.base_commit, await git("rev-parse", "HEAD"));
     }
@@ -1100,4 +1114,87 @@ test("native settings movement rejects proposal and completed publication while 
       assert.equal(round.observed_assessment.response.verdict, 'APPROVED');
     }
   }
+});
+
+test("native technical review and commit finish before separate exact deployment authorization", async (t) => {
+  const {repo, env, prepare, git} = await fixture(t); await prepare();
+  const reviewed = await command(repo, ["review"], {...env, ORACLE_MISSING_DEPLOYMENT: "1"});
+  assert.match(reviewed.stdout, /ORACLE_VERDICT=APPROVED/);
+  const receiptFile = path.join(repo, ".git/oracle/approval.json"), original = await readFile(receiptFile);
+  const receipt = JSON.parse(original);
+  assert.equal(receipt.owner_approval_status, "MISSING");
+  assert.match((await command(repo, ["verify-index"], env)).stdout, /ORACLE_APPROVAL=APPROVED/);
+  const message = path.join(repo, ".git/synthetic-release-message"); await writeFile(message, "Synthetic reviewed protected source\n");
+  await command(repo, ["stamp-message", message], env); await command(repo, ["verify-message", message], env);
+  await git("-c", "user.name=Synthetic", "-c", "user.email=synthetic@example.invalid", "commit", "-F", message);
+  await assert.rejects(admitDeployment({root: repo}), /exact human authority/);
+  const owner = path.join(repo, "Vault/tmp/synthetic-owner.txt"); await writeFile(owner, "I authorize exactly the synthetic permission-authority effect.");
+  await assert.rejects(command(repo, ["authorize-deployment", "HEAD", "--owner-approval", `@${owner}`], {...env, ORACLE_AUTHORIZATION_MISSING: "1"}), /Command failed/);
+  const attempts = await Promise.all((await readdir(path.join(repo, ".git/oracle/runs"))).map(async (name) => JSON.parse(await readFile(path.join(repo, ".git/oracle/runs", name, "outcome.json")))));
+  assert.ok(attempts.some((item) => item.kind === "deployment-authorization" && item.outcome === "MISSING" && item.reviewer_invoked));
+  assert.deepEqual(await readFile(receiptFile), original);
+  const authorized = await command(repo, ["authorize-deployment", "HEAD", "--owner-approval", `@${owner}`], env);
+  assert.match(authorized.stdout, /MYCRM_DEPLOYMENT_AUTHORIZATION=AUTHORIZED/);
+  assert.equal((await admitDeployment({root: repo})).status, "ADMITTED");
+  assert.deepEqual(await readFile(receiptFile), original);
+  await command(repo, ["authorize-deployment", "HEAD", "--owner-approval", `@${owner}`], env);
+  assert.deepEqual(await readFile(receiptFile), original);
+});
+
+test("native complete technical review includes unpublished source lacking private receipts", async (t) => {
+  const {repo, env, git} = await fixture(t);
+  const published = await git("rev-parse", "HEAD"); await git("update-ref", "refs/remotes/origin/main", published);
+  await writeFile(path.join(repo, "earlier-authority.mjs"), "export const syntheticPermission = 'protected';\n"); await git("add", ".");
+  await git("-c", "user.name=Synthetic", "-c", "user.email=synthetic@example.invalid", "commit", "-qm", "Synthetic earlier unsealed source");
+  const earlier = await git("rev-parse", "HEAD");
+  await command(repo, ["proposal", "Problem: synthetic integrated range. Cause: unsealed earlier source. Recommended change: review all current source and preserve deployment authority."], env);
+  await writeFile(path.join(repo, "candidate.txt"), "ordinary latest implementation\n"); await git("add", "candidate.txt");
+  await command(repo, ["review"], {...env, ORACLE_MISSING_DEPLOYMENT: "1", ORACLE_EFFECT_PATH: "earlier-authority.mjs"});
+  const receipt = JSON.parse(await readFile(path.join(repo, ".git/oracle/approval.json")));
+  assert.equal(receipt.verdict, "APPROVED"); assert.equal(receipt.recovered_deployment_commits[0].commit, earlier);
+  assert.ok(receipt.coverage.some((item) => item.path === "earlier-authority.mjs"));
+  await command(repo, ["verify-index"], env);
+  const message = path.join(repo, ".git/recovered-range-message"); await writeFile(message, "Synthetic whole integrated source\n"); await command(repo, ["stamp-message", message], env);
+  await git("-c", "user.name=Synthetic", "-c", "user.email=synthetic@example.invalid", "commit", "-q", "-F", message);
+  await assert.rejects(admitDeployment({root: repo}), /exact human authority/);
+});
+
+test("unavailable published history permits technical receipt and commit while deployment stays separate", async (t) => {
+  const {repo, env, git} = await fixture(t);
+  await git("update-ref", "-d", "refs/remotes/origin/main");
+  await writeFile(path.join(repo, "candidate.txt"), "earlier unpublished authority\n"); await git("add", ".");
+  await git("-c", "user.name=Synthetic", "-c", "user.email=synthetic@example.invalid", "commit", "-qm", "Synthetic earlier unpublished source");
+  await mkdir(path.join(repo, "scripts")); await writeFile(path.join(repo, "scripts/oracle-deployment.mjs"), "// Synthetic first policy staged without published metadata.\n"); await git("add", ".");
+  await command(repo, ["proposal", "Problem: synthetic source inspection. Cause: published history unavailable. Recommended change: complete source review with separate deployment readiness."], env);
+  await writeFile(path.join(repo, "candidate.txt"), "ordinary candidate still reviewable\n"); await git("add", "candidate.txt");
+  await command(repo, ["review"], env);
+  const receipt = JSON.parse(await readFile(path.join(repo, ".git/oracle/approval.json")));
+  assert.equal(receipt.verdict, "APPROVED"); assert.equal(receipt.deployment_history_status, "UNAVAILABLE");
+  await command(repo, ["verify-index"], env);
+  const message = path.join(repo, ".git/reviewable-source-message"); await writeFile(message, "Synthetic reviewable source\n"); await command(repo, ["stamp-message", message], env);
+  await git("-c", "user.name=Synthetic", "-c", "user.email=synthetic@example.invalid", "commit", "-q", "-F", message);
+  await assert.rejects(admitDeployment({root: repo}), (error) => /history binding/.test(error.message) && !/human authority/.test(error.message));
+});
+
+test("deployment verifies consumed native records and output custody without ambient reruns", async (t) => {
+  const {repo, env, prepare, git} = await fixture(t); await prepare();
+  const captured = await command(repo, ["validate", "--", process.execPath, "-e", "console.log('synthetic native evidence')"], env);
+  const recordFile = captured.stdout.match(/ORACLE_VALIDATION_EVIDENCE=@([^\n]+)/)[1].trim();
+  const recordBytes = await readFile(recordFile), proof = JSON.parse(recordBytes), outputBytes = await readFile(proof.output_file);
+  await command(repo, ["review", "--validation", `@${recordFile}`], env);
+  const receiptFile = path.join(repo, ".git/oracle/approval.json"), receiptBytes = await readFile(receiptFile);
+  const message = path.join(repo, ".git/native-output-message"); await writeFile(message, "Synthetic reviewed output custody\n"); await command(repo, ["stamp-message", message], env);
+  await git("-c", "user.name=Synthetic", "-c", "user.email=synthetic@example.invalid", "commit", "-q", "-F", message);
+  assert.equal((await admitDeployment({root: repo})).status, "ADMITTED");
+  await writeFile(proof.output_file, "Synthetic changed original output\n");
+  await assert.rejects(admitDeployment({root: repo}), /output.*changed/); await writeFile(proof.output_file, outputBytes);
+  await rm(recordFile); await assert.rejects(admitDeployment({root: repo}), /missing|ENOENT/); await writeFile(recordFile, recordBytes, {mode: 0o600});
+  const originalRun = path.dirname(proof.output_file), retained = path.join(repo, ".git/oracle/retained-output-run");
+  await rename(originalRun, retained); await symlink(retained, originalRun);
+  await assert.rejects(admitDeployment({root: repo}), /custody|path|link|changed/i);
+  await rm(originalRun); await rename(retained, originalRun);
+  const prior = process.env.MYCRM_SYNTHETIC_AMBIENT;
+  try { process.env.MYCRM_SYNTHETIC_AMBIENT = "later hook context"; assert.equal((await admitDeployment({root: repo})).status, "ADMITTED"); }
+  finally { if (prior === undefined) delete process.env.MYCRM_SYNTHETIC_AMBIENT; else process.env.MYCRM_SYNTHETIC_AMBIENT = prior; }
+  assert.deepEqual(await readFile(receiptFile), receiptBytes);
 });
