@@ -14,11 +14,18 @@ and invoke the current application's advertised semantic `app.describe`
 operation through the installed BOS connection. Use its discovered callable
 name and input schema. Check the fresh response for both contract advertisements:
 
-1. **Authoring:** `bosl.schema_uri`, `bosl.reference_uri`, and
-   `bosl.examples_uri` name the exact BOSL resources; `bosl.descriptor_etag`
-   identifies the current descriptor. Have `bos-workflow-orchestrator` read the
-   advertised schema, reference, and examples before authoring. Copy resource
-   URIs verbatim. The etag is freshness evidence, not a registration precondition.
+1. **Authoring:** delegate assessment of the selected task's required grammar
+   and semantics to `bos-workflow-orchestrator`. When the host supports resource
+   reads, have it read the schema, reference, and examples named by
+   `bosl.schema_uri`, `bosl.reference_uri`, and `bosl.examples_uri`, copying each
+   URI verbatim. `bosl.descriptor_etag` identifies descriptor freshness and
+   supplies no registration precondition. When resource reads are unavailable,
+   have the orchestrator assess the freshly discovered registration contract's
+   inline `input_schema`, examples, and descriptions/reference semantics.
+   Sufficient inline evidence establishes authoring availability for the
+   selected task. Require the exact node, input/output, transition, and any
+   callback or operation grammar and semantics that task uses; an advertised
+   lookup or an unrelated example alone establishes no such sufficiency.
 2. **Registration/runtime:** `journey_registration.contract.capability` and
    `journey_registration.contract.input` advertise the lookup separately from
    `describe.operations`. For the current Lead Director contract these are
@@ -44,14 +51,16 @@ receipt separate from `awaiting_client` and `client_action_required` CRM
 instruction envelopes. All implemented journey improvements remain in API
 version 1; an API version change requires the user's explicit request.
 
-The entry condition passes only when both advertisements and their required
-resource/contract reads are present and valid. A missing key, failed read,
-unsupported contract, or invalid response leaves the affected authoring/runtime
-contract unavailable or unresolved: report the exact missing dependency and
-stop ad hoc composition. BOS installation, ordinary CRM Describe success, and
-an advertised lookup alone do not establish this condition. Check each selected
-plugin/operation's source readiness separately; contract availability grants no
-execution authority and does not establish that a provider is ready.
+The entry condition passes when the orchestrator has sufficient current
+authoring evidence for the selected task, through supported advertised resource
+reads or the fresh inline contract, and the registration/runtime contract is
+present and valid. If required grammar, semantics, operation schemas, or runtime
+evidence remains missing or invalid, report the exact unresolved dependency and
+stop ad hoc composition. A resource read unavailable in the host leaves the
+sufficient inline path usable. BOS installation, ordinary CRM Describe success,
+and an advertised lookup alone do not establish the entry condition. Check each
+selected plugin/operation's source readiness separately; contract availability
+grants no execution authority and does not establish that a provider is ready.
 
 An explain/preview request still routes to `bos-workflow-orchestrator` for a
 read-only plan from current Describe evidence. Explaining an installed plugin
