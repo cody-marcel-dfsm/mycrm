@@ -5,6 +5,17 @@ description: Handle provider-neutral CRM work directly or, when required BOS aut
 
 # My CRM
 
+## One BOS identity across authorized contexts
+
+GPT/Claude authenticate to BOS through OAuth; Muse currently uses one user-issued
+identity API key held privately by the host. Both methods support the same
+currently authorized organizations, apps, installations and assigned-role
+permissions. Delegate requested/default context selection to installed BOS
+through that same connection. Multiple valid contexts are normal and choosing
+another authorized context requires no additional BOS login or key. Separate
+identities retain separate authority. Handle no credential or opaque context value.
+
+
 Require the installed BOS product for authenticated context, discovery, and deterministic execution. That dependency does not require loading BOS client-skill files for every CRM operation. For ordinary single-operation work, use the focused My CRM skill with current BOS discovery and exact advertised HTTPS contracts; load a BOS client skill when the task needs its owned behavior: resolving an unscoped context, authentication or consent recovery, provider-source authorization recovery, an explicitly requested explain plan, multi-step or cross-service orchestration, BOSL or journey interaction, or BOS-owned settings and cache work. Delegate login, reauthentication, consent, source authorization, and connection recovery automatically to BOS. When an advertised operation returns an established uppercase handoff condition or challenged HTTP 401, ask BOS to recover through `READY`, refresh discovery, re-Describe the operation, and retry the exact preserved request once. Handle no credential, token, authority selector, client identifier, idempotency key, retry state, or execution identity.
 
 Before unscoped discovery, ask the installed BOS client to resolve context with
