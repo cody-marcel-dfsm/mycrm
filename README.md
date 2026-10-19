@@ -1,5 +1,29 @@
 # My CRM
 
+## One BOS identity and delegated context selection — 2026-10-19
+
+One BOS identity login gives the agent access to the organizations, applications,
+installations and eligible assigned roles that identity is currently authorized
+to use. GPT and Claude authenticate that identity through OAuth; Muse currently
+uses one user-issued BOS identity API key. Both methods use the same discovery,
+context-selection and per-operation authorization rules. The agent matches an
+explicit requested context or the calling plugin's confirmed defaults against
+fresh authorized choices, asks for clarification when necessary, and reuses the
+same connection when the context changes. Each operation independently checks
+current membership, role, capability, plugin consent and provider policy.
+Separate BOS identities retain their own logins, credentials and
+authority. Provider consent stays with its provider. Existing restricted grants
+and integration keys retain their original limits and migration rules.
+
+My CRM delegates authentication, fresh context/default matching and protected
+transport to installed BOS. A user may name an organization/app/eligible role
+in the request; My CRM retains that intent while BOS selects and validates the
+context. My CRM handles no credential, raw authority identifier or opaque context
+handle, and its authentication handoff remains the existing readiness-only
+contract. It preserves its pending CRM operation through genuine credential
+recovery; choosing another authorized context alone triggers no new login.
+
+
 ## Understand your customers and their next actions
 
 My CRM helps teams understand customer records, pipeline status, activity, and next actions across their authorized CRM systems. It applies provider-neutral CRM expertise through BOS, the service gateway for controlled execution of permissioned workflows. Your service infrastructure, authoritative business state, data stores, and private implementation IP stay outside the agent host; authorized inputs, results, public skills, and permitted scoped caches can reach the AI workspace.
@@ -95,7 +119,7 @@ codex plugin remove my-crm@my-crm-local
 
 ## Supported clients
 
-Version 0.2.52 lets BOS assess sufficient fresh inline authoring evidence on hosts without resource reads. Native installation and authenticated operation on every host remain separate acceptance observations; package conformance alone does not establish runtime readiness. Install the separately published BOS product for your host and complete its connection setup first. My CRM adds skills through that existing connection.
+Version 0.2.53 clarifies one BOS identity across authorized contexts and delegates requested or default context selection to installed BOS. It retains BOS assessment of sufficient fresh inline authoring evidence on hosts without resource reads. Native installation and authenticated operation on every host remain separate acceptance observations; package conformance alone does not establish runtime readiness. Install the separately published BOS product for your host and complete its connection setup first. My CRM adds skills through that existing connection.
 
 The layouts below match the [published BOS client distributions](https://github.com/cody-marcel-dfsm/bos_operations_ceneter/tree/main/clients). Commands run from a **published My CRM release checkout**; use the same relative paths under `dist/my-crm` when reviewing a built release candidate.
 
