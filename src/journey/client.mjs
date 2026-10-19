@@ -93,19 +93,20 @@ export function validateCrmResolution(value) {
   if (!value || typeof value !== "object" || Array.isArray(value)) throw new TypeError("CRM journey resolution must be an object");
   const allowed = ["after_success", "approval_scope", "goal", "instruction", "operation", "requires_user_approval"];
   if (Object.keys(value).some((key) => !allowed.includes(key))) throw new TypeError("CRM journey resolution contains unsupported fields");
-  for (const key of ["after_success", "approval_scope", "goal", "instruction", "requires_user_approval"]) {
+  for (const key of ["after_success", "goal", "instruction", "requires_user_approval"]) {
     if (!Object.prototype.hasOwnProperty.call(value, key)) throw new TypeError(`CRM journey resolution ${key} is required`);
   }
   requireString(value.goal, "CRM journey resolution goal");
   requireString(value.instruction, "CRM journey resolution instruction");
-  if (value.operation !== undefined && (typeof value.operation !== "string" || !/^[a-z][a-z0-9_-]*(?:\.[a-z][a-z0-9_-]*)+$/u.test(value.operation))) {
+  if (value.operation !== undefined && (typeof value.operation !== "string" || value.operation.length > 255 || !/^[a-z0-9][a-z0-9_-]*(?:\.[a-z0-9][a-z0-9_-]*)+$/u.test(value.operation))) {
     throw new TypeError("CRM journey resolution operation is invalid");
   }
   if (typeof value.requires_user_approval !== "boolean") throw new TypeError("CRM journey resolution requires_user_approval must be boolean");
-  const approvalScope = value.approval_scope ?? [];
+  const approvalScope = Object.hasOwn(value, "approval_scope") ? value.approval_scope : [];
   if (!Array.isArray(approvalScope) || new Set(approvalScope).size !== approvalScope.length || approvalScope.some((item) => typeof item !== "string" || item.length === 0)) {
     throw new TypeError("CRM journey resolution approval_scope is invalid");
   }
+  if (value.requires_user_approval && approvalScope.length === 0) throw new TypeError("CRM journey resolution requires an explicit nonempty approval_scope");
   const afterSuccess = validateResolvedAction(value.after_success);
   if (afterSuccess.verb !== "step" || afterSuccess.payload_schema !== null) throw new TypeError("CRM journey resolution after_success must be a no-payload step action");
   const resolution = {...structuredClone(value), approval_scope: structuredClone(approvalScope), after_success: afterSuccess};
@@ -117,7 +118,7 @@ export function validateCrmResolutionEnvelope(value) {
   if (!value || typeof value !== "object" || Array.isArray(value)) throw new TypeError("CRM client_action_required response must be an object");
   if (JSON.stringify(Object.keys(value).sort()) !== JSON.stringify(RESOLUTION_ENVELOPE_KEYS)) throw new TypeError("CRM client_action_required response shape is invalid");
   requireString(value.identity, "CRM journey identity");
-  if (value.identity.length > 160) throw new TypeError("CRM journey identity is too long");
+  if (Array.from(value.identity).length > 255) throw new TypeError("CRM journey identity is too long");
   if (value.status !== "client_action_required") throw new TypeError("CRM journey response status must be client_action_required");
   if (!value.current_step || typeof value.current_step !== "object" || Array.isArray(value.current_step)) throw new TypeError("CRM journey current_step must be an object");
   if (JSON.stringify(Object.keys(value.current_step).sort()) !== JSON.stringify(["code", "operation", "type"])) throw new TypeError("CRM journey current_step shape is invalid");
