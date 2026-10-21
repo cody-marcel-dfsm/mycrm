@@ -86,7 +86,9 @@ failure and actual overlap timing; partial or conflicting results grant no appro
    in-scope proposal remains supporting history through commits and instruction
    changes; the current independent reviewer reassesses affected criteria.
 2. Validate the exact committed range. `npm run oracle:review` accepts clean
-   canonical main and reviews the proposal-base-to-current-commit range; staged
+   canonical main and retains the verified ancestral review base across new
+   proposals so unchanged sealed coverage remains reusable. Current proposal
+   criteria and the complete current candidate still require assessment; staged
    compatibility mode remains available. Make one complete pass per unvalidated
    commit or batched range, covering real entrypoints, dependencies, consumers,
    publication and failure/recovery paths. Return every established finding

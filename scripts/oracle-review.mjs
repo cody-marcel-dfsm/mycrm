@@ -195,7 +195,17 @@ async function assertExactStagedCandidate() {
   if (untracked) throw new Error(`Oracle review requires every candidate file staged; untracked: ${untracked.replaceAll("\n", ", ")}`);
   if (!staged) {
     const proposal = await readProposalRecord();
-    const commit = await git(["rev-parse", "HEAD"]), base = proposal.base_commit;
+    const commit = await git(["rev-parse", "HEAD"]);
+    // Proposal bookkeeping never discards the sealed coverage lineage. This
+    // old receipt supplies only the ancestral range; current source/criteria
+    // still pass the complete independent assessment before a new receipt.
+    const checkpoint = await readValidatedCheckpoint();
+    const base = checkpoint?.record.reviewed_base ?? proposal.base_commit;
+    if (checkpoint) {
+      if (base !== checkpoint.receipt.base_commit) throw new Error("Checkpoint review base differs from its immutable receipt");
+      await git(["merge-base", "--is-ancestor", base, checkpoint.record.last_validated_commit]);
+      await git(["merge-base", "--is-ancestor", checkpoint.record.last_validated_commit, commit]);
+    }
     if (await git(["branch", "--show-current"]) !== "main") throw new Error("Committed Oracle review requires canonical main");
     const files = await git(["diff", "--name-only", base, commit]);
     if (!files) throw new Error("Oracle review requires unvalidated commits or a non-empty staged candidate");

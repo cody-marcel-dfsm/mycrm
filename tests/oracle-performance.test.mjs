@@ -1234,6 +1234,33 @@ test("committed-range review checkpoints exact source and unchanged shipment exe
   await assert.rejects(recordDeliveredCommit({root: repo, admission, installation: {pluginId: "my-crm@synthetic", release: {content_sha256: "a".repeat(64)}}}), /exact validated commit|exact validated admission/);
 });
 
+test("new proposals retain committed review lineage while current criteria remain independently assessed", async (t) => {
+  const {repo, env, git, prepare} = await fixture(t); await prepare();
+  await git("branch", "-m", "main");
+  await git("-c", "user.name=Synthetic", "-c", "user.email=synthetic@example.invalid", "commit", "-qm", "Synthetic original prepared candidate");
+  await command(repo, ["review"], env);
+  const {readValidatedCheckpoint} = await import("../scripts/shipment-state.mjs");
+  const first = await readValidatedCheckpoint(repo), originalBase = first.record.reviewed_base;
+  const seriesFile = path.join(repo, ".git/oracle/series", `${originalBase}.json`);
+  const originalSeries = JSON.parse(await readFile(seriesFile));
+  await command(repo, ["proposal", "Problem: synthetic new affected area. Cause: new committed change. Recommended change: preserve prior verified lineage and assess current changes."], env);
+  const proposal = JSON.parse(await readFile(path.join(repo, ".git/oracle/proposal.json")));
+  assert.equal(proposal.base_commit, first.record.last_validated_commit);
+  assert.notEqual(proposal.base_commit, originalBase);
+  await writeFile(path.join(repo, "new-area.txt"), "Synthetic new committed scope\n"); await git("add", ".");
+  await git("-c", "user.name=Synthetic", "-c", "user.email=synthetic@example.invalid", "commit", "-qm", "Synthetic current committed scope");
+  await command(repo, ["review"], env);
+  const current = await readValidatedCheckpoint(repo), series = JSON.parse(await readFile(seriesFile));
+  assert.equal(current.record.last_validated_commit, await git("rev-parse", "HEAD"));
+  assert.equal(current.record.reviewed_base, originalBase);
+  assert.equal(current.receipt.proposal_record_sha256, proposal.record_sha256);
+  assert.equal(series.series_id, originalSeries.series_id);
+  assert.equal(series.rounds.length, originalSeries.rounds.length + 1);
+  assert.deepEqual(series.rounds.slice(0, -1), originalSeries.rounds);
+  assert.ok(series.rounds.at(-1).response.coverage.some((item) => item.path === "new-area.txt"));
+  assert.ok(series.rounds.at(-1).response.reused_coverage.includes("candidate.txt"));
+});
+
 test("missing checkpoint never approves a clean published candidate and ordinary hooks need no reviewer", async (t) => {
   const {repo, git} = await fixture(t); await git("branch", "-m", "main");
   const {shipmentPlan, readValidatedCheckpoint} = await import("../scripts/shipment-state.mjs");
