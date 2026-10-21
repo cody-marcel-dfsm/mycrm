@@ -338,7 +338,11 @@ export async function captureInputs({root, base, tree = null, validationEvidence
 }
 
 export function assertInputsMatch(expected, actual) {
-  if (bindingHash(expected) !== bindingHash(actual)) throw new Error("Oracle inputs drifted: base, tree, authority, evidence, proposal, or owner approval changed; fresh review is required");
+  if (bindingHash(expected) !== bindingHash(actual)) {
+    const error = new Error("Oracle inputs drifted: base, tree, authority, evidence, proposal, or owner approval changed; fresh review is required");
+    error.code = "ORACLE_INPUT_DRIFT";
+    throw error;
+  }
 }
 
 export async function preparedEvidence(directory, inputs, prepare) {

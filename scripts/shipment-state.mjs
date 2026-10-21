@@ -4,6 +4,7 @@ import path from "node:path";
 import process from "node:process";
 import {fileURLToPath} from "node:url";
 import {atomicJson, bindingHash, metadataDirectory, readMetadataFile, assertPublishedInvocation, captureInputs, assertInputsMatch} from "./oracle-inputs.mjs";
+import {activeReviewController, observeReviewController} from "./oracle-lifecycle.mjs";
 import {verifyParallelArtifacts} from "./oracle-parallel.mjs";
 
 const execute = promisify(execFile);
@@ -21,7 +22,10 @@ async function optionalJson(filename, owner) {
   catch (error) { if (error.code === "ENOENT") return null; throw error; }
 }
 async function exactSource(root, commit, tree) {
-  if (await git(root, ["branch", "--show-current"]) !== "main" || await git(root, ["rev-parse", "HEAD"]) !== commit || await git(root, ["rev-parse", "HEAD^{tree}"]) !== tree || await git(root, ["status", "--porcelain=v1", "--untracked-files=all"])) throw new Error("Shipment requires the complete clean canonical main at its exact validated commit");
+  if (await git(root, ["branch", "--show-current"]) !== "main" || await git(root, ["rev-parse", "HEAD"]) !== commit || await git(root, ["rev-parse", "HEAD^{tree}"]) !== tree || await git(root, ["status", "--porcelain=v1", "--untracked-files=all"])) {
+    const error = new Error("Shipment requires the complete clean canonical main at its exact validated commit");
+    error.code = "ORACLE_CANDIDATE_MOVED"; throw error;
+  }
 }
 export async function publicationSourceMatches(root, source, publication) {
   if (source === publication) return true;
@@ -80,9 +84,12 @@ export async function recordValidatedCommit({root = process.cwd(), receipt}) {
   await atomicJson(path.join(directory, "shipment-validated.json"), record, {root: owner});
   return record;
 }
-export async function shipmentPlan({root = process.cwd(), publishedRef = "refs/remotes/origin/main"} = {}) {
+export async function shipmentPlan({root = process.cwd(), publishedRef = "refs/remotes/origin/main", observeReview = true} = {}) {
   const head = await git(root, ["rev-parse", "HEAD"]);
   if (await git(root, ["branch", "--show-current"]) !== "main") throw new Error("Shipment operates in canonical main");
+  const active = observeReview ? await activeReviewController(root) : null;
+  if (active) return {action: "REVIEW_IN_PROGRESS", candidate_commit: head, approval_state: "PENDING", controller: active,
+    reason: "Observe the verified live native completed-review parent; normal source commits remain available"};
   const dirty = await git(root, ["status", "--porcelain=v1", "--untracked-files=all"]);
   if (dirty) return {action: "PREPARE", candidate_commit: head, reason: "Commit every authored file before validation"};
   const checkpoint = await readValidatedCheckpoint(root), {owner, directory} = await store(root);
@@ -122,6 +129,7 @@ export async function recordDeliveredCommit({root = process.cwd(), admission, in
 // The native dispatch guard executes no callback for an unchanged shipment.
 export async function runShipment({root = process.cwd(), prepare, validate, deliver, plan = shipmentPlan} = {}) {
   let selection = await plan({root});
+  if (selection.action === "REVIEW_IN_PROGRESS") { await observeReviewController(selection.controller, {root}); selection = await plan({root}); }
   if (selection.action === "NO_CHANGES") return selection;
   if (selection.action === "PREPARE") { await prepare(selection); selection = await plan({root}); }
   if (selection.action === "VALIDATE") { await validate(selection); selection = await plan({root}); }
