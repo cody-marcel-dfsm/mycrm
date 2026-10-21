@@ -37,11 +37,15 @@ only for a concrete dependency between the prepared releases.
    creating the inventory, record the base and semantically integrate newer
    remote work. Recheck only concrete freshness before final publication.
 3. Run `npm run shipment:plan -- --json`. Its native actions are `PREPARE`,
-   `VALIDATE`, `DELIVER` and `NO_CHANGES`. Clean main with unpublished or
+   `VALIDATE`, `REVIEW_IN_PROGRESS`, `DELIVER` and `NO_CHANGES`. Clean main with unpublished or
    unvalidated commits is work. Missing checkpoint state supplies no approval.
    With no commits beyond the configured published ref and no outstanding work,
    `NO_CHANGES` creates no approval and stops with zero tests, review, build,
    version increment, deployment, installation or publication.
+   `REVIEW_IN_PROGRESS` identifies the verified live native parent controller;
+   attach through `npm run oracle:review` and observe its existing area group.
+   An observer preserves invocation and receipt custody and never launches a
+   second group. Cancelling an observer leaves its parent running.
 4. `HEAD == last_validated_commit` skips validation. A verified already-delivered
    candidate is `NO_CHANGES`; a validated undelivered candidate resumes `DELIVER`
    using its existing immutable receipt and release version.
@@ -79,6 +83,15 @@ findings and admits one whole-candidate verdict only after every cohort complete
 all required coverage is present and current content/evidence still match. No
 serial final model review follows. Preserve every cohort's original result,
 failure and actual overlap timing; partial or conflicting results grant no approval.
+The native parent retains its lifecycle across normal commits and automatically
+assesses intervening committed deltas, preserving each attempt's literal outcome
+and valid source/dependency/evidence observations. Separate immutable generation
+observations bind its PID, kernel birth identity, canonical root, kind and scope;
+they impose no source or review reservation. Stale parents retain their evidence,
+foreign or malformed custody fails closed, and current publication awaits the
+whole-current decision. Supply known original clocks through
+`MYCRM_REVIEW_STARTED_AT` and `MYCRM_RELEASE_STARTED_AT`; unavailable clocks remain
+explicitly null rather than receiving a new original timestamp.
 
 1. Submit the concise Problem, Cause and Recommended change through
    `npm run oracle:proposal -- "<proposal>"` before implementation, with at most

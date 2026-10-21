@@ -12,6 +12,7 @@ import {environmentHash, executionEnvironment, executableBinding, readValidation
 import Ajv from "ajv";
 import {recordValidatedCommit, readValidatedCheckpoint, shipmentPlan} from "./shipment-state.mjs";
 import {runParallelReview, verifyParallelArtifacts} from "./oracle-parallel.mjs";
+import {withReviewController} from "./oracle-lifecycle.mjs";
 import {archiveTechnicalReceipt, committedReceipt, deploymentHistoryForReview, deploymentPlan, pendingDeploymentEffects, authorizationDigest, validateDeploymentAssessment, validateDeploymentDispositions, verifyNewEffectAuthorities, verifyDeploymentAuthorization} from "./oracle-deployment.mjs";
 
 const execFileAsync = promisify(execFile);
@@ -191,8 +192,10 @@ async function assertExactStagedCandidate() {
   const [unstaged, untracked, staged] = await Promise.all([
     git(["diff", "--name-only"]), git(["ls-files", "--others", "--exclude-standard"]), git(["diff", "--cached", "--name-only"]),
   ]);
-  if (unstaged) throw new Error(`Oracle review requires every tracked change staged; unstaged: ${unstaged.replaceAll("\n", ", ")}`);
-  if (untracked) throw new Error(`Oracle review requires every candidate file staged; untracked: ${untracked.replaceAll("\n", ", ")}`);
+  if (unstaged || untracked) {
+    const error = new Error(unstaged ? `Oracle review requires every tracked change staged; unstaged: ${unstaged.replaceAll("\n", ", ")}` : `Oracle review requires every candidate file staged; untracked: ${untracked.replaceAll("\n", ", ")}`);
+    error.code = "ORACLE_CANDIDATE_MOVED"; throw error;
+  }
   if (!staged) {
     const proposal = await readProposalRecord();
     const commit = await git(["rev-parse", "HEAD"]);
@@ -684,16 +687,78 @@ async function verifyCommit(reference) {
   console.log(`ORACLE_COMMIT=APPROVED commit=${await git(["rev-parse", reference])} reviewed_commit=${await git(["rev-parse", reviewedReference])} tree=${tree}`);
 }
 
+async function continuousReview(args, controller) {
+  const requested = reviewArguments(args);
+  const evidence = new Set(requested.validationEvidence);
+  let owner = requested.ownerApprovalEvidence, attempt = 0, forceReview = false, catchingUp = false;
+  for (;;) {
+    while (catchingUp && await git(["status", "--porcelain=v1", "--untracked-files=all"])) {
+      if (controller.cancelled()) throw new Error("Native review controller was cancelled while waiting for authored commits");
+      await controller.progress({phase: "WAITING_FOR_COMMIT", attempt});
+      await new Promise((resolve) => setTimeout(resolve, 250));
+    }
+    const arrived = reviewArguments(await controller.pendingArguments());
+    let newEvidence = forceReview; forceReview = false;
+    for (const item of arrived.validationEvidence) { if (!evidence.has(item)) newEvidence = true; evidence.add(item); }
+    if (arrived.ownerApprovalEvidence !== null) {
+      if (owner !== null && owner !== arrived.ownerApprovalEvidence) throw new Error("Attached review supplied conflicting exact owner authority");
+      newEvidence ||= owner !== arrived.ownerApprovalEvidence; owner = arrived.ownerApprovalEvidence;
+    }
+    const selection = await shipmentPlan({observeReview: false});
+    if (!newEvidence && selection.last_validated_commit && ["DELIVER", "NO_CHANGES"].includes(selection.action)) {
+      console.log(`ORACLE_REVIEW=NO_UNVALIDATED_COMMITS commit=${selection.last_validated_commit}`);
+      return {action: "NO_UNVALIDATED_COMMITS", candidate_commit: selection.last_validated_commit};
+    }
+    const before = await git(["rev-parse", "HEAD"]);
+    const currentArgs = [...evidence].flatMap((item) => ["--validation", item]);
+    if (owner !== null) currentArgs.push("--owner-approval", owner);
+    await controller.progress({phase: "ASSESSING", candidate_commit: before, attempt: ++attempt});
+    let result, failure;
+    try {
+      const directory = await oracleDirectory();
+      result = await withOracleRun(directory, async (context) => {
+        await controller.progress({phase: "ASSESSING", candidate_commit: before, attempt,
+          invocation: currentInvocation(), run: context.run});
+        return review(currentArgs, context);
+      }, {kind: "review", onAdmitted: () => removeMetadataFile(path.join(directory, "approval.json"), {force: true})});
+    } catch (error) { failure = error; }
+    const after = await git(["rev-parse", "HEAD"]);
+    const moved = before !== after;
+    if (moved && (!failure || ["ORACLE_INPUT_DRIFT", "ORACLE_CANDIDATE_MOVED"].includes(failure.code))) {
+      process.stdout.write(`ORACLE_REVIEW=CONTINUING controller=${controller.record.id} previous=${before} current=${after}\n`);
+      await controller.progress({phase: "CATCHING_UP", previous_commit: before, candidate_commit: after, attempt});
+      // The prior native run retains its literal ERROR/COMPLETE result. Only
+      // the next actual assessment may approve the newer committed candidate.
+      process.exitCode = undefined;
+      catchingUp = true;
+      continue;
+    }
+    if (failure) throw failure;
+    const pending = await controller.pendingArguments();
+    if (pending.length) {
+      const next = reviewArguments(pending);
+      const fresh = next.validationEvidence.some((item) => !evidence.has(item)) || (next.ownerApprovalEvidence !== null && next.ownerApprovalEvidence !== owner);
+      if (fresh) {
+        next.validationEvidence.forEach((item) => evidence.add(item));
+        if (next.ownerApprovalEvidence !== null) {
+          if (owner !== null && owner !== next.ownerApprovalEvidence) throw new Error("Attached review supplied conflicting exact owner authority");
+          owner = next.ownerApprovalEvidence;
+        }
+        // New bound evidence is assessed in the same owner lifecycle, even
+        // when no source commit arrived. Never invent its applicability.
+        forceReview = true;
+        process.exitCode = undefined;
+        continue;
+      }
+    }
+    return result;
+  }
+}
+
 async function main() {
   const [command, argument] = process.argv.slice(2);
   if (command === "review" || command === "proposal") {
-    if (command === "review") {
-      const selection = await shipmentPlan();
-      if (selection.last_validated_commit && ["DELIVER", "NO_CHANGES"].includes(selection.action)) {
-        console.log(`ORACLE_REVIEW=NO_UNVALIDATED_COMMITS commit=${selection.last_validated_commit}`);
-        return {action: "NO_UNVALIDATED_COMMITS"};
-      }
-    }
+    if (command === "review") return withReviewController({args: process.argv.slice(3), action: (controller) => continuousReview(process.argv.slice(3), controller)});
     const directory = await oracleDirectory();
     return withOracleRun(directory, (context) => command === "review" ? review(process.argv.slice(3), context) : reviewProposal(argument, process.argv.slice(4), context), {
       kind: command,

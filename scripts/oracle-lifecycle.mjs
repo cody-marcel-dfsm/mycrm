@@ -150,10 +150,13 @@ export async function withReviewController({root = process.cwd(), args = [], act
     }
     return result;
   };
-  let result, failure;
-  try { await progress({phase: "PREPARING"}); result = await action({record, progress, pendingArguments}); return result; }
+  let result, failure, interrupted = false;
+  const cancel = () => { interrupted = true; };
+  process.on("SIGINT", cancel); process.on("SIGTERM", cancel);
+  try { await progress({phase: "PREPARING"}); result = await action({record, progress, pendingArguments, cancelled: () => interrupted}); return result; }
   catch (error) { failure = error; throw error; }
   finally {
+    process.removeListener("SIGINT", cancel); process.removeListener("SIGTERM", cancel);
     await atomicJson(path.join(record.directory, "outcome.json"), seal({controller_id: record.id,
       finished_at: new Date().toISOString(), outcome: failure ? "ERROR" : result?.verdict ?? result?.review_status ?? result?.action ?? "COMPLETED",
       result: result ?? null, error: failure ? {name: failure.name, message: failure.message} : null}), {root: state.owner, exclusive: true});

@@ -34,7 +34,8 @@ export async function publicationSourceMatches(root, source, publication) {
   try { await git(root, ["merge-base", "--is-ancestor", parents[0], source]); return true; }
   catch { return false; }
 }
-export async function checkpointApplicable(root, checkpoint) {
+export async function checkpointApplicable(root, checkpoint, {allowActiveController = false} = {}) {
+  if (!allowActiveController && await activeReviewController(root)) throw new Error("Current candidate review is still in progress; await its exact-current decision");
   const {owner, directory} = await store(root), {receipt} = checkpoint;
   if (receipt.parallel_review_evidence) await verifyParallelArtifacts(receipt.parallel_review_evidence, {root: owner});
   await assertPublishedInvocation(receipt.invocation, directory, owner);
@@ -96,7 +97,7 @@ export async function shipmentPlan({root = process.cwd(), publishedRef = "refs/r
   let applicabilityError = null;
   const sourceMatches = checkpoint && await publicationSourceMatches(root, checkpoint.record.last_validated_commit, head);
   if (sourceMatches) {
-    try { await checkpointApplicable(root, checkpoint); }
+    try { await checkpointApplicable(root, checkpoint, {allowActiveController: !observeReview}); }
     catch (error) { applicabilityError = error; }
   }
   if (sourceMatches && !applicabilityError) {

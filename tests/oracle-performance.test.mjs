@@ -45,6 +45,7 @@ const out=args[args.indexOf('--output-last-message')+1];
 const proposal=!args.includes('--output-schema');
 if(!proposal && JSON.stringify(JSON.parse(fs.readFileSync(args[args.indexOf('--output-schema')+1]))).includes('"uniqueItems"')) throw new Error('Strict response format does not support uniqueItems');
 if(!proposal && process.env.ORACLE_READY) fs.writeFileSync(process.env.ORACLE_READY,'ready');
+if(!proposal && process.env.ORACLE_CALLS) fs.appendFileSync(process.env.ORACLE_CALLS,JSON.stringify({out,pid:process.pid})+'\\n');
 if(!proposal && process.env.ORACLE_MUTATE) fs.writeFileSync(process.env.ORACLE_MUTATE,'changed during review');
 if(process.env.ORACLE_MUTATE_SETTINGS) fs.writeFileSync(process.env.ORACLE_MUTATE_SETTINGS,process.env.ORACLE_SETTINGS_CONTENT);
 const emit=()=>{
@@ -1304,24 +1305,119 @@ test("checkpoint custody rejects changed receipts, stale source and malformed de
   assert.equal(checkpointDigest(original.record), original.record.checkpoint_sha256);
 });
 
-test("late older approval cannot overwrite a newer rejected concurrent attempt", async (t) => {
+test("concurrent review requests attach to the live native parent without superseding its area group", async (t) => {
   const {repo, root, env, prepare, git} = await fixture(t); await prepare();
-  const ready = path.join(root, "older-ready"), args = [launcher, "review"];
-  const older = spawn(process.execPath, args, {cwd: repo, env: {...process.env, ...env, CODEX_THREAD_ID: "", CODEX_SELECTED_MODEL: "synthetic-test-model", CODEX_SELECTED_REASONING_EFFORT: "high", ORACLE_DELAY: "700", ORACLE_READY: ready}, stdio: ["ignore", "pipe", "pipe"]});
-  let stderr = ""; older.stderr.on("data", (chunk) => { stderr += chunk; }); older.stdout.resume();
-  const stopped = new Promise((resolve, reject) => { older.once("error", reject); older.once("close", resolve); });
+  const ready = path.join(root, "owner-ready"), calls = path.join(root, "calls.jsonl");
+  const owner = runningReview(repo, {...env, ORACLE_DELAY: "1000", ORACLE_READY: ready, ORACLE_CALLS: calls});
   await waitFor(ready);
-  await assert.rejects(command(repo, ["review"], {...env, ORACLE_SOURCE_FINDING: "1"}), /Command failed/);
-  assert.equal(await stopped, 1, stderr);
+  const pointer = await readFile(path.join(repo, ".git/oracle/active-review.json"));
+  const {shipmentPlan} = await import("../scripts/shipment-state.mjs");
+  assert.equal((await shipmentPlan({root: repo})).action, "REVIEW_IN_PROGRESS");
+  const follower = await command(repo, ["review"], {...env, ORACLE_SOURCE_FINDING: "1", ORACLE_CALLS: calls});
+  assert.match(follower.stdout, /ORACLE_REVIEW=ATTACHED/);
+  assert.equal((await owner.done).code, 0);
+  assert.deepEqual(await readFile(path.join(repo, ".git/oracle/active-review.json")), pointer);
+  assert.equal((await readFile(calls, "utf8")).trim().split("\n").length, 3);
   const current = JSON.parse(await readFile(path.join(repo, ".git/oracle/approval.json")));
-  assert.equal(current.verdict, "REJECTED");
+  assert.equal(current.verdict, "APPROVED");
   const history = JSON.parse(await readFile(path.join(repo, ".git/oracle/series", `${await git("rev-parse", "HEAD")}.json`)));
-  assert.equal(history.rounds.at(-1).verdict, "REJECTED");
-  const archives = await readdir(path.join(repo, ".git/oracle/series/supporting-assessments", await git("rev-parse", "HEAD")));
-  assert.ok(archives.length >= 1);
-  const original = JSON.parse(await readFile(path.join(repo, ".git/oracle/series/supporting-assessments", await git("rev-parse", "HEAD"), archives[0])));
-  assert.equal(original.series.rounds[0].execution_status, "ERROR");
-  assert.equal(original.series.rounds[0].observed_assessment.response.verdict, "APPROVED");
+  assert.equal(history.rounds.length, 1);
+  assert.equal(history.rounds[0].verdict, "APPROVED");
+});
+
+function runningReview(repo, env, args = []) {
+  const child = spawn(process.execPath, [launcher, "review", ...args], {cwd: repo,
+    env: {...process.env, ...env, CODEX_THREAD_ID: "", CODEX_SELECTED_MODEL: "synthetic-test-model", CODEX_SELECTED_REASONING_EFFORT: "high"}, stdio: ["ignore", "pipe", "pipe"]});
+  let stdout = "", stderr = "";
+  child.stdout.on("data", (value) => { stdout += value; }); child.stderr.on("data", (value) => { stderr += value; });
+  const done = new Promise((resolve, reject) => { child.once("error", reject); child.once("close", (code, signal) => resolve({code, signal, stdout, stderr})); });
+  return {child, done, output: () => stdout};
+}
+
+test("simultaneous native starters elect one immutable live parent and observer cancellation leaves it running", async (t) => {
+  const {repo, root, env, prepare} = await fixture(t); await prepare();
+  const calls = path.join(root, "calls.jsonl"), ready = path.join(root, "ready");
+  const settings = {...env, ORACLE_DELAY: "1600", ORACLE_CALLS: calls, ORACLE_READY: ready};
+  const first = runningReview(repo, settings), second = runningReview(repo, settings);
+  await waitFor(ready);
+  for (let count = 0; count < 200 && ![first, second].some((item) => /ATTACHED/.test(item.output())); count++) await new Promise((resolve) => setTimeout(resolve, 20));
+  const follower = [first, second].find((item) => /ATTACHED/.test(item.output()));
+  assert.ok(follower, "One simultaneous starter must attach before any second area group");
+  const owner = follower === first ? second : first;
+  follower.child.kill("SIGTERM");
+  assert.equal((await follower.done).signal, "SIGTERM");
+  const completed = await owner.done;
+  assert.equal(completed.code, 0, completed.stderr);
+  assert.equal((await readFile(calls, "utf8")).trim().split("\n").length, 3);
+});
+
+test("live parent catches batched committed movement and preserves actual ERROR observations", async (t) => {
+  const {repo, root, env, git, prepare} = await fixture(t); await prepare(); await git("branch", "-m", "main");
+  await git("-c", "user.name=Synthetic", "-c", "user.email=synthetic@example.invalid", "commit", "-qm", "Initial candidate");
+  const first = await git("rev-parse", "HEAD"), ready = path.join(root, "ready"), calls = path.join(root, "calls.jsonl");
+  const owner = runningReview(repo, {...env, ORACLE_DELAY: "800", ORACLE_READY: ready, ORACLE_CALLS: calls, ORACLE_REUSE_COVERAGE: "1"});
+  await waitFor(ready);
+  await writeFile(path.join(repo, "candidate.txt"), "Arrived production change\n"); await git("add", ".");
+  await git("-c", "user.name=Synthetic", "-c", "user.email=synthetic@example.invalid", "commit", "-qm", "Arrived candidate");
+  await git("-c", "user.name=Synthetic", "-c", "user.email=synthetic@example.invalid", "commit", "--allow-empty", "-qm", "Ordinary unchanged-content commit");
+  const head = await git("rev-parse", "HEAD"), completed = await owner.done;
+  assert.equal(completed.code, 0, completed.stderr); assert.match(completed.stdout, /ORACLE_REVIEW=CONTINUING/);
+  const {readValidatedCheckpoint} = await import("../scripts/shipment-state.mjs");
+  const checkpoint = await readValidatedCheckpoint(repo);
+  assert.equal(checkpoint.record.last_validated_commit, head); assert.notEqual(head, first);
+  const history = JSON.parse(await readFile(path.join(repo, ".git/oracle/series", `${checkpoint.record.reviewed_base}.json`)));
+  assert.equal(history.rounds[0].execution_status, "ERROR");
+  assert.equal(history.rounds[0].observed_assessment.response.verdict, "APPROVED");
+  assert.equal(history.rounds.at(-1).verdict, "APPROVED");
+  assert.equal((await readFile(calls, "utf8")).trim().split("\n").length, 6);
+});
+
+test("unchanged-content commits retain valid coverage while the parent approves the exact new commit", async (t) => {
+  const {repo, root, env, git, prepare} = await fixture(t); await prepare(); await git("branch", "-m", "main");
+  await git("-c", "user.name=Synthetic", "-c", "user.email=synthetic@example.invalid", "commit", "-qm", "Initial current source");
+  await command(repo, ["review"], env);
+  const tree = await git("rev-parse", "HEAD^{tree}");
+  await git("-c", "user.name=Synthetic", "-c", "user.email=synthetic@example.invalid", "commit", "--allow-empty", "-qm", "First history-only commit");
+  const ready = path.join(root, "ready"), owner = runningReview(repo, {...env, ORACLE_DELAY: "700", ORACLE_READY: ready, ORACLE_REUSE_COVERAGE: "1"});
+  await waitFor(ready);
+  await git("-c", "user.name=Synthetic", "-c", "user.email=synthetic@example.invalid", "commit", "--allow-empty", "-qm", "Arrived history-only commit");
+  const result = await owner.done; assert.equal(result.code, 0, result.stderr);
+  const {readValidatedCheckpoint} = await import("../scripts/shipment-state.mjs");
+  const current = await readValidatedCheckpoint(repo);
+  assert.equal(current.record.last_validated_commit, await git("rev-parse", "HEAD"));
+  assert.equal(current.record.tree, tree); assert.ok(current.receipt.reused_coverage.includes("candidate.txt"));
+});
+
+test("attached evidence is independently consumed by the same parent before current completion", async (t) => {
+  const {repo, root, env, prepare} = await fixture(t); await prepare();
+  const ready = path.join(root, "ready"), calls = path.join(root, "calls.jsonl"), evidence = path.join(repo, "Vault/tmp/arrived.txt");
+  await writeFile(evidence, "New bound validation explanation.\n");
+  const owner = runningReview(repo, {...env, ORACLE_DELAY: "650", ORACLE_READY: ready, ORACLE_CALLS: calls});
+  await waitFor(ready);
+  const follower = await command(repo, ["review", "--validation", `@${evidence}`], env);
+  assert.match(follower.stdout, /ATTACHED/);
+  const result = await owner.done; assert.equal(result.code, 0, result.stderr);
+  const receipt = JSON.parse(await readFile(path.join(repo, ".git/oracle/approval.json")));
+  assert.ok(receipt.requested_validation_evidence.includes(`@${evidence}`));
+  assert.equal((await readFile(calls, "utf8")).trim().split("\n").length, 6);
+});
+
+test("stale PID identity is preserved and foreign controller metadata prevents new admission", async (t) => {
+  const {repo, root, env, prepare} = await fixture(t); await prepare();
+  const directory = path.join(repo, ".git/oracle/controllers"); await mkdir(directory, {recursive: true});
+  const value = {schema: "my-crm.review-controller/v1", id: "00000000-0000-4000-8000-000000000000", generation: 0,
+    kind: "review", scope: "completed-source", root: repo,
+    process: {pid: process.pid, birth: "reused-pid-original-birth", root: repo, command: `node ${launcher} review`},
+    started_at: "2026-10-21T02:47:36.376299Z", review_started_at: "2026-10-21T02:47:36.376299Z", release_started_at: "2026-10-21T07:48:57Z"};
+  const filename = path.join(directory, "00000000.json"), original = JSON.stringify({...value, sha256: bindingHash(value)});
+  await writeFile(filename, original);
+  await command(repo, ["review"], env);
+  assert.equal(await readFile(filename, "utf8"), original);
+  const foreign = {...value, root: path.join(root, "foreign")};
+  await writeFile(filename, JSON.stringify({...foreign, sha256: bindingHash(foreign)}));
+  const pointer = await readFile(path.join(repo, ".git/oracle/active-review.json"));
+  await assert.rejects(command(repo, ["review"], env), /foreign or malformed/);
+  assert.deepEqual(await readFile(path.join(repo, ".git/oracle/active-review.json")), pointer);
 });
 
 test("detached reviewed source survives identical-tree publication merge and delivery", async (t) => {
