@@ -1438,6 +1438,11 @@ test("stale PID identity is preserved and foreign controller metadata prevents n
   await writeFile(filename, original);
   await command(repo, ["review"], env);
   assert.equal(await readFile(filename, "utf8"), original);
+  const successor = JSON.parse(await readFile(path.join(directory, "00000001.json")));
+  assert.equal(successor.predecessor_observation.observed_state, "STALE");
+  assert.equal(successor.predecessor_observation.source_verdict, null);
+  assert.equal(successor.review_started_at, value.review_started_at);
+  assert.equal(successor.release_started_at, value.release_started_at);
   const foreign = {...value, root: path.join(root, "foreign")};
   await writeFile(filename, JSON.stringify({...foreign, sha256: bindingHash(foreign)}));
   const pointer = await readFile(path.join(repo, ".git/oracle/active-review.json"));

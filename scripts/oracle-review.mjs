@@ -690,7 +690,9 @@ async function verifyCommit(reference) {
 async function continuousReview(args, controller) {
   const requested = reviewArguments(args);
   const evidence = new Set(requested.validationEvidence);
-  let owner = requested.ownerApprovalEvidence, attempt = 0, forceReview = false, catchingUp = false;
+  const checkpoint = await readValidatedCheckpoint();
+  let owner = requested.ownerApprovalEvidence, attempt = 0,
+    forceReview = checkpoint && requested.validationEvidence.some((item) => !checkpoint.receipt.validation_evidence.includes(item)), catchingUp = false;
   for (;;) {
     while (catchingUp && await git(["status", "--porcelain=v1", "--untracked-files=all"])) {
       if (controller.cancelled()) throw new Error("Native review controller was cancelled while waiting for authored commits");

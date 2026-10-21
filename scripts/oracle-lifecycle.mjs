@@ -92,18 +92,22 @@ export async function activeReviewController(root = process.cwd()) {
 async function claim(state) {
   const identity = await controllerProcess(process.pid);
   if (!identity || identity.root !== state.root) throw new Error("Cannot verify this native review controller process");
+  let previous = null, priorReview = null, priorRelease = null;
   for (let generation = 0; generation < 100000; generation++) {
     const filename = path.join(state.directory, `${String(generation).padStart(8, "0")}.json`);
     const existing = await optional(filename, state.owner);
     if (existing) {
       const current = await inspect(existing, state);
       if (current.state === "RUNNING") return {record: current, owned: false};
+      previous = {controller_id: current.id, generation, observed_state: current.state, source_verdict: null};
+      priorReview = current.review_started_at ?? priorReview;
+      priorRelease = current.release_started_at ?? priorRelease;
       continue;
     }
     const record = seal({schema: "my-crm.review-controller/v1", id: randomUUID(), generation,
       kind: "review", scope: "completed-source", root: state.root, process: identity,
-      started_at: new Date().toISOString(), review_started_at: process.env.MYCRM_REVIEW_STARTED_AT ?? null,
-      release_started_at: process.env.MYCRM_RELEASE_STARTED_AT ?? null});
+      started_at: new Date().toISOString(), review_started_at: process.env.MYCRM_REVIEW_STARTED_AT ?? priorReview,
+      release_started_at: process.env.MYCRM_RELEASE_STARTED_AT ?? priorRelease, predecessor_observation: previous});
     try {
       await atomicJson(filename, record, {root: state.owner, exclusive: true});
       const directory = path.join(state.directory, record.id);
@@ -117,7 +121,8 @@ async function claim(state) {
 
 export async function observeReviewController(record, {root = process.cwd(), args = []} = {}) {
   const state = await layout(root);
-  if (args.length) await atomicJson(path.join(record.directory, "requests", `${randomUUID()}.json`),
+  const requestId = args.length ? `${randomUUID()}.json` : null;
+  if (requestId) await atomicJson(path.join(record.directory, "requests", requestId),
     seal({controller_id: record.id, args, received_at: new Date().toISOString()}), {root: state.owner, exclusive: true});
   process.stdout.write(`ORACLE_REVIEW=ATTACHED controller=${record.id} pid=${record.process.pid}\n`);
   for (;;) {
@@ -126,6 +131,7 @@ export async function observeReviewController(record, {root = process.cwd(), arg
     const current = await inspect(original, state);
     if (current.state === "TERMINAL") {
       if (current.outcome.error) throw new Error(`Attached review controller failed: ${current.outcome.error.message}`);
+      if (requestId && !current.outcome.accepted_requests?.includes(requestId)) return {action: "UNCONSUMED_REVIEW_REQUEST"};
       if (current.outcome.result?.verdict === "REJECTED" || current.outcome.result?.review_status === "INCOMPLETE") process.exitCode = 1;
       process.stdout.write(`ORACLE_REVIEW=COMPLETED controller=${record.id} outcome=${current.outcome.outcome} receipt=${current.outcome.result?.receipt_sha256 ?? "NONE"}\n`);
       return current.outcome.result;
@@ -137,7 +143,10 @@ export async function observeReviewController(record, {root = process.cwd(), arg
 
 export async function withReviewController({root = process.cwd(), args = [], action}) {
   const state = await layout(root), admission = await claim(state), record = admission.record;
-  if (!admission.owned) return observeReviewController(record, {root: state.root, args});
+  if (!admission.owned) {
+    const result = await observeReviewController(record, {root: state.root, args});
+    return result?.action === "UNCONSUMED_REVIEW_REQUEST" ? withReviewController({root: state.root, args, action}) : result;
+  }
   const requests = new Set();
   const progress = (value) => atomicJson(path.join(record.directory, "progress.json"),
     {controller_id: record.id, updated_at: new Date().toISOString(), ...value}, {root: state.owner});
@@ -162,6 +171,6 @@ export async function withReviewController({root = process.cwd(), args = [], act
     process.removeListener("SIGINT", cancel); process.removeListener("SIGTERM", cancel);
     await atomicJson(path.join(record.directory, "outcome.json"), seal({controller_id: record.id,
       finished_at: new Date().toISOString(), outcome: failure ? "ERROR" : result?.verdict ?? result?.review_status ?? result?.action ?? "COMPLETED",
-      result: result ?? null, error: failure ? {name: failure.name, message: failure.message} : null}), {root: state.owner, exclusive: true});
+      result: result ?? null, accepted_requests: [...requests], error: failure ? {name: failure.name, message: failure.message} : null}), {root: state.owner, exclusive: true});
   }
 }
