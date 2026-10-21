@@ -81,11 +81,11 @@ function policyConstruction(source, names, promptCount = 0, externalNames = []) 
     material[name] = declarations(source, name, name === "prompt" ? promptCount : 1);
     for (const match of masked.matchAll(new RegExp(`\\bconst\\s+(${name})\\s*=`, "g"))) allowed.add(match.index + match[0].indexOf(name));
   }
-  const providers = ["JSON", "Object", "process", "path", "spawn", "execOracle", "Ajv", "selectedModel", "Reflect"];
+  const providers = ["JSON", "Object", "process", "path", "spawn", "execOracle", "runParallelReview", "Ajv", "selectedModel", "Reflect"];
   externalNames.concat(providers).forEach((name) => guarded.add(name));
   const aliasRoots = Object.fromEntries(providers.map((name) => [name, name]));
   const providerImports = [];
-  const expected = {process: "node:process", path: "node:path", spawn: "node:child_process", Ajv: "ajv", selectedModel: "./codex-child-model.mjs"};
+  const expected = {process: "node:process", path: "node:path", spawn: "node:child_process", Ajv: "ajv", selectedModel: "./codex-child-model.mjs", runParallelReview: "./oracle-parallel.mjs"};
   for (const match of masked.matchAll(/\bimport\s+[^;]+;/g)) {
     const statement = source.slice(match.index, match.index + match[0].length);
     const module = statement.match(/\bfrom\s*["']([^"']+)["']/)?.[1];
