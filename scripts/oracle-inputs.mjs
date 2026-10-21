@@ -116,13 +116,13 @@ export async function withOracleRun(requested, action, {kind = null, onAdmitted 
   };
   try {
     run = path.join(directory, "runs", randomUUID());
-    await metadataDirectory(ownerRoot, run);
     if (["review", "proposal"].includes(kind)) {
       store.invocation = {id: path.basename(run), kind};
       store.directory = directory;
       await atomicJson(path.join(directory, `active-${kind}.json`), store.invocation);
     }
     await onAdmitted?.();
+    await metadataDirectory(ownerRoot, run);
     result = await action({run, phase});
     return result;
   } catch (error) {
