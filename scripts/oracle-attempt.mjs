@@ -18,6 +18,10 @@ export async function assertProducerSnapshot(original) {
 }
 
 async function main() {
+  // Losing the observing parent closes its pipes. Finish durable native custody
+  // even when there is no longer an output consumer for this actual attempt.
+  const detachedOutput = (error) => { if (!["EPIPE", "ERR_STREAM_DESTROYED"].includes(error.code)) throw error; };
+  process.stdout.on("error", detachedOutput); process.stderr.on("error", detachedOutput);
   let result = null, failure = null;
   try {
     const producer = await producerSnapshot();
