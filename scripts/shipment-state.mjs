@@ -34,6 +34,9 @@ export async function checkpointApplicable(root, checkpoint) {
   await assertPublishedInvocation(receipt.invocation, directory, owner);
   const proposal = JSON.parse(await readMetadataFile(path.join(directory, "proposal.json"), "utf8", {root: owner}));
   if (proposal.record_sha256 !== receipt.proposal_record_sha256) throw new Error("Checkpoint proposal criteria changed");
+  const {verifySeries} = await import("./oracle-series.mjs");
+  const series = verifySeries(JSON.parse(await readMetadataFile(path.join(directory, "series", `${receipt.base_commit}.json`), "utf8", {root: owner})), receipt.base_commit);
+  if (series.sha256 !== receipt.review_series_sha256 || series.series_id !== receipt.review_series_id || series.rounds.at(-1)?.round !== receipt.review_round || series.rounds.at(-1)?.snapshot.tree !== receipt.reviewed_tree || series.rounds.at(-1)?.review_status !== "COMPLETE" || series.rounds.at(-1)?.verdict !== "APPROVED") throw new Error("Checkpoint independent review-series custody changed");
   const {deploymentHistoryForReview} = await import("./oracle-deployment.mjs");
   const deployment = await deploymentHistoryForReview(root, {head: receipt.deployment_history_base_commit ?? receipt.base_commit});
   const current = await captureInputs({root, base: receipt.base_commit, tree: receipt.reviewed_tree,
