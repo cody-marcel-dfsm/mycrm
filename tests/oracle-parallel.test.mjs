@@ -3,8 +3,8 @@ import test from "node:test";
 import {mkdtemp, readFile, rm, writeFile} from "node:fs/promises";
 import os from "node:os";
 import path from "node:path";
-import {cohortPlan, partitionPayload, aggregateCohorts, runParallelReview, payloadLimit} from "../scripts/oracle-parallel.mjs";
-import {atomicJson, withOracleRun} from "../scripts/oracle-inputs.mjs";
+import {cohortPlan, partitionPayload, aggregateCohorts, runParallelReview, verifyParallelArtifacts, payloadLimit} from "../scripts/oracle-parallel.mjs";
+import {atomicJson, bindingHash, withOracleRun} from "../scripts/oracle-inputs.mjs";
 
 const candidate = {commit: "1".repeat(40), tree: "2".repeat(40), base: "3".repeat(40)};
 const inputs = {authorities: [], owner: null};
@@ -21,6 +21,7 @@ function response(paths) { return {review_status: "COMPLETE", verdict: "APPROVED
     assessment: "Entrypoint, consumer and recovery inspected", criteria: ["Current owner criteria"], evidence: [name], finding_ids: []}))}; }
 function envelope(plan, cohort) { return {cohort_id: cohort.id, candidate_commit: plan.candidate_commit,
   candidate_tree: plan.candidate_tree, input_binding_sha256: plan.input_binding_sha256, plan_sha256: plan.plan_sha256,
+  reviewer_settings_sha256: bindingHash(plan.reviewer_settings),
   cross_area_assessment: "Traced construction, consumers, publication and recovery edges", response: response(cohort.required_paths)}; }
 
 test("parallel plan bounds each payload and preserves exact candidate and mandatory cross-cutting scope", () => {
@@ -57,7 +58,7 @@ test("concurrent findings are consolidated and incompatible finding resolutions 
   assert.equal(aggregateCohorts(plan, all).response.verdict, null);
 });
 
-async function runFixture(invoke) {
+async function runFixture(invoke, after) {
   const root = await mkdtemp(path.join(os.tmpdir(), "mycrm-parallel-"));
   try { return await withOracleRun(path.join(root, "oracle"), async ({run}) => {
     let entered = 0, active = 0, peak = 0, release;
@@ -72,25 +73,47 @@ async function runFixture(invoke) {
           const binding = payload.cohort;
           const value = {cohort_id: binding.id, candidate_commit: binding.candidate_commit, candidate_tree: binding.candidate_tree,
             input_binding_sha256: binding.input_binding_sha256, plan_sha256: binding.plan_sha256,
+            reviewer_settings_sha256: binding.reviewer_settings_sha256,
             cross_area_assessment: "Entrypoint/consumer/dependency/publication/recovery trace", response: response(binding.required_paths)};
           await invoke?.(area, value);
           await writeFile(area.output, JSON.stringify(value));
         } finally { active--; }
       }});
     const outcomes = JSON.parse(await readFile(path.join(run, "cohort-outcomes.json"), "utf8"));
-    return {result, outcomes, peak};
+    await after?.({root, run, result});
+    return {result: result.response, outcomes, peak};
   }, {ownerRoot: root}); } finally { await rm(root, {recursive: true, force: true}); }
 }
 
-test("native dispatch starts all three independent assessments before any finishes", async () => {
+test("native dispatch starts all three independent assessments before any finishes", {timeout: 5000}, async () => {
   const {result, peak, outcomes} = await runFixture();
   assert.equal(peak, 3);assert.equal(outcomes.actual_overlap, true);assert.equal(outcomes.outcomes.length, 3);
   assert.equal(result.verdict, "APPROVED");
 });
 
-test("child crash or changed cohort inputs preserves partial assessment and prevents approval", async () => {
+test("child crash or changed cohort inputs preserves partial assessment and prevents approval", {timeout: 5000}, async () => {
   await assert.rejects(runFixture((area) => { if (area.directory.endsWith("implementation-consumers")) throw new Error("Synthetic transport failure"); }), /execution failed/);
   await assert.rejects(runFixture(async (area) => { if (area.directory.endsWith("verification-recovery")) await writeFile(path.join(area.directory, "evidence.json"), "changed"); }), /inputs changed/);
+});
+
+test("native parallel admission preserves a cross-cutting protected effect with unaffected specialist defaults", () => {
+  const plan = cohortPlan({candidate, inputs, context: evidence().review_context});
+  const all = plan.cohorts.map((cohort) => ({id: cohort.id, envelope: envelope(plan, cohort)}));
+  all[0].envelope.response.authentication_impact = true;
+  all[0].envelope.response.owner_approval_status = "MISSING";
+  all[0].envelope.response.protected_deployment_effects = [{id: "F-trust", category: "CREDENTIAL_TRUST", description: "Actual trust effect", affected_paths: ["src/service.mjs"], authority: null}];
+  const result = aggregateCohorts(plan, all);
+  assert.equal(result.response.verdict, "APPROVED");assert.equal(result.response.owner_approval_status, "MISSING");
+  all[1].envelope.response.api_version_assessment = {...all[1].envelope.response.api_version_assessment, impact: "CHANGE"};
+  assert.equal(aggregateCohorts(plan, all).response.verdict, null);
+});
+
+test("receipt artifact custody detects a changed original cohort outcome", async () => {
+  await runFixture(null, async ({root, run, result}) => {
+    await verifyParallelArtifacts(result.reference, {root});
+    await writeFile(path.join(run, "cohorts/cross-cutting/outcome.json"), "changed original outcome");
+    await assert.rejects(verifyParallelArtifacts(result.reference, {root}), /evidence changed/);
+  });
 });
 
 test("exclusive atomic cohort publication preserves the first immutable result on collision", async () => {

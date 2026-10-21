@@ -65,7 +65,7 @@ const emit=()=>{
   if(!proposal && process.env.ORACLE_RETARGET_MIDDLE) { fs.unlinkSync(process.env.ORACLE_RETARGET_MIDDLE); fs.symlinkSync(process.env.ORACLE_MIDDLE_TARGET,process.env.ORACLE_RETARGET_MIDDLE); }
   if(!proposal && process.env.ORACLE_TAMPER_PROOF_OUTPUT && proof) fs.writeFileSync(proof.record.output_file,'changed nested output during review');
   if(!proposal && process.env.ORACLE_CHMOD_PROOF_SOURCE) fs.chmodSync(path.join(process.cwd(),'candidate.txt'),0o755);
-  if(proposal || !process.env.ORACLE_NO_OUTPUT) fs.writeFileSync(out,proposal?'Synthetic proposal.\\nAPI_VERSION_ASSESSMENT={"impact":"NONE","request_kind":"NOT_REQUIRED","requested_change":null,"request_quote":null,"request_evidence":null}\\nAUTHENTICATION_IMPACT=NONE\\nOWNER_APPROVAL_STATUS=NOT_REQUIRED\\nORACLE_VERDICT=APPROVED\\n':process.env.ORACLE_MALFORMED?'{}':JSON.stringify(evidence?.cohort?{cohort_id:evidence.cohort.id,candidate_commit:evidence.cohort.candidate_commit,candidate_tree:evidence.cohort.candidate_tree,input_binding_sha256:evidence.cohort.input_binding_sha256,plan_sha256:evidence.cohort.plan_sha256,cross_area_assessment:'Synthetic cross-area entrypoint, consumer, dependency, publication and recovery trace.',response}:response));
+  if(proposal || !process.env.ORACLE_NO_OUTPUT) fs.writeFileSync(out,proposal?'Synthetic proposal.\\nAPI_VERSION_ASSESSMENT={"impact":"NONE","request_kind":"NOT_REQUIRED","requested_change":null,"request_quote":null,"request_evidence":null}\\nAUTHENTICATION_IMPACT=NONE\\nOWNER_APPROVAL_STATUS=NOT_REQUIRED\\nORACLE_VERDICT=APPROVED\\n':process.env.ORACLE_MALFORMED?'{}':JSON.stringify(evidence?.cohort?{cohort_id:evidence.cohort.id,candidate_commit:evidence.cohort.candidate_commit,candidate_tree:evidence.cohort.candidate_tree,input_binding_sha256:evidence.cohort.input_binding_sha256,plan_sha256:evidence.cohort.plan_sha256,reviewer_settings_sha256:evidence.cohort.reviewer_settings_sha256,cross_area_assessment:'Synthetic cross-area entrypoint, consumer, dependency, publication and recovery trace.',response}:response));
   if(!proposal && process.env.ORACLE_BREAK_DIAGNOSTICS) fs.mkdirSync(path.join(path.dirname(out),'reviewer.stdout.log'));
   if(!proposal && process.env.ORACLE_EXIT_AFTER_OUTPUT) process.exit(9);
 };
@@ -415,7 +415,7 @@ test("unsuccessful reviewer completion retains valid output, original process an
     assert.equal(original.observed_assessment.response.verdict, "REJECTED");
     assert.equal(original.observed_assessment.findings[0].id, "SYNTHETIC-EXIT-1");
     assert.ok(original.observed_assessment.coverage.length > 0);
-    if (failure === "ORACLE_EXIT_AFTER_OUTPUT") assert.equal(original.observed_assessment.execution.exit_code, 9);
+    if (failure === "ORACLE_EXIT_AFTER_OUTPUT") assert.deepEqual(original.observed_assessment.execution.cohort_exit_codes.map((item) => item.exit_code), [9, 9, 9]);
     const responseFile = original.observed_assessment.response_evidence.value.slice(1);
     assert.equal(sha256(await readFile(responseFile)), original.observed_assessment.response_evidence.sha256);
     await assert.rejects(readFile(path.join(repo, ".git/oracle/approval.json")), {code: "ENOENT"});

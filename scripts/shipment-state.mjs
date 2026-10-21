@@ -4,6 +4,7 @@ import path from "node:path";
 import process from "node:process";
 import {fileURLToPath} from "node:url";
 import {atomicJson, bindingHash, metadataDirectory, readMetadataFile, assertPublishedInvocation, captureInputs, assertInputsMatch} from "./oracle-inputs.mjs";
+import {verifyParallelArtifacts} from "./oracle-parallel.mjs";
 
 const execute = promisify(execFile);
 const commitHash = /^[a-f0-9]{40}$/;
@@ -31,6 +32,7 @@ export async function publicationSourceMatches(root, source, publication) {
 }
 export async function checkpointApplicable(root, checkpoint) {
   const {owner, directory} = await store(root), {receipt} = checkpoint;
+  if (receipt.parallel_review_evidence) await verifyParallelArtifacts(receipt.parallel_review_evidence, {root: owner});
   await assertPublishedInvocation(receipt.invocation, directory, owner);
   const proposal = JSON.parse(await readMetadataFile(path.join(directory, "proposal.json"), "utf8", {root: owner}));
   if (proposal.record_sha256 !== receipt.proposal_record_sha256) throw new Error("Checkpoint proposal criteria changed");

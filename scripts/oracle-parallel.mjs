@@ -1,6 +1,6 @@
 // Owner-local bounded independent review. Cohorts never publish approvals.
 import path from "node:path";
-import {atomicJson, bindingHash, readMetadataFile, writeMetadataFile} from "./oracle-inputs.mjs";
+import {atomicJson, bindingHash, contentHash, readMetadataFile, writeMetadataFile} from "./oracle-inputs.mjs";
 
 export const cohortIds = ["cross-cutting", "implementation-consumers", "verification-recovery"];
 export const payloadLimit = 64 * 1024;
@@ -10,7 +10,7 @@ const verification = (name) => /(?:^|\/)(?:tests?|\.github|\.githooks)\/|(?:rele
 
 export function cohortPlan({candidate, inputs, context}) {
   const plan = {schema: "my-crm.parallel-review/v1", candidate_commit: candidate.commit ?? null,
-    candidate_tree: candidate.tree, input_binding_sha256: bindingHash(inputs), cohorts: []};
+    candidate_tree: candidate.tree, input_binding_sha256: bindingHash(inputs), reviewer_settings: inputs.reviewer_settings ?? null, cohorts: []};
   const groups = Object.fromEntries(cohortIds.map((id) => [id, []]));
   for (const name of unique(context.required_paths)) groups[governance(name) ? cohortIds[0] : verification(name) ? cohortIds[2] : cohortIds[1]].push(name);
   for (const id of cohortIds) plan.cohorts.push({id, required_paths: groups[id].sort(),
@@ -46,6 +46,8 @@ export function partitionPayload(plan, cohort, evidence) {
     full_evidence_reference: "../../evidence.json",
     full_history_reference: context.history_file,
     reading_contract: "Read governing instructions first once per content identity, then this cohort's changes and applicable retained observations. Use bounded field projections and source chunks (at most 8 KiB per read); open full original records only for a named unresolved fact. A fresh reviewer conversation never resets sealed file coverage. No copied history grants proof or approval."};
+  value.cohort.reviewer_settings_sha256 = bindingHash(plan.reviewer_settings);
+  value.reviewer_settings = plan.reviewer_settings;
   // Bound payload mechanically. Originals remain immutable, available by exact
   // references; omitted data never becomes an implicit assessment.
   if (Buffer.byteLength(JSON.stringify(value)) > payloadLimit) {
@@ -67,6 +69,8 @@ function mergeRecords(responses, field, identity, issues) {
           dependency_rationale: `${old.dependency_rationale}; ${item.dependency_rationale}`,
           assessment: `${old.assessment}; ${item.assessment}`, criteria: unique([...old.criteria, ...item.criteria]),
           evidence: unique([...old.evidence, ...item.evidence]), finding_ids: unique([...old.finding_ids, ...item.finding_ids])});
+      } else if (field === "deployment_effect_dispositions" && old.disposition === item.disposition) {
+        records.set(key, {...old, evidence: `${old.evidence}; ${item.evidence}`});
       } else issues.push(`Conflicting ${field} identity ${key}`);
     } else records.set(key, item);
   }
@@ -82,7 +86,7 @@ export function aggregateCohorts(plan, outcomes) {
     if (outcome.error) issues.push(`Cohort ${id} execution failed: ${outcome.error}`);
     if (!envelope || envelope.cohort_id !== id || envelope.candidate_commit !== plan.candidate_commit
         || envelope.candidate_tree !== plan.candidate_tree || envelope.input_binding_sha256 !== plan.input_binding_sha256
-        || envelope.plan_sha256 !== plan.plan_sha256) { issues.push(`Cohort ${id} candidate or plan binding differs`); continue; }
+        || envelope.plan_sha256 !== plan.plan_sha256 || envelope.reviewer_settings_sha256 !== bindingHash(plan.reviewer_settings)) { issues.push(`Cohort ${id} candidate or plan binding differs`); continue; }
     const response = envelope.response;
     if (typeof envelope.cross_area_assessment !== "string" || !envelope.cross_area_assessment.trim()) issues.push(`Cohort ${id} omitted cross-area integration assessment`);
     if (!response || !["COMPLETE", "INCOMPLETE"].includes(response.review_status)) { issues.push(`Cohort ${id} has no formal assessment`); continue; }
@@ -104,27 +108,50 @@ export function aggregateCohorts(plan, outcomes) {
   const scope = mergeRecords(responses, "scope_dispositions", (item) => item.path, issues);
   const changes = responses.map((item) => item.api_version_assessment).filter((item) => item?.impact === "CHANGE");
   if (changes.some((item) => bindingHash(item) !== bindingHash(changes[0]))) issues.push("Conflicting public API-version assessments");
-  const complete = !issues.length;
+  const cross = outcomes.find((item) => item.id === "cross-cutting")?.envelope?.response;
+  if (cross) for (const item of outcomes.filter((item) => item.id !== "cross-cutting")) {
+    const specialist = item.envelope?.response;
+    if (!specialist) continue;
+    if (specialist.authentication_impact && !cross.authentication_impact) issues.push(`Cross-cutting authentication assessment omits ${item.id} impact`);
+    if (specialist.api_version_assessment?.impact === "CHANGE" && bindingHash(specialist.api_version_assessment) !== bindingHash(cross.api_version_assessment)) issues.push(`Cross-cutting API assessment omits ${item.id} change`);
+    for (const effect of specialist.protected_deployment_effects ?? []) if (!(cross.protected_deployment_effects ?? []).some((entry) => bindingHash(entry) === bindingHash(effect))) issues.push(`Cross-cutting assessment omits or contradicts ${item.id} protected effect ${effect.id}`);
+    for (const disposition of specialist.deployment_effect_dispositions ?? []) if (!(cross.deployment_effect_dispositions ?? []).some((entry) => entry.receipt_sha256 === disposition.receipt_sha256 && entry.effect_id === disposition.effect_id && entry.disposition === disposition.disposition)) issues.push(`Cross-cutting assessment omits or contradicts ${item.id} inherited disposition`);
+  }
+  // Preserve the reported assessment separately from process success. A model
+  // may return complete findings before its process exits unsuccessfully.
+  const complete = !issues.some((item) => !item.includes(" execution failed:"));
   const rejected = findings.length > 0 || responses.some((item) => item.verdict === "REJECTED");
-  return {issues, response: {review_status: complete ? "COMPLETE" : "INCOMPLETE", verdict: complete ? rejected ? "REJECTED" : "APPROVED" : null,
-    summary: `Concurrent independent assessment: ${complete ? "all three cohorts complete" : issues.join("; ")}. ${responses.map((item) => item.summary).join(" ")}`,
+  return {issues, reported_count: responses.length, response: {review_status: complete ? "COMPLETE" : "INCOMPLETE", verdict: complete ? rejected ? "REJECTED" : "APPROVED" : null,
+    summary: `Concurrent independent assessment, plan ${plan.plan_sha256}: ${complete ? "all three cohorts reported complete assessment" : issues.join("; ")}. ${responses.map((item) => item.summary).join(" ")} ${outcomes.filter((item) => item.envelope).map((item) => `[${item.id} ${bindingHash(item.envelope)}] ${item.envelope.cross_area_assessment ?? ""}`).join(" ")}`,
     authentication_impact: responses.some((item) => item.authentication_impact),
     owner_approval_status: effects.length ? responses.some((item) => item.owner_approval_status === "MISSING") ? "MISSING" : "APPROVED" : "NOT_REQUIRED",
     warning: responses.map((item) => item.warning).filter(Boolean).join("; ") || null,
     api_version_assessment: changes[0] ?? responses[0]?.api_version_assessment ?? {impact: "NONE", request_kind: "NOT_REQUIRED", requested_change: null, request_quote: null, request_evidence: null},
     findings, resolutions, coverage, validations, protected_deployment_effects: effects, deployment_effect_dispositions: dispositions,
-    scope_dispositions: scope, unreviewed: unique([...issues, ...responses.flatMap((item) => item.unreviewed ?? [])]),
+    scope_dispositions: scope, unreviewed: complete ? [] : unique([...issues, ...responses.flatMap((item) => item.unreviewed ?? [])]),
     reused_coverage: unique(responses.flatMap((item) => item.reused_coverage ?? [])), reused_validations: unique(responses.flatMap((item) => item.reused_validations ?? [])),
     synthesis: responses.map((item) => item.synthesis).filter(Boolean).join("\n") || null}};
+}
+
+export async function verifyParallelArtifacts(reference, {root} = {}) {
+  if (!reference || path.basename(reference.path) !== "cohort-artifacts.json") throw new Error("Parallel review artifact reference is malformed");
+  const raw = await readMetadataFile(reference.path, {}, {root});
+  if (contentHash(raw) !== reference.sha256) throw new Error("Parallel review artifact manifest changed");
+  const manifest = JSON.parse(raw), directory = path.dirname(reference.path);
+  if (manifest.schema !== "my-crm.parallel-artifacts/v1" || !Array.isArray(manifest.files)) throw new Error("Parallel review artifact manifest is malformed");
+  for (const item of manifest.files) {
+    if (!item.path.startsWith(`${directory}${path.sep}`) || contentHash(await readMetadataFile(item.path, {}, {root})) !== item.sha256) throw new Error("Parallel review original cohort evidence changed");
+  }
+  return manifest;
 }
 
 export async function runParallelReview({run, candidate, inputs, evidence, schema, invoke, sharedPrompt, diffForPaths}) {
   const plan = cohortPlan({candidate, inputs, context: evidence.review_context});
   await atomicJson(path.join(run, "cohort-plan.json"), plan, {exclusive: true});
   const wrapperSchema = {type: "object", additionalProperties: false,
-    required: ["cohort_id", "candidate_commit", "candidate_tree", "input_binding_sha256", "plan_sha256", "cross_area_assessment", "response"],
+    required: ["cohort_id", "candidate_commit", "candidate_tree", "input_binding_sha256", "plan_sha256", "reviewer_settings_sha256", "cross_area_assessment", "response"],
     properties: {cohort_id: {type: "string"}, candidate_commit: {type: ["string", "null"]}, candidate_tree: {type: "string"},
-      input_binding_sha256: {type: "string"}, plan_sha256: {type: "string"}, cross_area_assessment: {type: "string", minLength: 1}, response: schema}};
+      input_binding_sha256: {type: "string"}, plan_sha256: {type: "string"}, reviewer_settings_sha256: {type: "string"}, cross_area_assessment: {type: "string", minLength: 1}, response: schema}};
   const prepared = plan.cohorts.map((cohort) => ({cohort, directory: path.join(run, "cohorts", cohort.id), payload: partitionPayload(plan, cohort, evidence)}));
   // Finish all bounded input preparation before launching any reviewer.
   for (const {directory, payload} of prepared) {
@@ -162,11 +189,24 @@ export async function runParallelReview({run, candidate, inputs, evidence, schem
     error: String(item.reason), envelope: null, started_at: null, finished_at: new Date().toISOString()});
   const aggregate = aggregateCohorts(plan, outcomes);
   await atomicJson(path.join(run, "cohort-outcomes.json"), {plan_sha256: plan.plan_sha256, outcomes, issues: aggregate.issues,
-    actual_overlap: outcomes.every((item) => item.started_at) && Math.max(...outcomes.map((item) => Date.parse(item.started_at))) < Math.min(...outcomes.map((item) => Date.parse(item.finished_at)))}, {exclusive: true});
-  await atomicJson(path.join(run, "response.json"), aggregate.response, {exclusive: true});
+    actual_overlap: outcomes.every((item) => item.started_at) && Math.max(...outcomes.map((item) => Date.parse(item.started_at))) < Math.min(...outcomes.map((item) => Date.parse(item.finished_at))),
+    actual_process_overlap: outcomes.every((item) => item.process?.pid && item.process?.started_at && item.process?.finished_at)
+      && Math.max(...outcomes.map((item) => Date.parse(item.process.started_at))) < Math.min(...outcomes.map((item) => Date.parse(item.process.finished_at)))}, {exclusive: true});
+  if (aggregate.reported_count) await atomicJson(path.join(run, "response.json"), aggregate.response, {exclusive: true});
   await atomicJson(path.join(run, "process.json"), {exit_code: aggregate.issues.length ? 1 : 0,
     signal: outcomes.find((item) => item.process?.signal)?.process.signal ?? null,
-    interrupted: outcomes.some((item) => item.process?.interrupted), cohort_count: outcomes.length}, {exclusive: true});
+    interrupted: outcomes.some((item) => item.process?.interrupted), cohort_count: outcomes.length,
+    cohort_exit_codes: outcomes.map((item) => ({id: item.id, ...item.process}))}, {exclusive: true});
+  const files = [];
+  for (const name of ["cohort-plan.json", "cohort-outcomes.json", "response.json", "process.json",
+    ...cohortIds.flatMap((id) => ["evidence.json", "changes.json", "delta.diff", "response.schema.json", "response.json", "outcome.json", "process.json", "reviewer.stdout.log", "reviewer.stderr.log"].map((leaf) => `cohorts/${id}/${leaf}`))]) {
+    const filename = path.join(run, name);
+    try { files.push({path: filename, sha256: contentHash(await readMetadataFile(filename))}); }
+    catch (error) { if (error.code !== "ENOENT") throw error; }
+  }
+  const manifestPath = path.join(run, "cohort-artifacts.json");
+  await atomicJson(manifestPath, {schema: "my-crm.parallel-artifacts/v1", plan_sha256: plan.plan_sha256, files}, {exclusive: true});
+  const reference = {path: manifestPath, sha256: contentHash(await readMetadataFile(manifestPath))};
   if (aggregate.issues.length) throw new Error(`Concurrent independent review incomplete: ${aggregate.issues.join("; ")}`);
-  return aggregate.response;
+  return {response: aggregate.response, reference};
 }
