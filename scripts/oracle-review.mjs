@@ -703,7 +703,7 @@ export async function runReviewAttempt(args, {producer = null, verifyProducer = 
 
 async function freshReviewAttempt(args) {
   const invocation = execFileAsync(process.execPath, [fileURLToPath(new URL("./oracle-attempt.mjs", import.meta.url)), ...args],
-    {cwd: process.cwd(), env: process.env, maxBuffer: 16 * 1024 * 1024});
+    {cwd: process.cwd(), maxBuffer: 16 * 1024 * 1024});
   const cancel = () => invocation.child?.kill("SIGTERM");
   process.on("SIGINT", cancel); process.on("SIGTERM", cancel);
   let output;
