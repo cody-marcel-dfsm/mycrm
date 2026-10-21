@@ -332,9 +332,9 @@ test("declared external governing inputs bind proposal, review, execution and re
   assert.deepEqual(proposalInputs.authorities.filter((item) => item.external), external);
   await writeFile(parentOracle, "Synthetic declared parent tool; never executed.");
   assertInputsMatch(initial, await captureInputs(options));
-  const consumed = await captureInputs({...options, observedPaths: [parentOracle]});
+  const consumed = await captureInputs({...options, validationEvidence: [`@${parentOracle}`]});
   await writeFile(parentOracle, "Synthetic actually consumed controller changed.");
-  await assert.rejects(async () => assertInputsMatch(consumed, await captureInputs({...options, observedPaths: [parentOracle]})), /drifted/);
+  await assert.rejects(async () => assertInputsMatch(consumed, await captureInputs({...options, validationEvidence: [`@${parentOracle}`]})), /drifted/);
   assertInputsMatch(initial, await captureInputs(options));
   for (const filename of [parentPolicy, family, coordination]) {
     const original = await readFile(filename);
