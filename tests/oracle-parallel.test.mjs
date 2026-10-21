@@ -57,6 +57,24 @@ test("bounded payload retains authority and protected-effect identities without 
   assert.equal(payload.inherited_effects[0].receipt.input_binding, undefined);
 });
 
+test("retained ERROR findings use exact on-demand indexes rather than repeated unbounded historical text", () => {
+  const e = evidence();
+  const finding = {id: "RETAINED", code: "RETAINED_DEFECT", severity: "high", path: "src/service.mjs", origin: "missed",
+    required_behavior: "Preserve the exact required behavior. ".repeat(1000), reproduction: "Detailed original reproduction. ".repeat(1000),
+    affected_paths: ["src/service.mjs"], acceptance_checks: ["Detailed original acceptance. ".repeat(1000)], missed_finding_reason: "Original missed-review explanation"};
+  e.review_context.prior_findings = [finding];
+  e.review_context.finding_history = [{...finding, last_status: "OPEN", last_round: 3}];
+  e.review_context.observed_assessments = [1, 2, 3].map((round) => ({round, findings: [finding], response_evidence: {value: `@original-${round}.json`, sha256: String(round).repeat(64)}}));
+  const plan = cohortPlan({candidate, inputs, context: e.review_context}), payload = partitionPayload(plan, plan.cohorts[0], e);
+  assert.ok(Buffer.byteLength(JSON.stringify(payload)) < payloadLimit);
+  assert.equal(payload.review_context.observed_assessments.length, 3);
+  assert.equal(payload.review_context.prior_findings[0].original_sha256, bindingHash(finding));
+  assert.equal(payload.review_context.observed_assessments[2].findings[0].original_reference.pointer, "/review_context/observed_assessments/2/findings/0");
+  assert.equal(payload.review_context.finding_history[0].last_status, "OPEN");
+  assert.match(payload.reading_contract, /before current applicability\/disposition/);
+  assert.equal(e.review_context.prior_findings[0].required_behavior, finding.required_behavior);
+});
+
 test("aggregate rejects missing, duplicate, mixed-candidate and uncovered cohorts", () => {
   const plan = cohortPlan({candidate, inputs, context: evidence().review_context});
   const all = plan.cohorts.map((cohort) => ({id: cohort.id, envelope: envelope(plan, cohort)}));

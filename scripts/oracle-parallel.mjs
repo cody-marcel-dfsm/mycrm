@@ -23,6 +23,10 @@ export function cohortPlan({candidate, inputs, context}) {
 export function partitionPayload(plan, cohort, evidence) {
   const context = evidence.review_context, names = new Set(cohort.required_paths);
   const primary = cohort.id === "cross-cutting";
+  const original = (pointer) => ({file: "../../evidence.json", pointer});
+  const findingIndex = (item, pointer) => ({id: item.id, severity: item.severity, code: item.code,
+    path: item.path, origin: item.origin, required_behavior: String(item.required_behavior ?? "").slice(0, 300),
+    original_sha256: bindingHash(item), original_reference: original(pointer)});
   const summarize = (items) => items.filter((item) => names.has(item.path)).map((item) => ({path: item.path,
     input_sha256: item.input_sha256 ?? null, dependencies: item.dependencies,
     origin: item.origin ?? item.round ?? null, assessment: String(item.assessment ?? item.reason ?? "").slice(0, 700)}));
@@ -37,9 +41,13 @@ export function partitionPayload(plan, cohort, evidence) {
     staged_files: evidence.staged_files,
     review_context: {required_paths: cohort.required_paths, eligible_coverage: summarize(context.eligible_coverage ?? []),
       supporting_coverage: summarize(context.supporting_coverage ?? []),
-      prior_findings: primary ? context.prior_findings : [],
-      finding_history: primary ? context.finding_history : [],
-      observed_assessments: primary ? (context.observed_assessments ?? []).map((item) => ({round: item.round, findings: item.findings,
+      prior_findings: primary ? context.prior_findings.map((item, index) => findingIndex(item, `/review_context/prior_findings/${index}`)) : [],
+      finding_history: primary ? context.finding_history.map((item, index) => ({id: item.id, code: item.code, path: item.path,
+        last_status: item.last_status, last_round: item.last_round, original_sha256: bindingHash(item),
+        original_reference: original(`/review_context/finding_history/${index}`)})) : [],
+      observed_assessments: primary ? (context.observed_assessments ?? []).map((item, index) => ({round: item.round,
+        findings: item.findings.map((finding, findingNumber) => findingIndex(finding, `/review_context/observed_assessments/${index}/findings/${findingNumber}`)),
+        original_sha256: bindingHash(item), original_reference: original(`/review_context/observed_assessments/${index}`),
         response_evidence: item.response_evidence, execution_evidence: item.execution_evidence})) : [],
       unavailable_sources: primary ? context.unavailable_sources : [],
       validation_proofs: primary ? (context.validation_proofs ?? []).map((item) => ({id: item.id, eligible: item.eligible,
@@ -54,7 +62,7 @@ export function partitionPayload(plan, cohort, evidence) {
       original_reference: {file: "../../evidence.json", pointer: `/deployment_history/history/${index}`}})) : [],
     full_evidence_reference: "../../evidence.json",
     full_history_reference: context.history_file,
-    reading_contract: "Read governing instructions first once per content identity, then this cohort's changes and applicable retained observations. Use bounded field projections and source chunks (at most 8 KiB per read); open full original records only for a named unresolved fact. A fresh reviewer conversation never resets sealed file coverage. No copied history grants proof or approval."};
+    reading_contract: "Read governing instructions first once per content identity, then this cohort's changes and applicable retained observations. Finding/history entries are identity indexes with hash-bound original pointers: inspect the original finding's reproduction, required behavior, affected paths and acceptance checks through bounded field projections before current applicability/disposition. Use source chunks at most 8 KiB per read; open original fields only for a named unresolved fact. A fresh reviewer conversation never resets sealed file coverage. No copied history grants proof or approval."};
   value.cohort.reviewer_settings_sha256 = bindingHash(plan.reviewer_settings);
   value.reviewer_settings = plan.reviewer_settings;
   // Bound payload mechanically. Originals remain immutable, available by exact
