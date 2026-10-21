@@ -81,7 +81,7 @@ test("raw moved-input assessments retain custody and findings without promoting 
 });
 
 test("fresh resolution of known historical findings is idempotent while unknown and duplicate IDs fail closed", async (t) => {
-  const {prepare, record} = await fixture(t);
+  const {prepare, record, options} = await fixture(t);
   await record(await prepare(), response({verdict: "REJECTED", findings: [finding(), finding("F-2")]}));
   await record(await prepare(), response({verdict: "REJECTED", findings: [finding("F-2")], resolutions: [
     {id: "F-1", status: "RESOLVED", evidence: "Independent first repair verification."},
@@ -100,6 +100,9 @@ test("fresh resolution of known historical findings is idempotent while unknown 
   const repeated = await prepare();
   assert.deepEqual(repeated.public.prior_findings, []);
   assert.ok(repeated.public.finding_history.every((item) => item.last_status === "RESOLVED"));
+  const regression = await prepare({candidate: {...options.candidate, tree: "tree-regression"}, files: {...options.files, "a.mjs": "a-regression"}});
+  await record(regression, response({verdict: "REJECTED", findings: [finding("F-1", {origin: "repair"})]}));
+  assert.deepEqual((await prepare()).public.prior_findings.map((item) => item.id), ["F-1"]);
 });
 
 test("candidate mode and type changes selectively invalidate consumers and classify membership movement", async (t) => {
