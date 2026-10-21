@@ -124,13 +124,35 @@ test("an OPEN disposition and its stable current finding reach native assessment
   const all = plan.cohorts.map((cohort) => ({id: cohort.id, envelope: envelope(plan, cohort)}));
   all[0].envelope.response.resolutions = [{id: finding.id, status: "OPEN", evidence: "Current independent inspection confirms the remaining defect"}];
   all[1].envelope.response.findings = [finding]; all[1].envelope.response.verdict = "REJECTED";
+  all[2].envelope.response.findings = [{...finding, message: "Independent consumer finding", reproduction: "A second current reproduction",
+    required_behavior: "Preserve the independently traced consumer recovery", acceptance_checks: ["Second consumer acceptance"]}];
+  all[2].envelope.response.verdict = "REJECTED";
+  all[2].envelope.response.resolutions = [{id: finding.id, status: "OPEN", evidence: "Separate current reproduction confirms the same stable open defect"}];
+  const originals = JSON.stringify(all);
   const merged = aggregateCohorts(plan, all);
   assert.deepEqual(merged.issues, []); assert.equal(merged.response.review_status, "COMPLETE"); assert.equal(merged.response.verdict, "REJECTED");
+  assert.match(merged.response.findings[0].reproduction, /Invoke synthetic consumer[\s\S]*second current reproduction/);
+  assert.match(merged.response.resolutions[0].evidence, /Current independent[\s\S]*Separate current/);
+  assert.equal(JSON.stringify(all), originals, "Every original independent observation remains unchanged");
   const saved = await saveRound(current, merged.response, assessRound(current, merged.response, []));
   assert.equal(saved.rounds.at(-1).findings[0].id, finding.id);
   const again = await prepareSeries(options);
   const synthesized = await saveRound(again, merged.response, assessRound(again, merged.response, []));
   assert.ok(synthesized.rounds.at(-1).repair_plan, "Two failed repair rounds retain native consolidated repair synthesis");
+});
+
+test("finding identity contradictions, disposition conflicts and local duplicates remain fatal", () => {
+  const plan = cohortPlan({candidate, inputs, context: evidence().review_context});
+  for (const change of ["code", "path", "origin", "disposition", "duplicate"]) {
+    const all = plan.cohorts.map(cohort => ({id:cohort.id,envelope:envelope(plan,cohort)}));
+    const finding={id:"STABLE",code:"STABLE_CODE",path:"src/service.mjs",origin:"repair",severity:"high"};
+    all[0].envelope.response.findings=[finding];all[0].envelope.response.verdict="REJECTED";
+    all[1].envelope.response.findings=[{...finding}];all[1].envelope.response.verdict="REJECTED";
+    if(["code","path","origin"].includes(change)) all[1].envelope.response.findings[0][change]="contradictory";
+    if(change==="disposition") {all[0].envelope.response.resolutions=[{id:finding.id,status:"OPEN",evidence:"Open"}];all[1].envelope.response.resolutions=[{id:finding.id,status:"RESOLVED",evidence:"Contradiction"}];}
+    if(change==="duplicate") all[1].envelope.response.findings.push({...finding});
+    assert.equal(aggregateCohorts(plan,all).response.verdict,null,change);
+  }
 });
 
 test("effective inherited effects retain independent deployment permission status", () => {

@@ -95,7 +95,12 @@ assesses intervening committed deltas, preserving each attempt's literal outcome
 and valid source/dependency/evidence observations. Each attempt executes in a fresh
 native module graph, records the actual producer source identities before import,
 and rechecks them during capture; cached parent code cannot attest newer emitter
-bytes. Separate immutable generation
+bytes. The caller binds the builtin-only bootstrap before execution; that bootstrap
+checks its own bytes/physical identity before importing the attempt, which captures
+the controlling policy declaration and complete producer graph before loading it.
+Actual prior-attempt and cumulative pending deltas remain separately named.
+Detected source arrival before its commit retains the owner in WAITING_FOR_COMMIT.
+Separate immutable generation
 observations bind its PID, kernel birth identity, canonical root, kind and scope;
 they impose no source or review reservation. Stale parents retain their evidence,
 foreign or malformed custody fails closed, and current publication awaits the
@@ -107,6 +112,14 @@ unavailable clocks remain explicitly null rather than receiving a new original
 timestamp. A pre-existing native parent without a new controller observation is
 identified through actual PID/birth/root/command and its pending native invocation;
 observe its genuine terminal outcome before continuing arrived committed scope.
+The same observation covers a surviving native bootstrap/attempt after coordinator
+loss. Native source packets prepare actual assigned diffs and complete source bodies
+containing changed definitions/methods in bounded UTF-8 pages with exact Git/tree,
+line and byte locators. Keep every required path, current authority identities and
+retained coverage checkpoints; unknown dependencies stay explicit and on-demand.
+Packets and compatible corroborating evidence create no proof or approval. The
+native reducer retains original cohort records, merges consistent stable findings
+and matching dispositions, and rejects identity/status conflicts or local duplicates.
 
 1. Submit the concise Problem, Cause and Recommended change through
    `npm run oracle:proposal -- "<proposal>"` before implementation, with at most

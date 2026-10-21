@@ -80,8 +80,13 @@ export function partitionPayload(plan, cohort, evidence) {
 
 function mergeRecords(responses, field, identity, issues) {
   const records = new Map();
-  for (const response of responses) for (const item of response[field] ?? []) {
+  const combinedText = (...values) => unique(values.filter(value => typeof value === "string" && value)).join("\n\n");
+  for (const response of responses) {
+    const local = new Set();
+    for (const item of response[field] ?? []) {
     const key = identity(item), old = records.get(key);
+    if (local.has(key)) { issues.push(`Duplicate ${field} identity ${key} within one cohort`); continue; }
+    local.add(key);
     if (old && bindingHash(old) !== bindingHash(item)) {
       if (field === "coverage") {
         records.set(key, {...old, dependencies: unique([...old.dependencies, ...item.dependencies]),
@@ -90,8 +95,18 @@ function mergeRecords(responses, field, identity, issues) {
           evidence: unique([...old.evidence, ...item.evidence]), finding_ids: unique([...old.finding_ids, ...item.finding_ids])});
       } else if (field === "deployment_effect_dispositions" && old.disposition === item.disposition) {
         records.set(key, {...old, evidence: `${old.evidence}; ${item.evidence}`});
+      } else if (field === "resolutions" && old.status === item.status) {
+        records.set(key, {...old, evidence: combinedText(old.evidence, item.evidence)});
+      } else if (field === "findings" && old.code === item.code && old.path === item.path && old.origin === item.origin) {
+        const severity = ["high", "medium", "low"].find(value => [old.severity, item.severity].includes(value)) ?? old.severity;
+        records.set(key, {...old, severity, message: combinedText(old.message, item.message),
+          reproduction: combinedText(old.reproduction, item.reproduction), required_behavior: combinedText(old.required_behavior, item.required_behavior),
+          affected_paths: unique([...old.affected_paths ?? [], ...item.affected_paths ?? []]),
+          acceptance_checks: unique([...old.acceptance_checks ?? [], ...item.acceptance_checks ?? []]),
+          missed_finding_reason: combinedText(old.missed_finding_reason, item.missed_finding_reason) || null});
       } else issues.push(`Conflicting ${field} identity ${key}`);
     } else records.set(key, item);
+    }
   }
   return [...records.values()];
 }
