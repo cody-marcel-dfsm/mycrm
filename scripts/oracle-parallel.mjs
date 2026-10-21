@@ -28,7 +28,11 @@ export function partitionPayload(plan, cohort, evidence) {
     origin: item.origin ?? item.round ?? null, assessment: String(item.assessment ?? item.reason ?? "").slice(0, 700)}));
   const value = {cohort: {...cohort, candidate_commit: plan.candidate_commit, candidate_tree: plan.candidate_tree,
     input_binding_sha256: plan.input_binding_sha256, plan_sha256: plan.plan_sha256},
-    inputs: {authorities: evidence.inputs.authorities, candidate_commit: plan.candidate_commit,
+    inputs: {authorities: (evidence.inputs.authorities ?? []).map((item, index) => ({path: item.path, sha256: item.sha256,
+      external: item.external ?? false, controlling: item.controlling ?? false,
+      original_index: index})),
+      authority_manifest_sha256: bindingHash(evidence.inputs.authorities ?? []),
+      authority_manifest_reference: {file: "../../evidence.json", pointer: "/inputs/authorities"}, candidate_commit: plan.candidate_commit,
       reviewed_tree: plan.candidate_tree, owner: evidence.inputs.owner},
     staged_files: evidence.staged_files,
     review_context: {required_paths: cohort.required_paths, eligible_coverage: summarize(context.eligible_coverage ?? []),
@@ -42,7 +46,12 @@ export function partitionPayload(plan, cohort, evidence) {
         reason: item.reason, evidence: item.evidence, record: item.record ? {command: item.record.command, output_file: item.record.output_file} : null})) : [],
       eligible_validations: primary ? (context.eligible_validations ?? []).map((item) => ({id: item.id, evidence: item.evidence})) : [],
       changed_since_previous: (context.pending_changed_paths ?? context.changed_since_previous ?? []).filter((name) => names.has(name))},
-    inherited_effects: primary ? evidence.deployment_history.history : [],
+    inherited_effects: primary ? evidence.deployment_history.history.map((item, index) => ({commit: item.commit, tree: item.tree,
+      reviewedCommit: item.reviewedCommit, filename: item.filename,
+      receipt: {receipt_sha256: item.receipt.receipt_sha256, protected_deployment_effects: item.receipt.protected_deployment_effects,
+        deployment_effect_dispositions: item.receipt.deployment_effect_dispositions,
+        api_version_assessment: item.receipt.api_version_assessment, authentication_impact: item.receipt.authentication_impact},
+      original_reference: {file: "../../evidence.json", pointer: `/deployment_history/history/${index}`}})) : [],
     full_evidence_reference: "../../evidence.json",
     full_history_reference: context.history_file,
     reading_contract: "Read governing instructions first once per content identity, then this cohort's changes and applicable retained observations. Use bounded field projections and source chunks (at most 8 KiB per read); open full original records only for a named unresolved fact. A fresh reviewer conversation never resets sealed file coverage. No copied history grants proof or approval."};
@@ -55,7 +64,7 @@ export function partitionPayload(plan, cohort, evidence) {
     value.review_context.finding_history = [];
     value.retained_details_on_demand = true;
   }
-  if (Buffer.byteLength(JSON.stringify(value)) > payloadLimit) throw new Error("Cohort payload exceeds its bound; use narrower source cohorts");
+  if (Buffer.byteLength(JSON.stringify(value)) > payloadLimit) throw new Error(`Cohort payload exceeds its bound; field bytes ${JSON.stringify(Object.fromEntries(Object.entries(value).map(([key, item]) => [key, Buffer.byteLength(JSON.stringify(item))])))}`);
   return value;
 }
 

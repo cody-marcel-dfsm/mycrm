@@ -37,6 +37,25 @@ test("parallel plan bounds each payload and preserves exact candidate and mandat
   }
 });
 
+test("bounded payload retains authority and protected-effect identities without copying full custody or receipts", () => {
+  const e = evidence();
+  e.inputs = {...inputs, authorities: Array.from({length: 76}, (_, index) => ({path: `Vault/docs/authority-${index}.md`, sha256: String(index).padStart(64, "0"), custody: {entries: "Detailed native custody".repeat(500)}}))};
+  e.deployment_history.history = [{commit: candidate.commit, tree: candidate.tree, reviewedCommit: candidate.commit,
+    filename: "native-original-receipt.json", receipt: {receipt_sha256: "a".repeat(64),
+      protected_deployment_effects: [{id: "KNOWN-EFFECT", category: "PERMISSION_AUTHORITY", description: "Retained exact permission effect", affected_paths: ["src/service.mjs"], authority: null}],
+      deployment_effect_dispositions: [], api_version_assessment: response([]).api_version_assessment,
+      authentication_impact: true, input_binding: "Detailed historical receipt".repeat(30000)}}];
+  const plan = cohortPlan({candidate, inputs: e.inputs, context: e.review_context});
+  const payload = partitionPayload(plan, plan.cohorts[0], e);
+  assert.ok(Buffer.byteLength(JSON.stringify(payload)) < payloadLimit);
+  assert.equal(payload.inputs.authority_manifest_sha256, bindingHash(e.inputs.authorities));
+  assert.equal(payload.inputs.authorities.length, 76); assert.equal(payload.inputs.authorities[0].custody, undefined);
+  assert.equal(payload.inherited_effects[0].receipt.protected_deployment_effects[0].id, "KNOWN-EFFECT");
+  assert.equal(payload.inherited_effects[0].receipt.authentication_impact, true);
+  assert.equal(payload.inherited_effects[0].original_reference.pointer, "/deployment_history/history/0");
+  assert.equal(payload.inherited_effects[0].receipt.input_binding, undefined);
+});
+
 test("aggregate rejects missing, duplicate, mixed-candidate and uncovered cohorts", () => {
   const plan = cohortPlan({candidate, inputs, context: evidence().review_context});
   const all = plan.cohorts.map((cohort) => ({id: cohort.id, envelope: envelope(plan, cohort)}));
