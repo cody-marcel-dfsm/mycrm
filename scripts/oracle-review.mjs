@@ -11,7 +11,7 @@ import {prepareSeries, reviewSnapshot, assessRound, saveRound, verifySeries, inh
 import {environmentHash, executionEnvironment, executableBinding, readValidationProofs, assertValidationProofsMatch, inheritNativeEvidence, validationDigest, fileMetadata} from "./oracle-validation.mjs";
 import Ajv from "ajv";
 import {recordValidatedCommit, readValidatedCheckpoint, shipmentPlan} from "./shipment-state.mjs";
-import {archiveTechnicalReceipt, deploymentHistoryForReview, deploymentPlan, pendingDeploymentEffects, authorizationDigest, validateDeploymentAssessment, validateDeploymentDispositions, verifyNewEffectAuthorities, verifyDeploymentAuthorization} from "./oracle-deployment.mjs";
+import {archiveTechnicalReceipt, committedReceipt, deploymentHistoryForReview, deploymentPlan, pendingDeploymentEffects, authorizationDigest, validateDeploymentAssessment, validateDeploymentDispositions, verifyNewEffectAuthorities, verifyDeploymentAuthorization} from "./oracle-deployment.mjs";
 
 const execFileAsync = promisify(execFile);
 const TRAILERS = Object.freeze({verdict: "Oracle-Verdict", tree: "Oracle-Reviewed-Tree", receipt: "Oracle-Receipt-SHA256"});
@@ -651,12 +651,10 @@ async function verifyMessage(messagePath) {
 async function verifyCommit(reference) {
   const resolved = await git(["rev-parse", reference]);
   try {
-    const checkpoint = JSON.parse(await readMetadataFile(path.join(await oracleDirectory(), "committed-receipts", `${resolved}.json`), "utf8"));
-    if (checkpoint.last_validated_commit !== resolved) throw new Error("Committed review identity changed");
-    const plan = await deploymentPlan({reference, requireClean: false});
-    console.log(`ORACLE_COMMIT=APPROVED commit=${resolved} tree=${plan.tree} receipt=${plan.receipt.receipt_sha256}`);
+    const selected = await committedReceipt(process.cwd(), reference);
+    console.log(`ORACLE_COMMIT=APPROVED commit=${resolved} reviewed_commit=${selected.reviewedCommit} tree=${selected.tree} receipt=${selected.receipt.receipt_sha256}`);
     return;
-  } catch (error) { if (error.code !== "ENOENT") throw error; }
+  } catch (error) { if (!["ENOENT", "MYCRM_MISSING_HISTORICAL_RECEIPT"].includes(error.code)) throw error; }
   let reviewedReference = reference; const tree = await git(["rev-parse", `${reference}^{tree}`]); let message = await git(["show", "-s", "--format=%B", reference]);
   if (parseTrailers(message)[TRAILERS.verdict] === undefined) {
     const parents = (await git(["rev-list", "--parents", "-n", "1", reference])).split(/\s+/).slice(1);

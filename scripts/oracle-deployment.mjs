@@ -78,7 +78,7 @@ async function readBaseline(store, owner) {
   return baseline;
 }
 
-async function committedReceipt(root, reference) {
+export async function committedReceipt(root, reference) {
   const {parseTrailers, verifyPublishedCommitTrailers, verifyReceipt} = await import("./oracle-review.mjs");
   const commit = await git(root, ["rev-parse", "--verify", "--end-of-options", `${reference}^{commit}`]);
   const tree = await git(root, ["rev-parse", `${commit}^{tree}`]);

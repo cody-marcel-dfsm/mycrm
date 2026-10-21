@@ -1,7 +1,7 @@
 import {randomUUID} from "node:crypto";
 import {readFile, readdir, realpath} from "node:fs/promises";
 import path from "node:path";
-import {atomicJson, bindingHash, contentHash, observedSourceBindings, pathCustody, readMetadataFile, writeMetadataFile, assertCurrentInvocation} from "./oracle-inputs.mjs";
+import {atomicJson, bindingHash, contentHash, observedSourceBindings, pathCustody, readMetadataFile, writeMetadataFile, assertCurrentInvocation, metadataDirectory} from "./oracle-inputs.mjs";
 import {legacyPolicy} from "./oracle-policy.mjs";
 
 // Private maintainer state. It carries evidence; approval still requires a fresh
@@ -33,7 +33,7 @@ export function verifySeries(record, base) {
 async function augmentedSeries(directory, base, series) {
   const location = path.join(directory, "series", "supporting-assessments", base);
   let names;
-  try { names = await readdir(location); } catch (error) { if (error.code === "ENOENT") return series; throw error; }
+  try { await metadataDirectory(path.dirname(directory), location, {create: false}); names = await readdir(location); } catch (error) { if (error.code === "ENOENT") return series; throw error; }
   const rounds = [...series.rounds];
   const identity = (round) => bindingHash({snapshot: round.snapshot, original: round.observed_assessment?.response_evidence});
   const seen = new Set(rounds.filter((round) => round.observed_assessment).map(identity));
