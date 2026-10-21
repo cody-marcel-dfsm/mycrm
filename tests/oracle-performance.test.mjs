@@ -1449,6 +1449,24 @@ test("simultaneous native starters elect one immutable live parent and observer 
   assert.equal((await readFile(calls, "utf8")).trim().split("\n").length, 3);
 });
 
+test("a live native attempt after parent loss is observed without launching another area group", async (t) => {
+  const {repo, root, env, prepare, git} = await fixture(t); await prepare(); await git("branch", "-m", "main");
+  await git("-c", "user.name=Synthetic", "-c", "user.email=synthetic@example.invalid", "commit", "-qm", "Committed recovery candidate");
+  const calls = path.join(root, "orphan-calls"), ready = path.join(root, "orphan-ready");
+  const owner = runningReview(repo, {...env, ORACLE_DELAY: "1800", ORACLE_CALLS: calls, ORACLE_READY: ready});
+  await waitFor(ready);
+  const pointer = await readFile(path.join(repo, ".git/oracle/active-review.json"));
+  owner.child.kill("SIGKILL"); assert.equal((await owner.done).signal, "SIGKILL");
+  const {shipmentPlan,readValidatedCheckpoint} = await import("../scripts/shipment-state.mjs");
+  const plan = await shipmentPlan({root: repo}); assert.equal(plan.action, "REVIEW_IN_PROGRESS");
+  assert.match(plan.controller.process.command.join?.(" ") ?? plan.controller.process.command, /oracle-attempt\.mjs/);
+  const completed = await command(repo, ["review"], {...env, ORACLE_CALLS: calls});
+  assert.match(completed.stdout, /LEGACY_COMPLETED/);
+  assert.deepEqual(await readFile(path.join(repo, ".git/oracle/active-review.json")), pointer);
+  assert.equal((await readFile(calls, "utf8")).trim().split("\n").length, 3);
+  assert.equal((await readValidatedCheckpoint(repo)).record.last_validated_commit, await git("rev-parse", "HEAD"));
+});
+
 test("live parent catches batched committed movement and preserves actual ERROR observations", async (t) => {
   const {repo, root, env, git, prepare} = await fixture(t); await prepare(); await git("branch", "-m", "main");
   await git("-c", "user.name=Synthetic", "-c", "user.email=synthetic@example.invalid", "commit", "-qm", "Initial candidate");

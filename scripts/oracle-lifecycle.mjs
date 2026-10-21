@@ -9,7 +9,7 @@ import {atomicJson, bindingHash, contentHash, metadataDirectory, readMetadataFil
 
 const execute = promisify(execFile);
 const pause = (ms) => new Promise((resolve) => setTimeout(resolve, ms));
-const nativeParent = (command) => /^(?:\S*\/)?node(?:\s+--\S+)*\s+\S*oracle-review\.mjs\s+review(?:\s|$)/.test(Array.isArray(command) ? command.join(" ") : command ?? "");
+const nativeParent = (command) => /^(?:\S*\/)?node(?:\s+--\S+)*\s+\S*(?:oracle-review\.mjs\s+review|oracle-attempt\.mjs)(?:\s|$)/.test(Array.isArray(command) ? command.join(" ") : command ?? "");
 const seal = (value) => ({...value, sha256: bindingHash(value)});
 function verify(record) {
   const {sha256, ...value} = record;
