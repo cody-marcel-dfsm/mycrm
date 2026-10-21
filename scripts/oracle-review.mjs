@@ -715,6 +715,7 @@ async function freshReviewAttempt(args) {
   if (!marker) throw new Error(`Native review attempt exited without its result: ${output.message ?? "missing result"}`);
   const completed = JSON.parse(marker.slice("ORACLE_ATTEMPT_RESULT=".length));
   if (completed.failure) { const error = new Error(completed.failure.message); error.name = completed.failure.name; error.code = completed.failure.code; throw error; }
+  if (completed.result?.verdict === "REJECTED" || completed.result?.review_status === "INCOMPLETE") process.exitCode = 1;
   return completed.result;
 }
 

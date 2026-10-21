@@ -1419,6 +1419,19 @@ test("unknown PREPARING legacy execution failure retains its literal ERROR witho
   await assert.rejects(readFile(calls), {code: "ENOENT"});
 });
 
+test("fresh native workers retain producer custody and rejected or incomplete CLI status", async (t) => {
+  for (const setting of ["ORACLE_SOURCE_FINDING", "ORACLE_INCOMPLETE"]) {
+    const {repo, env, prepare} = await fixture(t); await prepare();
+    await assert.rejects(command(repo, ["review"], {...env, [setting]: "1"}), (error) => {
+      assert.equal(error.code, 1); assert.match(error.stdout, setting === "ORACLE_SOURCE_FINDING" ? /ORACLE_VERDICT=REJECTED/ : /ORACLE_REVIEW_STATUS=INCOMPLETE/); return true;
+    });
+    const pointer = JSON.parse(await readFile(path.join(repo, ".git/oracle/active-review.json")));
+    const evidence = JSON.parse(await readFile(path.join(repo, ".git/oracle/runs", pointer.id, "evidence.json")));
+    assert.equal(evidence.producer_origin.fresh_module_graph, true);
+    assert.equal(evidence.producer_origin.source_sha256["oracle-review.mjs"], sha256(await readFile(launcher)));
+  }
+});
+
 test("simultaneous native starters elect one immutable live parent and observer cancellation leaves it running", async (t) => {
   const {repo, root, env, prepare} = await fixture(t); await prepare();
   const calls = path.join(root, "calls.jsonl"), ready = path.join(root, "ready");

@@ -92,7 +92,10 @@ serial final model review follows. Preserve every cohort's original result,
 failure and actual overlap timing; partial or conflicting results grant no approval.
 The native parent retains its lifecycle across normal commits and automatically
 assesses intervening committed deltas, preserving each attempt's literal outcome
-and valid source/dependency/evidence observations. Separate immutable generation
+and valid source/dependency/evidence observations. Each attempt executes in a fresh
+native module graph, records the actual producer source identities before import,
+and rechecks them during capture; cached parent code cannot attest newer emitter
+bytes. Separate immutable generation
 observations bind its PID, kernel birth identity, canonical root, kind and scope;
 they impose no source or review reservation. Stale parents retain their evidence,
 foreign or malformed custody fails closed, and current publication awaits the
