@@ -341,7 +341,7 @@ async function review(args = [], {run, phase, producer = null, verifyProducer = 
   const prepared = await phase("preparation_ms", () => preparedEvidence(directory, {inputs, ...reviewerRecord}, async () => ({inputs, ...reviewerRecord, proposal: proposalRecord, staged_files: candidate.files, diff: await git(candidate.commit ? ["diff", "--binary", "--no-ext-diff", candidate.base, candidate.commit] : ["diff", "--cached", "--binary", "--no-ext-diff"]), validation_evidence: validationEvidence, owner_approval_evidence: ownerApprovalEvidence})));
   const deployment = await candidateDeploymentHistory(candidate);
   const evidence = {...prepared.payload, requested_validation_evidence: requestedValidationEvidence, inherited_validation_evidence: inherited.evidence, review_context: series.public, reviewer_metadata_file: path.join(run, "reviewer.json"), deployment_history: deployment, integrated_deployment_diff: deployment.unverified_commits.length && deployment.baseline ? await git(["diff", "--binary", "--no-ext-diff", deployment.baseline, candidate.tree]) : null};
-  if (producer) evidence.producer_origin = {schema: "my-crm.oracle-producer/v1", source_sha256: producer, fresh_module_graph: true};
+  if (producer) evidence.producer_origin = {...producer, fresh_module_graph: true};
   await atomicJson(path.join(run, "evidence.json"), evidence);
   await atomicJson(path.join(run, "preparation.json"), {reused: prepared.reused, sha256: bindingHash(evidence)});
   const schemaPath = path.join(run, "response.schema.json"); const outputPath = path.join(run, "response.json");
@@ -360,10 +360,35 @@ async function review(args = [], {run, phase, producer = null, verifyProducer = 
     "Verify that the completed candidate stays within the sealed approved proposal scope and current governing instructions. Proposal input changes preserve historical scope observations; independently assess affected criteria against the current bound authority manifest. Make one complete pass over each unvalidated commit or batched range, consolidate all findings, and reassess only new, missing or affected scope on repairs. Proposal approval never substitutes for completed-tree review.", "Return COMPLETE and APPROVED only when the entire staged candidate satisfies every applicable authority and validation requirement. Return COMPLETE and REJECTED with all established actionable findings after complete coverage. Return INCOMPLETE and null verdict when unfinished; record completed partial coverage and remaining scope.", "Return only the response required by the supplied JSON schema."
   ].join("\n");
   let response, assessed, rawResponse, completedSeries, parallelEvidence;
+  const sourceCache = new Map();
+  const sourceForPath = async (name, revision) => {
+    const key = `${revision}:${name}`;
+    if (sourceCache.has(key)) return sourceCache.get(key);
+    const pending = (async () => {
+      if (path.isAbsolute(name)) {
+        const authority = inputs.authorities.find(item => item.path === name);
+        if (!authority || revision !== candidate.tree) return {state: "EXTERNAL_AUTHORITY_ON_DEMAND", locator: {path: name, authority_sha256: authority?.sha256 ?? null}};
+        if (!authority.sha256) return {state: "ABSENT", locator: {path: name, authority_sha256: null}};
+        const text = await readFile(name, "utf8");
+        if (sha256(text) !== authority.sha256) { const error = new Error("Oracle inputs drifted while preparing authority source pages"); error.code = "ORACLE_INPUT_DRIFT"; throw error; }
+        return {state: "PRESENT", text, locator: {path: name, authority_sha256: authority.sha256}};
+      }
+      if (name.split(/[\\/]/).some(part => ["..", ".git", ""].includes(part))) throw new Error("Source packet requires a safe project-local path");
+      const locator = {repository: process.cwd(), revision, path: name};
+      let bytes;
+      try { bytes = (await execFileAsync("git", ["show", `${revision}:${name}`], {cwd: process.cwd(), encoding: "buffer", maxBuffer: 16 * 1024 * 1024})).stdout; }
+      catch (error) { if (/does not exist in|exists on disk, but not in/.test(error.stderr?.toString() ?? "")) return {state: "ABSENT", locator}; throw error; }
+      const git_blob = await git(["rev-parse", `${revision}:${name}`]);
+      try { return {state: "PRESENT", text: new TextDecoder("utf-8", {fatal: true, ignoreBOM: true}).decode(bytes), git_blob, locator}; }
+      catch { return {state: "BINARY_ON_DEMAND", bytes: bytes.length, sha256: sha256(bytes), git_blob, locator}; }
+    })();
+    sourceCache.set(key, pending); return pending;
+  };
   try {
     assertInputsMatch(inputs, await capture());
     parallelEvidence = (await phase("reviewer_ms", () => runParallelReview({run, candidate, inputs, evidence, schema: responseSchema, sharedPrompt: prompt,
       diffForPaths: (paths) => paths.filter((name) => !path.isAbsolute(name)).length ? git(["diff", "--binary", "--no-ext-diff", series.public.previous_candidate ?? candidate.base, candidate.tree, "--", ...paths.filter((name) => !path.isAbsolute(name))]) : Promise.resolve(""),
+      sourceForPath, diffBase: series.public.previous_candidate ?? candidate.base,
       invoke: (cohort) => execOracle(["exec", "--ephemeral", "--ignore-user-config", "--model", model, "--sandbox", "danger-full-access", "--output-schema", cohort.schema, "--output-last-message", cohort.output, "--cd", process.cwd(), cohort.prompt], cohort.directory, effort)}))).reference;
     rawResponse = await readMetadataFile(outputPath, "utf8");
     response = validateOracleResponse(JSON.parse(rawResponse), {requireApiAssessment: true});
@@ -695,14 +720,17 @@ async function verifyCommit(reference) {
   console.log(`ORACLE_COMMIT=APPROVED commit=${await git(["rev-parse", reference])} reviewed_commit=${await git(["rev-parse", reviewedReference])} tree=${tree}`);
 }
 
-export async function runReviewAttempt(args, {producer = null, verifyProducer = async () => {}} = {}) {
+export async function runReviewAttempt(args, {producer = null, verifyProducer = async () => {}, onAdmitted = () => {}} = {}) {
   const directory = await oracleDirectory();
   return withOracleRun(directory, (context) => review(args, {...context, producer, verifyProducer}),
-    {kind: "review", onAdmitted: () => removeMetadataFile(path.join(directory, "approval.json"), {force: true})});
+    {kind: "review", onAdmitted: async () => { await removeMetadataFile(path.join(directory, "approval.json"), {force: true}); onAdmitted(); }});
 }
 
 async function freshReviewAttempt(args) {
-  const invocation = execFileAsync(process.execPath, [fileURLToPath(new URL("./oracle-attempt.mjs", import.meta.url)), ...args],
+  const filename = new URL("./oracle-bootstrap.mjs", import.meta.url), stat = await lstat(filename, {bigint: true});
+  const bootstrap = {sha256: sha256(await readFile(filename)), identity: {dev: String(stat.dev), ino: String(stat.ino), size: String(stat.size), mtime: String(stat.mtimeNs), ctime: String(stat.ctimeNs), mode: String(stat.mode)}};
+  const selected = {bootstrap, candidate_commit: await git(["rev-parse", "HEAD"])};
+  const invocation = execFileAsync(process.execPath, [fileURLToPath(filename), JSON.stringify(selected), ...args],
     {cwd: process.cwd(), maxBuffer: 16 * 1024 * 1024});
   const cancel = () => invocation.child?.kill("SIGTERM");
   process.on("SIGINT", cancel); process.on("SIGTERM", cancel);
@@ -714,7 +742,14 @@ async function freshReviewAttempt(args) {
   if (output.stderr) process.stderr.write(output.stderr);
   if (!marker) throw new Error(`Native review attempt exited without its result: ${output.message ?? "missing result"}`);
   const completed = JSON.parse(marker.slice("ORACLE_ATTEMPT_RESULT=".length));
-  if (completed.failure) { const error = new Error(completed.failure.message); error.name = completed.failure.name; error.code = completed.failure.code; throw error; }
+  if (completed.failure) {
+    const error = new Error(completed.failure.message); error.name = completed.failure.name; error.code = completed.failure.code;
+    if (!completed.admitted) {
+      const directory = await oracleDirectory();
+      return withOracleRun(directory, async () => { throw error; }, {kind: "review", onAdmitted: () => removeMetadataFile(path.join(directory, "approval.json"), {force: true})});
+    }
+    throw error;
+  }
   if (completed.result?.verdict === "REJECTED" || completed.result?.review_status === "INCOMPLETE") process.exitCode = 1;
   return completed.result;
 }
@@ -761,7 +796,8 @@ async function continuousReview(args, controller) {
     } catch (error) { failure = error; }
     const after = await git(["rev-parse", "HEAD"]);
     const moved = before !== after;
-    if (moved && (!failure || ["ORACLE_INPUT_DRIFT", "ORACLE_CANDIDATE_MOVED"].includes(failure.code))) {
+    const sourceArrived = failure && ["ORACLE_INPUT_DRIFT", "ORACLE_CANDIDATE_MOVED"].includes(failure.code);
+    if (sourceArrived || moved && !failure) {
       process.stdout.write(`ORACLE_REVIEW=CONTINUING controller=${controller.record.id} previous=${before} current=${after}\n`);
       await controller.progress({phase: "CATCHING_UP", previous_commit: before, candidate_commit: after, attempt});
       // The prior native run retains its literal ERROR/COMPLETE result. Only

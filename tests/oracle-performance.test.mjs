@@ -1429,6 +1429,11 @@ test("fresh native workers retain producer custody and rejected or incomplete CL
     const evidence = JSON.parse(await readFile(path.join(repo, ".git/oracle/runs", pointer.id, "evidence.json")));
     assert.equal(evidence.producer_origin.fresh_module_graph, true);
     assert.equal(evidence.producer_origin.source_sha256["oracle-review.mjs"], sha256(await readFile(launcher)));
+    const cohort = JSON.parse(await readFile(path.join(repo, ".git/oracle/runs", pointer.id, "cohorts/implementation-consumers/evidence.json")));
+    const packet = JSON.parse(await readFile(cohort.source_packet.path));
+    const body = packet.items.find(item => item.path === "candidate.txt").versions.find(version => version.revision === packet.candidate_tree);
+    assert.equal((await Promise.all(body.pages.map(page => readFile(page.path, "utf8")))).join(""), "after\n");
+    assert.ok(body.pages.every(page => page.bytes <= 8192));
   }
 });
 
@@ -1459,12 +1464,37 @@ test("a live native attempt after parent loss is observed without launching anot
   owner.child.kill("SIGKILL"); assert.equal((await owner.done).signal, "SIGKILL");
   const {shipmentPlan,readValidatedCheckpoint} = await import("../scripts/shipment-state.mjs");
   const plan = await shipmentPlan({root: repo}); assert.equal(plan.action, "REVIEW_IN_PROGRESS");
-  assert.match(plan.controller.process.command.join?.(" ") ?? plan.controller.process.command, /oracle-attempt\.mjs/);
+  assert.match(plan.controller.process.command.join?.(" ") ?? plan.controller.process.command, /oracle-bootstrap\.mjs/);
   const completed = await command(repo, ["review"], {...env, ORACLE_CALLS: calls});
   assert.match(completed.stdout, /LEGACY_COMPLETED/);
   assert.deepEqual(await readFile(path.join(repo, ".git/oracle/active-review.json")), pointer);
   assert.equal((await readFile(calls, "utf8")).trim().split("\n").length, 3);
   assert.equal((await readValidatedCheckpoint(repo)).record.last_validated_commit, await git("rev-parse", "HEAD"));
+});
+
+test("precommit source arrival waits in the same parent before assessing the committed delta", async (t) => {
+  const {repo, root, env, git, prepare} = await fixture(t); await prepare(); await git("branch", "-m", "main");
+  await git("-c", "user.name=Synthetic", "-c", "user.email=synthetic@example.invalid", "commit", "-qm", "Initial precommit candidate");
+  const head = await git("rev-parse", "HEAD"), ready = path.join(root, "precommit-ready"), calls = path.join(root, "precommit-calls");
+  const owner = runningReview(repo, {...env, ORACLE_DELAY: "400", ORACLE_READY: ready, ORACLE_CALLS: calls});
+  await waitFor(ready);
+  const generation = JSON.parse(await readFile(path.join(repo, ".git/oracle/controllers/00000000.json")));
+  const original = JSON.parse(await readFile(path.join(repo, ".git/oracle/active-review.json")));
+  await writeFile(path.join(repo, "candidate.txt"), "Arrived edit intentionally remains unstaged across postcheck\n");
+  const directory = path.join(repo, ".git/oracle/controllers", generation.id); let progress;
+  for (let count = 0; count < 1000; count++) {
+    progress = JSON.parse(await readFile(path.join(directory, "progress.json")));
+    if (progress.phase === "WAITING_FOR_COMMIT") break;
+    await new Promise(resolve => setTimeout(resolve, 20));
+  }
+  assert.equal(progress.phase, "WAITING_FOR_COMMIT"); assert.equal(await git("rev-parse", "HEAD"), head);
+  await assert.rejects(readFile(path.join(directory, "outcome.json")), {code: "ENOENT"});
+  assert.equal(JSON.parse(await readFile(path.join(repo, ".git/oracle/runs", original.id, "outcome.json"))).outcome, "ERROR");
+  await git("add", "candidate.txt"); await git("-c", "user.name=Synthetic", "-c", "user.email=synthetic@example.invalid", "commit", "-qm", "Commit arrived precommit source");
+  assert.equal((await owner.done).code, 0);
+  const {readValidatedCheckpoint} = await import("../scripts/shipment-state.mjs");
+  assert.equal((await readValidatedCheckpoint(repo)).record.last_validated_commit, await git("rev-parse", "HEAD"));
+  assert.equal((await readFile(calls, "utf8")).trim().split("\n").length, 6);
 });
 
 test("live parent catches batched committed movement and preserves actual ERROR observations", async (t) => {

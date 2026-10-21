@@ -9,7 +9,7 @@ import {atomicJson, bindingHash, contentHash, metadataDirectory, readMetadataFil
 
 const execute = promisify(execFile);
 const pause = (ms) => new Promise((resolve) => setTimeout(resolve, ms));
-const nativeParent = (command) => /^(?:\S*\/)?node(?:\s+--\S+)*\s+\S*(?:oracle-review\.mjs\s+review|oracle-attempt\.mjs)(?:\s|$)/.test(Array.isArray(command) ? command.join(" ") : command ?? "");
+const nativeParent = (command) => /^(?:\S*\/)?node(?:\s+--\S+)*\s+\S*(?:oracle-review\.mjs\s+review|oracle-attempt\.mjs|oracle-bootstrap\.mjs)(?:\s|$)/.test(Array.isArray(command) ? command.join(" ") : command ?? "");
 const seal = (value) => ({...value, sha256: bindingHash(value)});
 function verify(record) {
   const {sha256, ...value} = record;
@@ -247,7 +247,7 @@ export async function withReviewController({root = process.cwd(), args = [], act
       const head = (await execute("git", ["rev-parse", "HEAD"], {cwd: state.root})).stdout.trim();
       const outcome = result.native_outcome, candidate = result.candidate_commit;
       const drift = ["ORACLE_INPUT_DRIFT", "ORACLE_CANDIDATE_MOVED"].includes(outcome.error?.code)
-        || /Oracle inputs drifted|candidate.*moved|committed source moved/i.test(outcome.error?.message ?? "");
+        || /Oracle inputs drifted|Oracle producer modules moved|candidate.*moved|committed source moved/i.test(outcome.error?.message ?? "");
       if (outcome.outcome === "ERROR" && !drift) throw new Error(`Legacy native review finished ERROR: ${outcome.error?.message ?? "reviewer execution failed"}`);
       // PREPARING may have no candidate evidence even at termination. Unknown
       // success supplies no current approval: run exact current selection.

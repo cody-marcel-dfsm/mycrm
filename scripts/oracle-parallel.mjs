@@ -1,6 +1,7 @@
 // Owner-local bounded independent review. Cohorts never publish approvals.
 import path from "node:path";
 import {atomicJson, bindingHash, contentHash, readMetadataFile, writeMetadataFile} from "./oracle-inputs.mjs";
+import {prepareSourcePacket, utf8Pages} from "./oracle-source-packet.mjs";
 
 export const cohortIds = ["cross-cutting", "implementation-consumers", "verification-recovery"];
 export const payloadLimit = 64 * 1024;
@@ -53,7 +54,8 @@ export function partitionPayload(plan, cohort, evidence) {
       validation_proofs: primary ? (context.validation_proofs ?? []).map((item) => ({id: item.id, eligible: item.eligible,
         reason: item.reason, evidence: item.evidence, record: item.record ? {command: item.record.command, output_file: item.record.output_file} : null})) : [],
       eligible_validations: primary ? (context.eligible_validations ?? []).map((item) => ({id: item.id, evidence: item.evidence})) : [],
-      changed_since_previous: (context.pending_changed_paths ?? context.changed_since_previous ?? []).filter((name) => names.has(name))},
+      changed_since_previous: (context.changed_since_previous ?? []).filter((name) => names.has(name)),
+      pending_changed_paths: (context.pending_changed_paths ?? []).filter((name) => names.has(name))},
     inherited_effects: primary ? evidence.deployment_history.history.map((item, index) => ({commit: item.commit, tree: item.tree,
       reviewedCommit: item.reviewedCommit, filename: item.filename,
       receipt: {receipt_sha256: item.receipt.receipt_sha256, protected_deployment_effects: item.receipt.protected_deployment_effects,
@@ -164,7 +166,7 @@ export async function verifyParallelArtifacts(reference, {root} = {}) {
   return manifest;
 }
 
-export async function runParallelReview({run, candidate, inputs, evidence, schema, invoke, sharedPrompt, diffForPaths}) {
+export async function runParallelReview({run, candidate, inputs, evidence, schema, invoke, sharedPrompt, diffForPaths, diffBase = candidate.base, sourceForPath}) {
   const plan = cohortPlan({candidate, inputs, context: evidence.review_context});
   await atomicJson(path.join(run, "cohort-plan.json"), plan, {exclusive: true});
   const wrapperSchema = {type: "object", additionalProperties: false,
@@ -173,17 +175,20 @@ export async function runParallelReview({run, candidate, inputs, evidence, schem
       input_binding_sha256: {type: "string"}, plan_sha256: {type: "string"}, reviewer_settings_sha256: {type: "string"}, cross_area_assessment: {type: "string", minLength: 1}, response: schema}};
   const prepared = plan.cohorts.map((cohort) => ({cohort, directory: path.join(run, "cohorts", cohort.id), payload: partitionPayload(plan, cohort, evidence)}));
   // Finish all bounded input preparation before launching any reviewer.
-  for (const {directory, payload} of prepared) {
+  for (const area of prepared) {
+    const {directory, payload, cohort} = area;
     const diff = diffForPaths ? await diffForPaths(payload.cohort.required_paths) : "";
+    area.sourcePacket = await prepareSourcePacket({directory, candidate, inputs, evidence, cohort, diff, diffBase, sourceForPath});
+    payload.source_packet = area.sourcePacket.reference;
     await writeMetadataFile(path.join(directory, "delta.diff"), diff, {flag: "wx"});
-    await atomicJson(path.join(directory, "changes.json"), {bytes: Buffer.byteLength(diff), excerpt: diff.slice(0, 8192),
-      excerpt_complete: diff.length <= 8192, scoped_diff_reference: "delta.diff", scoped_diff_sha256: bindingHash(diff)}, {exclusive: true});
+    await atomicJson(path.join(directory, "changes.json"), {bytes: Buffer.byteLength(diff), excerpt: utf8Pages(diff)[0],
+      excerpt_complete: Buffer.byteLength(diff) <= 8192, scoped_diff_reference: "delta.diff", scoped_diff_sha256: bindingHash(diff)}, {exclusive: true});
     payload.changes_reference = "changes.json";
-    payload.changes_excerpt_complete = diff.length <= 8192;
+    payload.changes_excerpt_complete = Buffer.byteLength(diff) <= 8192;
     await atomicJson(path.join(directory, "evidence.json"), payload, {exclusive: true});
     await atomicJson(path.join(directory, "response.schema.json"), wrapperSchema, {exclusive: true});
   }
-  const settled = await Promise.allSettled(prepared.map(async ({cohort, directory}) => {
+  const settled = await Promise.allSettled(prepared.map(async ({cohort, directory, sourcePacket}) => {
     const payloadBytes = await readMetadataFile(path.join(directory, "evidence.json"));
     const schemaBytes = await readMetadataFile(path.join(directory, "response.schema.json"));
     const changesBytes = await readMetadataFile(path.join(directory, "changes.json"));
@@ -191,7 +196,7 @@ export async function runParallelReview({run, candidate, inputs, evidence, schem
     const started = new Date().toISOString(); let error = null, envelope = null, inputsValid = true;
     try {
       await invoke({directory, schema: path.join(directory, "response.schema.json"), output: path.join(directory, "response.json"),
-        prompt: `${sharedPrompt}\nAssigned cohort: ${cohort.id}. ${cohort.cross_area}\nBounded cohort inputs: ${path.join(directory, "evidence.json")}. Assess ONLY its required new/missing/affected paths and relevant dependencies, re-attesting applicable unchanged sealed observations. The cross-cutting cohort owns the global proposal, criteria, inherited-effect and API assessment; other cohorts independently report any actual effect discovered in their assigned implementation and tests without rereading unrelated deployment history. Every cohort is required and runs concurrently; this response is your cohort's decision, never a whole-candidate approval. Return the exact echoed cohort/candidate/input/plan bindings and response wrapper required by the supplied schema. The native controller consolidates all findings and performs complete-candidate admission; no serial final reviewer follows. Return explicit cross_area_assessment tracing entrypoints, construction, consumers, dependencies, publication and recovery edges, with source/evidence references. Do not read the full original history/context unless a named unresolved fact requires a bounded projection.`});
+        prompt: `${sharedPrompt}\nAssigned cohort: ${cohort.id}. ${cohort.cross_area}\nBounded cohort inputs: ${path.join(directory, "evidence.json")}. Begin source navigation with the owner-prepared source packet ${sourcePacket.reference.path}: actual assigned diff and exact complete source/definition bodies are paged in UTF-8, with original Git/tree/line/byte locators. Use those pages before repeated shell source navigation; trace explicit unknown/on-demand dependencies independently. Read authorities once per current identity and retain applicable checkpoints. Packet presence grants no coverage, proof or approval. Assess ONLY required new/missing/affected paths and relevant dependencies. The cross-cutting cohort owns global proposal, criteria, inherited-effect and API assessment. Other cohorts independently report effects discovered in their assigned implementation/tests. Every cohort runs concurrently; return only your cohort decision with exact bindings and cross-area entrypoint/construction/consumer/publication/recovery assessment. The native controller admits the complete-candidate decision; no serial model follows. Open full original history only for a named unresolved fact.`});
       envelope = JSON.parse(await readMetadataFile(path.join(directory, "response.json"), "utf8"));
     } catch (cause) { error = cause.message; try { envelope = JSON.parse(await readMetadataFile(path.join(directory, "response.json"), "utf8")); } catch {} }
     // Failed provider execution can still return useful observations. Their
@@ -200,6 +205,7 @@ export async function runParallelReview({run, candidate, inputs, evidence, schem
       for (const [name, original] of [["evidence.json", payloadBytes], ["response.schema.json", schemaBytes], ["changes.json", changesBytes], ["delta.diff", diffBytes]]) {
         if (contentHash(original) !== contentHash(await readMetadataFile(path.join(directory, name)))) throw new Error("Cohort inputs changed during assessment");
       }
+      for (const item of sourcePacket.files) if (contentHash(await readMetadataFile(item.path)) !== item.sha256) throw new Error("Cohort source packet original changed during assessment");
     } catch (cause) { inputsValid = false; error = [error, cause.message].filter(Boolean).join("; "); }
     let process = null;
     try { process = JSON.parse(await readMetadataFile(path.join(directory, "process.json"), "utf8")); } catch {}
@@ -219,7 +225,7 @@ export async function runParallelReview({run, candidate, inputs, evidence, schem
     signal: outcomes.find((item) => item.process?.signal)?.process.signal ?? null,
     interrupted: outcomes.some((item) => item.process?.interrupted), cohort_count: outcomes.length,
     cohort_exit_codes: outcomes.map((item) => ({id: item.id, ...item.process}))}, {exclusive: true});
-  const files = [];
+  const files = prepared.flatMap(area => area.sourcePacket.files);
   for (const name of ["cohort-plan.json", "cohort-outcomes.json", "response.json", "process.json",
     ...cohortIds.flatMap((id) => ["evidence.json", "changes.json", "delta.diff", "response.schema.json", "response.json", "outcome.json", "process.json", "reviewer.stdout.log", "reviewer.stderr.log"].map((leaf) => `cohorts/${id}/${leaf}`))]) {
     const filename = path.join(run, name);

@@ -6,7 +6,7 @@ import {promisify} from "node:util";
 import {createHash} from "node:crypto";
 
 const execute = promisify(execFile);
-export const policyModules = ["oracle-inputs.mjs", "oracle-review.mjs", "oracle-series.mjs", "oracle-validation.mjs", "oracle-policy.mjs", "codex-child-model.mjs", "oracle-deployment.mjs", "shipment-state.mjs", "oracle-parallel.mjs", "oracle-lifecycle.mjs", "oracle-attempt.mjs"];
+export const policyModules = ["oracle-inputs.mjs", "oracle-review.mjs", "oracle-series.mjs", "oracle-validation.mjs", "oracle-policy.mjs", "codex-child-model.mjs", "oracle-deployment.mjs", "shipment-state.mjs", "oracle-parallel.mjs", "oracle-lifecycle.mjs", "oracle-attempt.mjs", "oracle-bootstrap.mjs", "oracle-source-packet.mjs"];
 const hash = (value) => createHash("sha256").update(value).digest("hex");
 const canonical = (value) => Array.isArray(value) ? `[${value.map(canonical).join(",")}]` : value && typeof value === "object" ? `{${Object.keys(value).sort().map((key) => `${JSON.stringify(key)}:${canonical(value[key])}`).join(",")}}` : JSON.stringify(value);
 

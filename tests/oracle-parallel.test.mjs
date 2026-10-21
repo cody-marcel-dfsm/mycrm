@@ -38,6 +38,20 @@ test("parallel plan bounds each payload and preserves exact candidate and mandat
   }
 });
 
+test("cohort navigation keeps actual prior-attempt and cumulative pending deltas distinct", () => {
+  const e = evidence(); e.review_context.changed_since_previous = [names[1]]; e.review_context.pending_changed_paths = [...names];
+  const plan = cohortPlan({candidate, inputs, context: e.review_context});
+  for (const cohort of plan.cohorts) {
+    const payload = partitionPayload(plan, cohort, e), assigned = new Set(cohort.required_paths);
+    assert.deepEqual(payload.review_context.changed_since_previous, e.review_context.changed_since_previous.filter(name => assigned.has(name)));
+    assert.deepEqual(payload.review_context.pending_changed_paths, cohort.required_paths);
+  }
+  e.review_context.changed_since_previous = [];
+  const interrupted = partitionPayload(plan, plan.cohorts[1], e);
+  assert.deepEqual(interrupted.review_context.changed_since_previous, []);
+  assert.deepEqual(interrupted.review_context.pending_changed_paths, [names[1]]);
+});
+
 test("bounded payload retains authority and protected-effect identities without copying full custody or receipts", () => {
   const e = evidence();
   e.inputs = {...inputs, authorities: Array.from({length: 76}, (_, index) => ({path: `Vault/docs/authority-${index}.md`, sha256: String(index).padStart(64, "0"), custody: {entries: "Detailed native custody".repeat(500)}}))};
@@ -142,6 +156,7 @@ async function runFixture(invoke, after) {
     const barrier = new Promise((resolve) => { release = resolve; });
     const result = await runParallelReview({run, candidate, inputs, evidence: evidence(), schema: {type: "object"}, sharedPrompt: "Trusted governing-first fixture",
       diffForPaths: async (paths) => paths.map((name) => `changed ${name}\n`).join(""),
+      sourceForPath: async (name, revision) => ({state: "PRESENT", text: `// ${name}\nexport function synthetic(){ return ${revision === candidate.tree}; }\n`, git_blob: "synthetic-body", locator: {revision, path: name}}),
       invoke: async (area) => {
         active++;peak = Math.max(peak, active);if (++entered === 3) release();
         await barrier;await new Promise((resolve) => setTimeout(resolve, 25));
@@ -189,6 +204,18 @@ test("receipt artifact custody detects a changed original cohort outcome", async
   await runFixture(null, async ({root, run, result}) => {
     await verifyParallelArtifacts(result.reference, {root});
     await writeFile(path.join(run, "cohorts/cross-cutting/outcome.json"), "changed original outcome");
+    await assert.rejects(verifyParallelArtifacts(result.reference, {root}), /evidence changed/);
+  });
+});
+
+test("receipt custody includes every native source packet page and manifest", async () => {
+  await runFixture(null, async ({root, run, result}) => {
+    const evidence = JSON.parse(await readFile(path.join(run, "cohorts/implementation-consumers/evidence.json"), "utf8"));
+    const manifest = JSON.parse(await readFile(evidence.source_packet.path, "utf8"));
+    assert.deepEqual(manifest.required_paths, ["src/service.mjs"]);
+    const current = manifest.items[0].versions.find(version => version.revision === candidate.tree);
+    assert.match(await readFile(current.pages[0].path, "utf8"), /export function synthetic/);
+    await writeFile(current.pages[0].path, "altered original source body");
     await assert.rejects(verifyParallelArtifacts(result.reference, {root}), /evidence changed/);
   });
 });

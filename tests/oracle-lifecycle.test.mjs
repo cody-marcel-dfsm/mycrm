@@ -1,13 +1,13 @@
 import assert from "node:assert/strict";
 import {execFile} from "node:child_process";
 import {randomUUID} from "node:crypto";
-import {mkdtemp, mkdir, readFile, rm, writeFile, cp, realpath} from "node:fs/promises";
+import {mkdtemp, mkdir, readFile, rm, writeFile, cp, realpath, lstat} from "node:fs/promises";
 import os from "node:os";
 import path from "node:path";
 import {promisify} from "node:util";
 import test from "node:test";
 import {observeReviewController} from "../scripts/oracle-lifecycle.mjs";
-import {atomicJson, bindingHash} from "../scripts/oracle-inputs.mjs";
+import {atomicJson, bindingHash, contentHash} from "../scripts/oracle-inputs.mjs";
 
 const execute = promisify(execFile), seal = (value) => ({...value, sha256: bindingHash(value)});
 async function fixture(t, legacy = false) {
@@ -53,19 +53,46 @@ test("missing and altered terminal records retain observation failure", async (t
   }
 });
 
-test("native attempt workers load fresh producer modules and retain their actual source identities", async (t) => {
+async function producerFixture(t) {
   const root = await realpath(await mkdtemp(path.join(os.tmpdir(), "mycrm-fresh-producer-")));
   t.after(() => rm(root, {recursive: true, force: true}));
   const worker = path.join(root, "oracle-attempt.mjs"); await cp(new URL("../scripts/oracle-attempt.mjs", import.meta.url), worker);
-  await writeFile(path.join(root, "oracle-policy.mjs"), 'export const policyModules = ["oracle-policy.mjs", "oracle-review.mjs", "oracle-attempt.mjs", "emitter.mjs"];');
-  await writeFile(path.join(root, "oracle-review.mjs"), 'import {role} from "./emitter.mjs"; export async function runReviewAttempt(args, {producer, verifyProducer}) {await verifyProducer(); return {role, producer};}');
-  const invoke = async () => JSON.parse((await execute(process.execPath, [worker])).stdout.trim().split("ORACLE_ATTEMPT_RESULT=")[1]);
+  const bootstrap = path.join(root, "oracle-bootstrap.mjs"); await cp(new URL("../scripts/oracle-bootstrap.mjs", import.meta.url), bootstrap);
+  const modules = ["oracle-policy.mjs", "oracle-review.mjs", "oracle-attempt.mjs", "oracle-bootstrap.mjs", "emitter.mjs"];
+  await writeFile(path.join(root, "oracle-policy.mjs"), `export const policyModules = ${JSON.stringify(modules)};`);
+  await writeFile(path.join(root, "oracle-review.mjs"), 'import {role} from "./emitter.mjs"; import {policyModules} from "./oracle-policy.mjs"; export async function runReviewAttempt(args, {producer, verifyProducer, onAdmitted}) {await verifyProducer(); onAdmitted(); return {role, producer, policyModules};}');
   await writeFile(path.join(root, "emitter.mjs"), 'export const role = "original trusted role";');
-  const first = await invoke(); assert.equal(first.result.role, "original trusted role");
-  await writeFile(path.join(root, "emitter.mjs"), 'export const role = "current trusted role";');
-  const second = await invoke(); assert.equal(second.result.role, "current trusted role");
-  assert.notEqual(first.result.producer["emitter.mjs"], second.result.producer["emitter.mjs"]);
-  await writeFile(path.join(root, "oracle-review.mjs"), 'import {writeFileSync} from "node:fs"; writeFileSync(new URL("./emitter.mjs", import.meta.url), "changed during import"); export async function runReviewAttempt() {throw new Error("must not execute");}');
-  const failed = await execute(process.execPath, [worker]).catch((error) => error);
-  assert.equal(JSON.parse(failed.stdout.trim().split("ORACLE_ATTEMPT_RESULT=")[1]).failure.code, "ORACLE_INPUT_DRIFT");
+  await writeFile(path.join(root, ".gitignore"), "*-ready\n*-go\n");
+  const git = async (...args) => (await execute("git", args, {cwd: root})).stdout.trim(); await git("init", "-q");
+  const commit = async () => {await git("add", ".");await git("-c", "user.name=Synthetic", "-c", "user.email=synthetic@example.invalid", "commit", "-qm", "Synthetic producer snapshot");}; await commit();
+  const selected = async () => {const stat = await lstat(bootstrap, {bigint: true}); return {bootstrap: {sha256: contentHash(await readFile(bootstrap)), identity: {dev:String(stat.dev),ino:String(stat.ino),size:String(stat.size),mtime:String(stat.mtimeNs),ctime:String(stat.ctimeNs),mode:String(stat.mode)}}, candidate_commit: await git("rev-parse", "HEAD")};};
+  const invoke = async (expected) => {const output=await execute(process.execPath, [bootstrap,JSON.stringify(expected ?? await selected())],{cwd:root}).catch(error=>error);return JSON.parse(output.stdout.trim().split("ORACLE_ATTEMPT_RESULT=")[1]);};
+  return {root,worker,bootstrap,modules,commit,selected,invoke};
+}
+
+test("native attempt workers load fresh producer modules and retain their actual source identities", async (t) => {
+  const f = await producerFixture(t), first = await f.invoke(); assert.equal(first.result.role, "original trusted role");
+  await writeFile(path.join(f.root, "emitter.mjs"), 'export const role = "current trusted role";'); await f.commit();
+  const second = await f.invoke(); assert.equal(second.result.role, "current trusted role");
+  assert.notEqual(first.result.producer.source_sha256["emitter.mjs"], second.result.producer.source_sha256["emitter.mjs"]);
+});
+
+test("policy loading and closure movement after the initial snapshot rejects the cached graph", async (t) => {
+  const f = await producerFixture(t), ready = path.join(f.root,"policy-ready"), go=path.join(f.root,"policy-go");
+  await writeFile(path.join(f.root,"oracle-policy.mjs"), `import {writeFile,access} from 'node:fs/promises'; export const policyModules = ${JSON.stringify(f.modules)}; await writeFile(${JSON.stringify(ready)},'ready'); while(true){try{await access(${JSON.stringify(go)});break;}catch{await new Promise(r=>setTimeout(r,10));}}`); await f.commit();
+  const running=f.invoke(); for(let count=0;count<1000;count++){try{await readFile(ready);break;}catch{await new Promise(r=>setTimeout(r,10));}}
+  await writeFile(path.join(f.root,"oracle-policy.mjs"),`export const policyModules = ${JSON.stringify([...f.modules,"added.mjs"])};`);
+  await writeFile(path.join(f.root,"added.mjs"),"export const added = true;");await f.commit();await writeFile(go,"go");
+  const result=await running;assert.equal(result.failure.code,"ORACLE_INPUT_DRIFT");assert.equal(result.admitted,false);assert.equal(result.result,null);
+});
+
+test("bootstrap and worker movement cannot be accepted using a cached caller binding", async (t) => {
+  const f=await producerFixture(t), expected=await f.selected();
+  await writeFile(f.bootstrap,(await readFile(f.bootstrap,"utf8"))+"\n// Arrived bootstrap source\n");await f.commit();
+  assert.equal((await f.invoke(expected)).failure.code,"ORACLE_INPUT_DRIFT");
+  const ready=path.join(f.root,"worker-ready"),go=path.join(f.root,"worker-go");
+  await writeFile(f.worker,(await readFile(f.worker,"utf8"))+`\nconst {writeFile:signal,access:exists}=await import('node:fs/promises');await signal(${JSON.stringify(ready)},'ready');while(true){try{await exists(${JSON.stringify(go)});break;}catch{await new Promise(r=>setTimeout(r,10));}}`);await f.commit();
+  const running=f.invoke();for(let count=0;count<1000;count++){try{await readFile(ready);break;}catch{await new Promise(r=>setTimeout(r,10));}}
+  await writeFile(f.worker,(await readFile(f.worker,"utf8"))+"\n// Arrived worker source\n");await f.commit();await writeFile(go,"go");
+  const result=await running;assert.equal(result.failure.code,"ORACLE_INPUT_DRIFT");assert.equal(result.admitted,false);
 });
