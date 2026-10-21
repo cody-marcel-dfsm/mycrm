@@ -1,7 +1,7 @@
 import assert from "node:assert/strict";
 import {execFile} from "node:child_process";
 import {randomUUID} from "node:crypto";
-import {mkdtemp, mkdir, readFile, rm, writeFile, cp, realpath, lstat} from "node:fs/promises";
+import {mkdtemp, mkdir, readFile, rm, writeFile, cp, realpath, lstat, symlink} from "node:fs/promises";
 import os from "node:os";
 import path from "node:path";
 import {promisify} from "node:util";
@@ -95,4 +95,20 @@ test("bootstrap and worker movement cannot be accepted using a cached caller bin
   const running=f.invoke();for(let count=0;count<1000;count++){try{await readFile(ready);break;}catch{await new Promise(r=>setTimeout(r,10));}}
   await writeFile(f.worker,(await readFile(f.worker,"utf8"))+"\n// Arrived worker source\n");await f.commit();await writeFile(go,"go");
   const result=await running;assert.equal(result.failure.code,"ORACLE_INPUT_DRIFT");assert.equal(result.admitted,false);
+});
+
+test("verified dirty producer disappearance retains original ENOENT while clean invalid graphs stay explicit", async (t) => {
+  const f=await producerFixture(t);
+  await writeFile(path.join(f.root,"oracle-review.mjs"),"import {unlink} from 'node:fs/promises'; await unlink(new URL('./emitter.mjs',import.meta.url)); export async function runReviewAttempt(){throw new Error('must not execute');}");await f.commit();
+  const dirty=await f.invoke();assert.equal(dirty.failure.code,"ORACLE_CANDIDATE_MOVED");assert.equal(dirty.failure.original_code,"ENOENT");assert.equal(dirty.admitted,false);
+  await f.commit();const committed=await f.invoke();assert.equal(committed.failure.code,"ENOENT");assert.equal(committed.admitted,false);
+});
+
+test("unsafe producer custody and unrelated admitted ENOENT execution remain explicit", async (t) => {
+  const f=await producerFixture(t);
+  await writeFile(path.join(f.root,"other.mjs"),"export const role='synthetic';");await rm(path.join(f.root,"emitter.mjs"));await symlink("other.mjs",path.join(f.root,"emitter.mjs"));await f.commit();
+  assert.equal((await f.invoke()).failure.code,"ORACLE_SOURCE_UNAVAILABLE");
+  await rm(path.join(f.root,"emitter.mjs"));await writeFile(path.join(f.root,"emitter.mjs"),"export const role='synthetic';");
+  await writeFile(path.join(f.root,"oracle-review.mjs"),"export async function runReviewAttempt(args,{onAdmitted}){onAdmitted();throw Object.assign(new Error('Synthetic executable absent'),{code:'ENOENT'});}");await f.commit();
+  const genuine=await f.invoke();assert.equal(genuine.failure.code,"ENOENT");assert.equal(genuine.admitted,true);
 });

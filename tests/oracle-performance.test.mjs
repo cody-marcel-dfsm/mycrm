@@ -1326,8 +1326,8 @@ test("concurrent review requests attach to the live native parent without supers
   assert.equal(history.rounds[0].verdict, "APPROVED");
 });
 
-function runningReview(repo, env, args = []) {
-  const child = spawn(process.execPath, [launcher, "review", ...args], {cwd: repo,
+function runningReview(repo, env, args = [], entrypoint = launcher) {
+  const child = spawn(process.execPath, [entrypoint, "review", ...args], {cwd: repo,
     env: {...process.env, ...env, CODEX_THREAD_ID: "", CODEX_SELECTED_MODEL: "synthetic-test-model", CODEX_SELECTED_REASONING_EFFORT: "high"}, stdio: ["ignore", "pipe", "pipe"]});
   let stdout = "", stderr = "";
   child.stdout.on("data", (value) => { stdout += value; }); child.stderr.on("data", (value) => { stderr += value; });
@@ -1495,6 +1495,27 @@ test("precommit source arrival waits in the same parent before assessing the com
   const {readValidatedCheckpoint} = await import("../scripts/shipment-state.mjs");
   assert.equal((await readValidatedCheckpoint(repo)).record.last_validated_commit, await git("rev-parse", "HEAD"));
   assert.equal((await readFile(calls, "utf8")).trim().split("\n").length, 6);
+});
+
+test("tracked producer disappearance waits for its committed restoration in the same native owner", async (t) => {
+  const {repo, root, env, git, prepare} = await fixture(t); await prepare(); await git("branch", "-m", "main");
+  await cp(new URL("../scripts", import.meta.url), path.join(repo,"scripts"), {recursive:true});
+  await cp(new URL("../package.json", import.meta.url), path.join(repo,"package.json"));
+  await cp(new URL("../node_modules", import.meta.url), path.join(repo,"node_modules"), {recursive:true,dereference:true});
+  await writeFile(path.join(repo,".gitignore"),"Vault/\nnode_modules/\n");await git("add",".");
+  await git("-c","user.name=Synthetic","-c","user.email=synthetic@example.invalid","commit","-qm","Tracked native producer fixture");
+  const ready=path.join(root,"producer-ready"),calls=path.join(root,"producer-calls"),filename=path.join(repo,"scripts/oracle-source-packet.mjs"),originalBytes=await readFile(filename);
+  const owner=runningReview(repo,{...env,ORACLE_DELAY:"400",ORACLE_READY:ready,ORACLE_CALLS:calls},[],path.join(repo,"scripts/oracle-review.mjs"));
+  await waitFor(ready);const head=await git("rev-parse","HEAD"),pointer=JSON.parse(await readFile(path.join(repo,".git/oracle/active-review.json"))),generation=JSON.parse(await readFile(path.join(repo,".git/oracle/controllers/00000000.json")));
+  await rm(filename);let phase;
+  for(let count=0;count<1000;count++){phase=JSON.parse(await readFile(path.join(repo,".git/oracle/controllers",generation.id,"progress.json"))).phase;if(phase==="WAITING_FOR_COMMIT")break;await new Promise(resolve=>setTimeout(resolve,20));}
+  assert.equal(phase,"WAITING_FOR_COMMIT");assert.equal(await git("rev-parse","HEAD"),head);
+  const failed=JSON.parse(await readFile(path.join(repo,".git/oracle/runs",pointer.id,"outcome.json")));
+  assert.equal(failed.outcome,"ERROR");assert.equal(failed.error.code,"ORACLE_CANDIDATE_MOVED");assert.equal(failed.error.original_code,"ENOENT");
+  await writeFile(filename,Buffer.concat([originalBytes,Buffer.from("\n// Synthetic committed source continuation.\n")]));await git("add","scripts/oracle-source-packet.mjs");await git("-c","user.name=Synthetic","-c","user.email=synthetic@example.invalid","commit","-qm","Restore and commit native producer");
+  const done=await owner.done;assert.equal(done.code,0,done.stderr);
+  const {readValidatedCheckpoint}=await import("../scripts/shipment-state.mjs");assert.equal((await readValidatedCheckpoint(repo)).record.last_validated_commit,await git("rev-parse","HEAD"));
+  assert.equal((await readFile(calls,"utf8")).trim().split("\n").length,6);
 });
 
 test("live parent catches batched committed movement and preserves actual ERROR observations", async (t) => {

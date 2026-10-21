@@ -6,7 +6,7 @@ import path from "node:path";
 import process from "node:process";
 import {promisify} from "node:util";
 import {selectedSettings} from "./codex-child-model.mjs";
-import {atomicJson, withOracleRun, captureInputs, assertInputsMatch, preparedEvidence, bindingHash, pathCustody, metadataDirectory, readMetadataFile, writeMetadataFile, removeMetadataFile, currentInvocation, assertCurrentInvocation, assertPublishedInvocation} from "./oracle-inputs.mjs";
+import {atomicJson, withOracleRun, captureInputs, assertInputsMatch, preparedEvidence, bindingHash, pathCustody, metadataDirectory, readMetadataFile, writeMetadataFile, removeMetadataFile, currentInvocation, assertCurrentInvocation, assertPublishedInvocation, readBoundAuthority} from "./oracle-inputs.mjs";
 import {prepareSeries, reviewSnapshot, assessRound, saveRound, verifySeries, inheritObservedEvidence, observationSourcePaths, reviewSeriesPolicy, reviewSeriesSchemaProperties, seriesFindingSchema} from "./oracle-series.mjs";
 import {environmentHash, executionEnvironment, executableBinding, readValidationProofs, assertValidationProofsMatch, inheritNativeEvidence, validationDigest, fileMetadata} from "./oracle-validation.mjs";
 import Ajv from "ajv";
@@ -369,8 +369,7 @@ async function review(args = [], {run, phase, producer = null, verifyProducer = 
         const authority = inputs.authorities.find(item => item.path === name);
         if (!authority || revision !== candidate.tree) return {state: "EXTERNAL_AUTHORITY_ON_DEMAND", locator: {path: name, authority_sha256: authority?.sha256 ?? null}};
         if (!authority.sha256) return {state: "ABSENT", locator: {path: name, authority_sha256: null}};
-        const text = await readFile(name, "utf8");
-        if (sha256(text) !== authority.sha256) { const error = new Error("Oracle inputs drifted while preparing authority source pages"); error.code = "ORACLE_INPUT_DRIFT"; throw error; }
+        const text = (await readBoundAuthority(process.cwd(), authority)).toString("utf8");
         return {state: "PRESENT", text, locator: {path: name, authority_sha256: authority.sha256}};
       }
       if (name.split(/[\\/]/).some(part => ["..", ".git", ""].includes(part))) throw new Error("Source packet requires a safe project-local path");
@@ -726,9 +725,26 @@ export async function runReviewAttempt(args, {producer = null, verifyProducer = 
     {kind: "review", onAdmitted: async () => { await removeMetadataFile(path.join(directory, "approval.json"), {force: true}); onAdmitted(); }});
 }
 
+async function producerFailure(error, filename) {
+  if (error.code !== "ENOENT") return error;
+  const relative = path.relative(process.cwd(), fileURLToPath(filename));
+  if (relative.startsWith("..") || path.isAbsolute(relative)) return error;
+  try {
+    await git(["cat-file", "-e", `HEAD:${relative}`]);
+    if (await git(["status", "--porcelain=v1", "--", relative])) return Object.assign(new Error(`Oracle candidate moved: tracked producer disappeared before commit: ${error.message}`, {cause: error}), {code: "ORACLE_CANDIDATE_MOVED", original_code: "ENOENT"});
+  } catch { /* A clean committed invalid graph retains its actual IO failure. */ }
+  return error;
+}
+async function recordAttemptFailure(error) {
+  const directory = await oracleDirectory();
+  return withOracleRun(directory, async () => { throw error; }, {kind: "review", onAdmitted: () => removeMetadataFile(path.join(directory, "approval.json"), {force: true})});
+}
 async function freshReviewAttempt(args) {
-  const filename = new URL("./oracle-bootstrap.mjs", import.meta.url), stat = await lstat(filename, {bigint: true});
-  const bootstrap = {sha256: sha256(await readFile(filename)), identity: {dev: String(stat.dev), ino: String(stat.ino), size: String(stat.size), mtime: String(stat.mtimeNs), ctime: String(stat.ctimeNs), mode: String(stat.mode)}};
+  const filename = new URL("./oracle-bootstrap.mjs", import.meta.url); let bootstrap;
+  try {
+    const stat = await lstat(filename, {bigint: true});
+    bootstrap = {sha256: sha256(await readFile(filename)), identity: {dev: String(stat.dev), ino: String(stat.ino), size: String(stat.size), mtime: String(stat.mtimeNs), ctime: String(stat.ctimeNs), mode: String(stat.mode)}};
+  } catch (error) { return recordAttemptFailure(await producerFailure(error, filename)); }
   const selected = {bootstrap, candidate_commit: await git(["rev-parse", "HEAD"])};
   const invocation = execFileAsync(process.execPath, [fileURLToPath(filename), JSON.stringify(selected), ...args],
     {cwd: process.cwd(), maxBuffer: 16 * 1024 * 1024});
@@ -743,10 +759,9 @@ async function freshReviewAttempt(args) {
   if (!marker) throw new Error(`Native review attempt exited without its result: ${output.message ?? "missing result"}`);
   const completed = JSON.parse(marker.slice("ORACLE_ATTEMPT_RESULT=".length));
   if (completed.failure) {
-    const error = new Error(completed.failure.message); error.name = completed.failure.name; error.code = completed.failure.code;
+    const error = new Error(completed.failure.message); error.name = completed.failure.name; error.code = completed.failure.code; error.original_code = completed.failure.original_code;
     if (!completed.admitted) {
-      const directory = await oracleDirectory();
-      return withOracleRun(directory, async () => { throw error; }, {kind: "review", onAdmitted: () => removeMetadataFile(path.join(directory, "approval.json"), {force: true})});
+      return recordAttemptFailure(error);
     }
     throw error;
   }

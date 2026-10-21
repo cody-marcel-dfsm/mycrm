@@ -1,10 +1,10 @@
 import assert from "node:assert/strict";
-import {mkdtemp, readFile, rm, writeFile} from "node:fs/promises";
+import {mkdtemp, readFile, rm, writeFile, mkdir, symlink, open} from "node:fs/promises";
 import os from "node:os";
 import path from "node:path";
 import test from "node:test";
 import {prepareSourcePacket, utf8Pages} from "../scripts/oracle-source-packet.mjs";
-import {contentHash, withOracleRun} from "../scripts/oracle-inputs.mjs";
+import {contentHash, withOracleRun, pathCustody, readBoundAuthority} from "../scripts/oracle-inputs.mjs";
 
 test("source pages preserve complete UTF-8 content and exact byte bounds", () => {
   const text = "export function synthetic(){\n" + "  // synthetic ∑😀\n".repeat(1500) + "  return true;\n}\n";
@@ -38,4 +38,26 @@ test("native source packet contains actual assigned diff and complete bodies wit
     for(const file of packet.files)assert.equal(contentHash(await readFile(file.path)),file.sha256);
     await writeFile(current.pages[0].path,"altered packet body");assert.notEqual(contentHash(await readFile(current.pages[0].path)),current.pages[0].sha256);
   },{ownerRoot:root});
+});
+
+test("authority packet admission preserves safe routes and rejects changed custody before target reads", async (t) => {
+  const root=await mkdtemp(path.join(os.tmpdir(),"mycrm-authority-packet-")),foreign=await mkdtemp(path.join(os.tmpdir(),"mycrm-foreign-packet-"));
+  t.after(()=>Promise.all([rm(root,{recursive:true,force:true}),rm(foreign,{recursive:true,force:true})]));
+  const project=path.join(root,"project"),actual=path.join(root,"actual"),other=path.join(root,"other"),alias=path.join(root,"public");
+  await Promise.all([mkdir(project),mkdir(actual),mkdir(other)]);
+  for(const directory of [actual,other,foreign])await writeFile(path.join(directory,"authority.md"),"Synthetic identical authority content");
+  await symlink(actual,alias);const filename=path.join(alias,"authority.md");
+  const authority={path:filename,sha256:contentHash(await readFile(filename)),custody:await pathCustody(project,filename,{scopeRoot:root,allowFinalLink:false})};
+  assert.equal((await readBoundAuthority(project,authority)).toString(),"Synthetic identical authority content");
+  let opens=0,reads=0;
+  const openFile=async(...args)=>{opens++;const handle=await open(...args);return {stat:()=>handle.stat(),close:()=>handle.close(),readFile:()=>{reads++;return handle.readFile();}};};
+  for(const target of [foreign,other]){
+    await rm(alias);await symlink(target,alias);
+    await assert.rejects(readBoundAuthority(project,authority,{openFile}),/custody|source scope/);assert.equal(opens,0);assert.equal(reads,0);
+  }
+  await symlink(actual,path.join(foreign,"return"));await rm(alias);await symlink(path.join(foreign,"return"),alias);
+  await assert.rejects(readBoundAuthority(project,authority,{openFile}),/source scope/);assert.equal(opens,0);assert.equal(reads,0);
+  await rm(alias);await symlink(actual,alias);
+  await assert.rejects(readBoundAuthority(project,authority,{openFile,beforeRead:async()=>{await rm(alias);await symlink(foreign,alias);}}),/source scope/);
+  assert.equal(opens,1);assert.equal(reads,0,"No foreign target bytes are read after descriptor admission changes");
 });

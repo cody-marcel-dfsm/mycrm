@@ -138,7 +138,7 @@ export async function withOracleRun(requested, action, {kind = null, onAdmitted 
           kind, started_at: startedAt, finished_at: new Date().toISOString(),
           outcome: failure ? "ERROR" : result?.review_status === "INCOMPLETE" ? "INCOMPLETE" : result?.verdict ?? result?.decision ?? "COMPLETED",
           reviewer_invoked: Object.hasOwn(timings, "reviewer_ms"),
-          error: failure ? {name: failure.name, message: failure.message} : null,
+          error: failure ? {name: failure.name, message: failure.message, ...(failure.code ? {code: failure.code} : {}), ...(failure.original_code ? {original_code: failure.original_code} : {})} : null,
         });
       }
     } catch (error) {
@@ -235,6 +235,29 @@ async function fileBinding(root, relative, {allowMissing = false} = {}) {
   if (custody.metadata === null) return {path: relative, sha256: null, custody};
   if (custody.metadata.type !== "regular") throw new Error(`Oracle input must be a regular file: ${relative}`);
   return {path: relative, sha256: contentHash(await readFile(custody.resolved_path)), custody};
+}
+
+export async function readBoundAuthority(root, authority, {openFile = open, beforeRead = async () => {}} = {}) {
+  if (!authority?.custody || !authority.sha256) throw new Error("Authority material requires its prepared content and custody binding");
+  const scopeRoot = path.isAbsolute(authority.path) ? path.dirname(path.resolve(root)) : root;
+  const options = {scopeRoot, allowFinalLink: false, excluded: [path.join(scopeRoot, ".git"), path.join(scopeRoot, "Vault/tmp"), path.join(scopeRoot, "Vault/index")]};
+  const admit = async () => {
+    const custody = await pathCustody(root, authority.path, options);
+    if (custody.metadata?.type !== "regular" || bindingHash(custody) !== bindingHash(authority.custody)) throw new Error("Prepared authority custody changed before source material read");
+    return custody;
+  };
+  const custody = await admit(), expectedFile = await lstat(custody.resolved_path);
+  await admit();
+  const handle = await openFile(custody.resolved_path, constants.O_RDONLY | constants.O_NOFOLLOW | constants.O_NONBLOCK);
+  try {
+    const descriptor = await handle.stat();
+    if (!descriptor.isFile() || !sameIdentity(descriptor, expectedFile)) throw new Error("Authority descriptor differs from its admitted regular file");
+    await beforeRead(); await admit();
+    const bytes = await handle.readFile();
+    await admit();
+    if (contentHash(bytes) !== authority.sha256) throw Object.assign(new Error("Oracle inputs drifted while preparing authority source pages"), {code: "ORACLE_INPUT_DRIFT"});
+    return bytes;
+  } finally { await handle.close(); }
 }
 
 // Observation-only source was outside the original manifest. Bind only its

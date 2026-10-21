@@ -2,17 +2,32 @@
 import {readFile, lstat} from "node:fs/promises";
 import {createHash} from "node:crypto";
 import {execFileSync} from "node:child_process";
+import {fileURLToPath} from "node:url";
+import path from "node:path";
 
 const hash = (bytes) => createHash("sha256").update(bytes).digest("hex");
 const facts = (stat) => ({dev: String(stat.dev), ino: String(stat.ino), size: String(stat.size), mtime: String(stat.mtimeNs), ctime: String(stat.ctimeNs), mode: String(stat.mode)});
 const drift = () => Object.assign(new Error("Oracle producer modules moved; continue with a fresh native attempt"), {code: "ORACLE_INPUT_DRIFT"});
 const head = () => execFileSync("git", ["rev-parse", "HEAD"], {encoding: "utf8"}).trim();
+function producerFailure(error, filename) {
+  if (error.code !== "ENOENT") return error;
+  const relative = path.relative(process.cwd(), fileURLToPath(filename));
+  if (relative.startsWith("..") || path.isAbsolute(relative)) return error;
+  try {
+    execFileSync("git", ["cat-file", "-e", `HEAD:${relative}`], {stdio: "pipe"});
+    if (execFileSync("git", ["status", "--porcelain=v1", "--", relative], {encoding: "utf8"}).trim()) return Object.assign(new Error(`Oracle candidate moved: tracked producer disappeared before commit: ${error.message}`, {cause: error}), {code: "ORACLE_CANDIDATE_MOVED", original_code: "ENOENT"});
+  } catch { /* A clean committed invalid graph retains its actual IO failure. */ }
+  return error;
+}
 async function source(name) {
-  const filename = new URL(name, import.meta.url), before = await lstat(filename, {bigint: true});
-  if (!before.isFile() || before.isSymbolicLink()) throw drift();
-  const bytes = await readFile(filename), after = await lstat(filename, {bigint: true});
-  if (JSON.stringify(facts(before)) !== JSON.stringify(facts(after))) throw drift();
-  return {sha256: hash(bytes), identity: facts(after), text: bytes.toString("utf8")};
+  const filename = new URL(name, import.meta.url);
+  try {
+    const before = await lstat(filename, {bigint: true});
+    if (!before.isFile() || before.isSymbolicLink()) throw Object.assign(new Error("Producer source must remain a regular file"), {code: "ORACLE_SOURCE_UNAVAILABLE"});
+    const bytes = await readFile(filename), after = await lstat(filename, {bigint: true});
+    if (JSON.stringify(facts(before)) !== JSON.stringify(facts(after))) throw drift();
+    return {sha256: hash(bytes), identity: facts(after), text: bytes.toString("utf8")};
+  } catch (error) { throw producerFailure(error, filename); }
 }
 export async function producerSnapshot() {
   const policy = await source("oracle-policy.mjs");
@@ -40,6 +55,6 @@ export async function runAttempt(args, origin) {
     const {runReviewAttempt} = await import("./oracle-review.mjs");
     await assertProducerSnapshot(producer);
     result = await runReviewAttempt(args, {producer, verifyProducer: () => assertProducerSnapshot(producer), onAdmitted: () => { admitted = true; }});
-  } catch (error) { failure = {name: error.name, message: error.message, code: error.code ?? null}; process.exitCode = 1; }
+  } catch (error) { failure = {name: error.name, message: error.message, code: error.code ?? null, ...(error.original_code ? {original_code:error.original_code} : {})}; process.exitCode = 1; }
   return {result, failure, admitted};
 }
