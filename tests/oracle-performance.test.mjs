@@ -1283,3 +1283,46 @@ test("late older approval cannot overwrite a newer rejected concurrent attempt",
   assert.equal(history.rounds.at(-1).verdict, "REJECTED");
   assert.equal(history.rounds.length, 1);
 });
+
+test("detached reviewed source survives identical-tree publication merge and delivery", async (t) => {
+  const {repo, env, git, prepare} = await fixture(t); await prepare(); await git("branch", "-m", "main");
+  const baseline = await git("rev-parse", "HEAD");
+  await git("-c", "user.name=Synthetic", "-c", "user.email=synthetic@example.invalid", "commit", "-qm", "Synthetic reviewed source");
+  const source = await git("rev-parse", "HEAD"), tree = await git("rev-parse", "HEAD^{tree}");
+  await command(repo, ["review"], env);
+  const merge = await git("-c", "user.name=Synthetic", "-c", "user.email=synthetic@example.invalid", "commit-tree", tree, "-p", baseline, "-p", source, "-m", "Synthetic exact-tree publication");
+  await git("update-ref", "refs/heads/main", merge); await git("update-ref", "refs/remotes/origin/main", merge);
+  const {shipmentPlan, recordDeliveredCommit, runShipment, readValidatedCheckpoint} = await import("../scripts/shipment-state.mjs");
+  const admitted = await admitDeployment({root: repo});
+  assert.equal(admitted.source_commit, merge); assert.equal(admitted.reviewed_source_commit, source);
+  assert.equal((await shipmentPlan({root: repo})).action, "DELIVER");
+  assert.match((await command(repo, ["verify-commit", merge], env)).stdout, /ORACLE_COMMIT=APPROVED/);
+  await recordDeliveredCommit({root: repo, admission: admitted, installation: {pluginId: "my-crm@synthetic", release: {content_sha256: "a".repeat(64)}}});
+  assert.equal((await readValidatedCheckpoint(repo)).record.last_validated_commit, source);
+  const fail = async () => { throw new Error("Unexpected repeated release callback"); };
+  assert.equal((await runShipment({root: repo, prepare: fail, validate: fail, deliver: fail})).action, "NO_CHANGES");
+  const wrongTree = await git("rev-parse", `${baseline}^{tree}`);
+  const wrong = await git("-c", "user.name=Synthetic", "-c", "user.email=synthetic@example.invalid", "commit-tree", wrongTree, "-p", baseline, "-p", source, "-m", "Synthetic changed-tree merge");
+  await assert.rejects(admitDeployment({root: repo, reference: wrong}), /exact-tree|reviewed|matching/);
+});
+
+test("same committed source reopens changed governing criteria and failed invocation", async (t) => {
+  const {repo, env, git, prepare} = await fixture(t); await prepare(); await git("branch", "-m", "main");
+  await git("-c", "user.name=Synthetic", "-c", "user.email=synthetic@example.invalid", "commit", "-qm", "Synthetic governed source");
+  const source = await git("rev-parse", "HEAD"); await command(repo, ["review"], env);
+  const {shipmentPlan, readValidatedCheckpoint} = await import("../scripts/shipment-state.mjs");
+  const first = await readValidatedCheckpoint(repo);
+  const authority = path.join(repo, "Vault/docs/CONSTITUTION.md"), original = await readFile(authority);
+  await writeFile(authority, Buffer.concat([original, Buffer.from("\nSynthetic changed criterion.\n")]));
+  assert.equal((await shipmentPlan({root: repo})).action, "VALIDATE");
+  await command(repo, ["review"], env);
+  assert.equal(await git("rev-parse", "HEAD"), source);
+  assert.notEqual((await readValidatedCheckpoint(repo)).receipt.receipt_sha256, first.receipt.receipt_sha256);
+  const current = await readFile(authority); await writeFile(authority, Buffer.concat([current, Buffer.from("\nSynthetic failed-attempt criterion.\n")]));
+  await assert.rejects(command(repo, ["review"], {...env, ORACLE_NO_OUTPUT: "1"}), /ORACLE_PROCESS=ERROR/);
+  await writeFile(authority, current);
+  assert.equal((await shipmentPlan({root: repo})).action, "VALIDATE");
+  await command(repo, ["review"], env);
+  assert.equal((await shipmentPlan({root: repo})).action, "DELIVER");
+  assert.equal(await git("rev-parse", "HEAD"), source);
+});

@@ -563,3 +563,19 @@ test("exclusive round publication retains the first result when optimistic publi
   const recovered = await prepare();
   assert.equal(recovered.series.sha256, current.sha256); assert.equal(recovered.public.round, 2);
 });
+
+test("losing assessment retains raw findings outside active publication and resumes them", async (t) => {
+  const {prepare, record, inputs} = await fixture(t);
+  const older = await prepare(), newer = await prepare();
+  await record(newer, response());
+  const raw = response({verdict: "REJECTED", findings: [finding("F-LOST")]});
+  await assert.rejects(saveRound(older, null, null, {error: {message: "Synthetic superseded attempt"}, observed: {
+    response: raw, assessed: assessRound(older, raw, inputs.validation),
+    response_evidence: {value: "@synthetic-losing-response.json", sha256: "a".repeat(64)}, execution: {exit_code: 0}, execution_evidence: null
+  }}), /history changed/);
+  const resumed = await prepare();
+  assert.equal(resumed.public.observed_assessments.at(-1).source_verdict, null);
+  assert.equal(resumed.public.observed_assessments.at(-1).execution_status, "ERROR");
+  assert.ok(resumed.public.observed_assessments.some((item) => item.findings.some((entry) => entry.id === "F-LOST")));
+  assert.throws(() => assessRound(resumed, response(), inputs.validation), /explicit resolution evidence/);
+});
