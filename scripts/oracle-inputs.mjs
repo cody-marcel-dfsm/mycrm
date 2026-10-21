@@ -278,7 +278,10 @@ async function declaredParentAuthorities(root) {
   // Only inherited policy and these exact locally declared coordination files
   // cross the project boundary. Their bytes are evidence, never runtime imports.
   const files = [{path: path.join(parent, "AGENTS.md"), controlling: true}];
-  for (const relative of ["Vault/docs/architecture/bos-product-family.md", "Vault/docs/architecture/oracle-validation.md", "tools/projects_oracle.py"]) {
+  // A named command is an invocation reference, not governing prose. Actual
+  // consumed external controller evidence remains bound through validation
+  // and observed-source manifests instead of this automatic authority list.
+  for (const relative of ["Vault/docs/architecture/bos-product-family.md", "Vault/docs/architecture/oracle-validation.md"]) {
     const filename = path.join(parent, relative);
     if (declarations.includes(filename)) files.push({path: filename, controlling: false});
   }

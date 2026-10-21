@@ -59,6 +59,7 @@ const emit=()=>{
   const response={verdict:process.env.ORACLE_INCOMPLETE?null:'APPROVED',review_status:process.env.ORACLE_INCOMPLETE?'INCOMPLETE':'COMPLETE',api_version_assessment:{impact:'NONE',request_kind:'NOT_REQUIRED',requested_change:null,request_quote:null,request_evidence:null},summary:'Synthetic candidate assessed.',authentication_impact:false,owner_approval_status:'NOT_REQUIRED',warning:null,findings:[],protected_deployment_effects:[],deployment_effect_dispositions:[],unreviewed:process.env.ORACLE_INCOMPLETE?['synthetic remaining scope']:[],reused_coverage:[],reused_validations:[],validations:[],resolutions:[],scope_dispositions:[],synthesis:null,coverage:(evidence?.review_context.required_paths??[]).map(name=>({path:name,dependencies:[name],dependency_rationale:'Synthetic isolated dependency.',assessment:'Synthetic path assessed.',criteria:['Synthetic acceptance criteria.'],evidence:['Synthetic source inspection.'],finding_ids:[]}))};
   if(!proposal && process.env.ORACLE_MISSING_DEPLOYMENT) { response.authentication_impact=true; response.owner_approval_status='MISSING'; response.protected_deployment_effects=[{id:'SYNTHETIC-PERMISSION',category:'PERMISSION_AUTHORITY',description:'Synthetic exact permission authority effect.',affected_paths:[process.env.ORACLE_EFFECT_PATH||'candidate.txt'],authority:null}]; }
   const proof=evidence?.review_context.validation_proofs.find(item=>item.eligible);
+  if(!proposal && process.env.ORACLE_REUSE_COVERAGE) { response.reused_coverage=(evidence.review_context.eligible_coverage??[]).map(item=>item.path); response.coverage=response.coverage.filter(item=>!response.reused_coverage.includes(item.path)); }
   if(proof && !process.env.ORACLE_OMIT_VALIDATION) response.validations=[{id:'native-check',evidence:proof.evidence,command:JSON.stringify(proof.record.command),dependencies:evidence.staged_files,dependency_rationale:'Synthetic complete candidate closure.',assessment:'Native passing execution and output checked.'}];
   if(!proposal && process.env.ORACLE_SOURCE_FINDING) { response.verdict='REJECTED'; response.findings=[{id:'SYNTHETIC-EXIT-1',severity:'medium',code:'SYNTHETIC_EXIT_FINDING',message:'Synthetic source finding.',path:'candidate.txt',reproduction:'Synthetic input.',required_behavior:'Synthetic required behavior.',affected_paths:['candidate.txt'],acceptance_checks:['Synthetic acceptance.'],origin:'initial',missed_finding_reason:null}]; }
   if(!proposal && process.env.ORACLE_OBSERVED_PATH) { response.review_status='INCOMPLETE'; response.verdict=null; response.findings[0].path=process.env.ORACLE_OBSERVED_PATH; response.findings[0].affected_paths=[process.env.ORACLE_OBSERVED_PATH]; response.unreviewed=[process.env.ORACLE_OBSERVED_PATH]; }
@@ -324,14 +325,18 @@ test("declared external governing inputs bind proposal, review, execution and re
   const options = {root: repo, base: "synthetic-base", complete: true};
   const initial = await captureInputs(options);
   const external = initial.authorities.filter((item) => item.external);
-  assert.deepEqual(external.map((item) => item.path), [parentPolicy, family, coordination, parentOracle]);
-  assert.equal(external.find((item) => item.path === parentOracle).sha256, null);
+  assert.deepEqual(external.map((item) => item.path), [parentPolicy, family, coordination]);
+  assert.equal(external.find((item) => item.path === parentOracle), undefined);
   assert.deepEqual(initial.owner, null); assert.deepEqual(initial.validation, []);
   const proposalInputs = await captureInputs({...options, complete: false});
   assert.deepEqual(proposalInputs.authorities.filter((item) => item.external), external);
   await writeFile(parentOracle, "Synthetic declared parent tool; never executed.");
-  await assert.rejects(async () => assertInputsMatch(initial, await captureInputs(options)), /drifted/);
-  for (const filename of [parentPolicy, family, coordination, parentOracle]) {
+  assertInputsMatch(initial, await captureInputs(options));
+  const consumed = await captureInputs({...options, observedPaths: [parentOracle]});
+  await writeFile(parentOracle, "Synthetic actually consumed controller changed.");
+  await assert.rejects(async () => assertInputsMatch(consumed, await captureInputs({...options, observedPaths: [parentOracle]})), /drifted/);
+  assertInputsMatch(initial, await captureInputs(options));
+  for (const filename of [parentPolicy, family, coordination]) {
     const original = await readFile(filename);
     const before = await captureInputs(options);
     await writeFile(filename, "Changed governing input.");
@@ -1249,7 +1254,7 @@ test("new proposals retain committed review lineage while current criteria remai
   assert.notEqual(proposal.base_commit, originalBase);
   await writeFile(path.join(repo, "new-area.txt"), "Synthetic new committed scope\n"); await git("add", ".");
   await git("-c", "user.name=Synthetic", "-c", "user.email=synthetic@example.invalid", "commit", "-qm", "Synthetic current committed scope");
-  await command(repo, ["review"], env);
+  await command(repo, ["review"], {...env, ORACLE_REUSE_COVERAGE: "1"});
   const current = await readValidatedCheckpoint(repo), series = JSON.parse(await readFile(seriesFile));
   assert.equal(current.record.last_validated_commit, await git("rev-parse", "HEAD"));
   assert.equal(current.record.reviewed_base, originalBase);
