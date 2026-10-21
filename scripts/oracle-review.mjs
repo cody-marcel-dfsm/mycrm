@@ -621,6 +621,10 @@ async function authorizeDeployment(reference, args, {run, phase}) {
 
 async function verifyProposal() {
   const record = await readProposalRecord();
+  // Explicit current-proposal admission is strict. Completed review separately
+  // retains the sealed proposal as scope evidence and assesses current criteria.
+  verifyProposalRecord(record, await git(["rev-parse", "HEAD"]));
+  assertInputsMatch(record.input_binding, await captureInputs({root: process.cwd(), base: await git(["rev-parse", "HEAD"]), validationEvidence: record.validation_evidence, ownerApprovalEvidence: record.owner_approval_evidence, reviewerSettings: record.input_binding.reviewer_settings}));
   if (record.schema !== "my-crm.oracle-proposal/v2") throw new Error("Legacy Oracle proposal requires a fresh authority-bound proposal review");
   console.log(JSON.stringify({verdict: "APPROVED", base_commit: record.base_commit, proposal_sha256: record.proposal_sha256}));
 }
