@@ -1738,7 +1738,7 @@ test("checkpoint applicability rejects current drift before history and retains 
   await writeFile(path.join(root, "bin/git"), `#!${process.execPath}
 const fs = require('node:fs');
 const args = process.argv.slice(2);
-if (args[0] === 'rev-list') {
+if (args[0] === 'rev-list' && args.includes('--topo-order')) {
   fs.appendFileSync(${JSON.stringify(calls)}, JSON.stringify(args) + '\\n');
   if (process.env.SHIPMENT_TEST_MUTATE_HISTORY && !fs.existsSync(${JSON.stringify(mutation)})) {
     fs.writeFileSync(${JSON.stringify(mutation)}, 'applied');
