@@ -98,7 +98,7 @@ function mergeRecords(responses, field, identity, issues) {
       } else if (field === "resolutions" && old.status === item.status) {
         records.set(key, {...old, evidence: combinedText(old.evidence, item.evidence)});
       } else if (field === "findings" && old.code === item.code && old.path === item.path && old.origin === item.origin) {
-        const severity = ["high", "medium", "low"].find(value => [old.severity, item.severity].includes(value)) ?? old.severity;
+        const severity = ["critical", "high", "medium", "low"].find(value => [old.severity, item.severity].includes(value)) ?? old.severity;
         records.set(key, {...old, severity, message: combinedText(old.message, item.message),
           reproduction: combinedText(old.reproduction, item.reproduction), required_behavior: combinedText(old.required_behavior, item.required_behavior),
           affected_paths: unique([...old.affected_paths ?? [], ...item.affected_paths ?? []]),

@@ -5,7 +5,7 @@ import os from "node:os";
 import path from "node:path";
 import {cohortPlan, partitionPayload, aggregateCohorts, runParallelReview, verifyParallelArtifacts, payloadLimit} from "../scripts/oracle-parallel.mjs";
 import {atomicJson, bindingHash, withOracleRun} from "../scripts/oracle-inputs.mjs";
-import {prepareSeries, assessRound, saveRound} from "../scripts/oracle-series.mjs";
+import {prepareSeries, assessRound, saveRound, seriesFindingSchema} from "../scripts/oracle-series.mjs";
 
 const candidate = {commit: "1".repeat(40), tree: "2".repeat(40), base: "3".repeat(40)};
 const inputs = {authorities: [], owner: null};
@@ -152,6 +152,23 @@ test("finding identity contradictions, disposition conflicts and local duplicate
     if(change==="disposition") {all[0].envelope.response.resolutions=[{id:finding.id,status:"OPEN",evidence:"Open"}];all[1].envelope.response.resolutions=[{id:finding.id,status:"RESOLVED",evidence:"Contradiction"}];}
     if(change==="duplicate") all[1].envelope.response.findings.push({...finding});
     assert.equal(aggregateCohorts(plan,all).response.verdict,null,change);
+  }
+});
+
+test("compatible finding consolidation preserves the strongest schema severity in either order", () => {
+  const ranking = ["critical", "high", "medium", "low"];
+  assert.deepEqual([...seriesFindingSchema.items.properties.severity.enum].sort(), [...ranking].sort());
+  const plan = cohortPlan({candidate, inputs, context: evidence().review_context});
+  for (const first of ranking) for (const second of ranking) {
+    const all = plan.cohorts.map(cohort => ({id:cohort.id,envelope:envelope(plan,cohort)}));
+    for (const [index,severity] of [[0,first],[1,second]]) {
+      all[index].envelope.response.findings = [{id:"SAME",code:"SAME_CODE",path:"src/service.mjs",origin:"repair",severity,message:`Independent ${index}`}];
+      all[index].envelope.response.verdict = "REJECTED";
+    }
+    const original = JSON.stringify(all), result = aggregateCohorts(plan,all);
+    assert.deepEqual(result.issues, []); assert.equal(result.response.verdict,"REJECTED");
+    assert.equal(result.response.findings[0].severity, ranking[Math.min(ranking.indexOf(first),ranking.indexOf(second))]);
+    assert.equal(JSON.stringify(all),original);
   }
 });
 
