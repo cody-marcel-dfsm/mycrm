@@ -110,7 +110,7 @@ export function aggregateCohorts(plan, outcomes) {
   for (const id of cohortIds) if (!seen.has(id)) issues.push(`Missing required cohort ${id}`);
   const findings = mergeRecords(responses, "findings", (item) => item.id, issues);
   const resolutions = mergeRecords(responses, "resolutions", (item) => item.id, issues);
-  if (resolutions.some((item) => findings.some((finding) => finding.id === item.id))) issues.push("Finding and resolution conflict across cohorts");
+  if (resolutions.some((item) => item.status !== "OPEN" && findings.some((finding) => finding.id === item.id))) issues.push("Finding and resolution conflict across cohorts");
   const coverage = mergeRecords(responses, "coverage", (item) => item.path, issues);
   const validations = mergeRecords(responses, "validations", (item) => item.id, issues);
   const effects = mergeRecords(responses, "protected_deployment_effects", (item) => item.id, issues);
@@ -134,7 +134,8 @@ export function aggregateCohorts(plan, outcomes) {
   return {issues, fatal_issues: issues.filter((item) => !/has unfinished assessment|omitted required coverage/.test(item)), reported_count: responses.length, response: {review_status: complete ? "COMPLETE" : "INCOMPLETE", verdict: complete ? rejected ? "REJECTED" : "APPROVED" : null,
     summary: `Concurrent independent assessment, plan ${plan.plan_sha256}: ${complete ? "all three cohorts reported complete assessment" : issues.join("; ")}. ${responses.map((item) => item.summary).join(" ")} ${outcomes.filter((item) => item.envelope).map((item) => `[${item.id} ${bindingHash(item.envelope)}] ${item.envelope.cross_area_assessment ?? ""}`).join(" ")}`,
     authentication_impact: responses.some((item) => item.authentication_impact),
-    owner_approval_status: effects.length ? responses.some((item) => item.owner_approval_status === "MISSING") ? "MISSING" : "APPROVED" : "NOT_REQUIRED",
+    owner_approval_status: effects.length || dispositions.some((item) => item.disposition === "EFFECTIVE")
+      ? responses.some((item) => item.owner_approval_status === "MISSING") ? "MISSING" : "APPROVED" : "NOT_REQUIRED",
     warning: responses.map((item) => item.warning).filter(Boolean).join("; ") || null,
     api_version_assessment: changes[0] ?? responses[0]?.api_version_assessment ?? {impact: "NONE", request_kind: "NOT_REQUIRED", requested_change: null, request_quote: null, request_evidence: null},
     findings, resolutions, coverage, validations, protected_deployment_effects: effects, deployment_effect_dispositions: dispositions,

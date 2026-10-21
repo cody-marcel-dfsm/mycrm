@@ -75,6 +75,22 @@ test("raw and decoded UUIDs survive duplicate-key JSON representations without e
   }
 });
 
+test("native provenance masks individual occurrences and retains mixed-case and escaped unknown UUIDs", async (t) => {
+  const f = await fixture(t), unknown = randomUUID(), native = path.dirname(f.original);
+  for (const suspect of [unknown, unknown.toUpperCase(), unknown.replace(/[a-f]/g, (letter, index) => index % 2 ? letter.toUpperCase() : letter)]) {
+    const record = {summary: `${native}/outcome.json; unverified ${suspect}`};
+    const filename = await f.write("Vault/tmp/mixed-provenance.json", record), original = await readFile(filename);
+    await assert.rejects(checkPrivacy({root: f.root, denylistValues: []}), /uuid-value/);
+    assert.deepEqual(await readFile(filename), original);
+    const escaped = JSON.stringify(record).replaceAll(suspect, suspect.replaceAll("-", "\\u002d"));
+    await f.write("Vault/tmp/mixed-provenance.json", escaped);
+    await assert.rejects(checkPrivacy({root: f.root, denylistValues: []}), /uuid-value/);
+    assert.equal(await readFile(filename, "utf8"), escaped);
+  }
+  await f.write("Vault/tmp/mixed-provenance.json", {summary: `${native}/outcome.json and ${native}/process.json`});
+  await checkPrivacy({root: f.root, denylistValues: []});
+});
+
 test("forged custody hashes and unverified native series keep UUID rejection", async (t) => {
   const f = await fixture(t);
   await f.write("Vault/tmp/custody.json", {schema: "my-crm.proposal-evidence-custody/v1", files: [{original: f.original, sha256: "0".repeat(64)}]});

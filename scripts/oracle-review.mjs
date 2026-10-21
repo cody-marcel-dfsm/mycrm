@@ -304,7 +304,7 @@ async function candidateDeploymentHistory(candidate) {
   return deploymentHistoryForReview(process.cwd(), candidate.commit ? {head: candidate.parent} : {});
 }
 
-async function review(args = [], {run, phase}) {
+async function review(args = [], {run, phase, producer = null, verifyProducer = async () => {}}) {
   const {validationEvidence, requestedValidationEvidence, inherited, ownerApprovalEvidence, proposalRecord, candidate, directory, observedPaths, establishedObservedPaths} = await phase("precheck_ms", async () => {
     const {validationEvidence: requestedValidationEvidence, ownerApprovalEvidence} = reviewArguments(args);
     const proposalRecord = await readProposalRecord();
@@ -319,6 +319,7 @@ async function review(args = [], {run, phase}) {
     return {validationEvidence: [...requestedValidationEvidence, ...inherited.evidence], requestedValidationEvidence, inherited, ownerApprovalEvidence, proposalRecord, candidate, directory, observedPaths, establishedObservedPaths};
   });
   const capture = async () => {
+    await verifyProducer();
     const current = await assertExactStagedCandidate();
     if (current.tree !== candidate.tree || current.base !== candidate.base || current.commit !== candidate.commit) {
       const error = new Error("Oracle candidate moved during preparation; continue the latest committed candidate");
@@ -340,6 +341,7 @@ async function review(args = [], {run, phase}) {
   const prepared = await phase("preparation_ms", () => preparedEvidence(directory, {inputs, ...reviewerRecord}, async () => ({inputs, ...reviewerRecord, proposal: proposalRecord, staged_files: candidate.files, diff: await git(candidate.commit ? ["diff", "--binary", "--no-ext-diff", candidate.base, candidate.commit] : ["diff", "--cached", "--binary", "--no-ext-diff"]), validation_evidence: validationEvidence, owner_approval_evidence: ownerApprovalEvidence})));
   const deployment = await candidateDeploymentHistory(candidate);
   const evidence = {...prepared.payload, requested_validation_evidence: requestedValidationEvidence, inherited_validation_evidence: inherited.evidence, review_context: series.public, reviewer_metadata_file: path.join(run, "reviewer.json"), deployment_history: deployment, integrated_deployment_diff: deployment.unverified_commits.length && deployment.baseline ? await git(["diff", "--binary", "--no-ext-diff", deployment.baseline, candidate.tree]) : null};
+  if (producer) evidence.producer_origin = {schema: "my-crm.oracle-producer/v1", source_sha256: producer, fresh_module_graph: true};
   await atomicJson(path.join(run, "evidence.json"), evidence);
   await atomicJson(path.join(run, "preparation.json"), {reused: prepared.reused, sha256: bindingHash(evidence)});
   const schemaPath = path.join(run, "response.schema.json"); const outputPath = path.join(run, "response.json");
@@ -693,6 +695,29 @@ async function verifyCommit(reference) {
   console.log(`ORACLE_COMMIT=APPROVED commit=${await git(["rev-parse", reference])} reviewed_commit=${await git(["rev-parse", reviewedReference])} tree=${tree}`);
 }
 
+export async function runReviewAttempt(args, {producer = null, verifyProducer = async () => {}} = {}) {
+  const directory = await oracleDirectory();
+  return withOracleRun(directory, (context) => review(args, {...context, producer, verifyProducer}),
+    {kind: "review", onAdmitted: () => removeMetadataFile(path.join(directory, "approval.json"), {force: true})});
+}
+
+async function freshReviewAttempt(args) {
+  const invocation = execFileAsync(process.execPath, [fileURLToPath(new URL("./oracle-attempt.mjs", import.meta.url)), ...args],
+    {cwd: process.cwd(), env: process.env, maxBuffer: 16 * 1024 * 1024});
+  const cancel = () => invocation.child?.kill("SIGTERM");
+  process.on("SIGINT", cancel); process.on("SIGTERM", cancel);
+  let output;
+  try { output = await invocation; } catch (error) { output = error; }
+  finally { process.removeListener("SIGINT", cancel); process.removeListener("SIGTERM", cancel); }
+  const lines = (output.stdout ?? "").split("\n"), marker = lines.findLast((line) => line.startsWith("ORACLE_ATTEMPT_RESULT="));
+  process.stdout.write(lines.filter((line) => !line.startsWith("ORACLE_ATTEMPT_RESULT=")).join("\n"));
+  if (output.stderr) process.stderr.write(output.stderr);
+  if (!marker) throw new Error(`Native review attempt exited without its result: ${output.message ?? "missing result"}`);
+  const completed = JSON.parse(marker.slice("ORACLE_ATTEMPT_RESULT=".length));
+  if (completed.failure) { const error = new Error(completed.failure.message); error.name = completed.failure.name; error.code = completed.failure.code; throw error; }
+  return completed.result;
+}
+
 async function continuousReview(args, controller) {
   let requested;
   try { requested = reviewArguments(args); }
@@ -729,12 +754,9 @@ async function continuousReview(args, controller) {
     await controller.progress({phase: "ASSESSING", candidate_commit: before, attempt: ++attempt});
     let result, failure;
     try {
-      const directory = await oracleDirectory();
-      result = await withOracleRun(directory, async (context) => {
-        await controller.progress({phase: "ASSESSING", candidate_commit: before, attempt,
-          invocation: currentInvocation(), run: context.run});
-        return review(currentArgs, context);
-      }, {kind: "review", onAdmitted: () => removeMetadataFile(path.join(directory, "approval.json"), {force: true})});
+      // A separate native worker loads the current producer graph once for this
+      // attempt. Commits cannot label the parent's cached emitters as new code.
+      result = await freshReviewAttempt(currentArgs);
     } catch (error) { failure = error; }
     const after = await git(["rev-parse", "HEAD"]);
     const moved = before !== after;

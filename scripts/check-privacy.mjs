@@ -95,33 +95,41 @@ async function uuidAuditContent(content, relative, provenance) {
     while (cursor < content.length && !/[\s,\]}]/u.test(content[cursor])) cursor++;
   };
   value([]);
-  const allowed = new Set();
+  const masked = new Map();
   if (!duplicate) for (const token of tokens) {
     if (token.key) continue;
-    if (record?.schema === "my-crm.shipment-completion/v1" && JSON.stringify(token.location) === '["oracle","series_id"]' && provenance.series.has(token.value)) allowed.add(token);
-    if (record?.schema === "my-crm.proposal-evidence-custody/v1" && token.location.length === 3 && token.location[0] === "files" && Number.isInteger(token.location[1]) && token.location[2] === "original" && await provenance.runFile(token.value, record.files?.[token.location[1]]?.sha256)) allowed.add(token);
+    const exactSeries = record?.schema === "my-crm.shipment-completion/v1" && JSON.stringify(token.location) === '["oracle","series_id"]' && provenance.series.has(token.value);
+    const exactCustody = record?.schema === "my-crm.proposal-evidence-custody/v1" && token.location.length === 3 && token.location[0] === "files" && Number.isInteger(token.location[1]) && token.location[2] === "original" && await provenance.runFile(token.value, record.files?.[token.location[1]]?.sha256);
     // Private copied diagnostics retain exact native provenance. These are
     // generated reviewer/series identities, distinct from customer or BOS
     // authority handles. Every occurrence must be proven in owner-local
     // metadata and used as a native reference; public/customer fields keep
     // the original identity prohibition. Originals remain byte-for-byte intact.
-    if (record?.schema !== "my-crm.proposal-evidence-custody/v1") {
-      const matches = [...token.value.matchAll(/[a-f0-9]{8}-[a-f0-9]{4}-[a-f0-9]{4}-[a-f0-9]{4}-[a-f0-9]{12}/g)];
+    {
+      const matches = [...token.value.matchAll(/[a-f0-9]{8}-[a-f0-9]{4}-[a-f0-9]{4}-[a-f0-9]{4}-[a-f0-9]{12}/gi)];
       const leaf = token.location.at(-1), parent = token.location.slice(0, -1).reduce((value, key) => value?.[key], record);
       const seriesField = leaf === "series_id" || leaf === "id" && token.location.at(-2) === "series";
       const runField = leaf === "id" && ["review", "proposal", "deployment-authorization"].includes(parent?.kind)
         || leaf === "existing_other_scope_proposal" || token.location.at(-2) === "original_error_outcomes_preserved";
-      if (matches.length && (await Promise.all(matches.map(async (match) => {
+      const proven = await Promise.all(matches.map(async (match) => {
+        if (exactSeries && token.value === match[0]) return true;
+        if (exactCustody && token.value.slice(0, match.index).endsWith(provenance.runPrefix) && token.value[match.index + match[0].length] === path.sep) return true;
+        if (record?.schema === "my-crm.proposal-evidence-custody/v1") return false;
         if (seriesField && token.value === match[0] && provenance.series.has(match[0])) return true;
         const nativePath = token.value.slice(0, match.index).endsWith(provenance.runPrefix)
           && [undefined, path.sep].includes(token.value[match.index + match[0].length]);
         return (nativePath || runField && token.value === match[0]) && await provenance.runIdentity(match[0]);
-      }))).every(Boolean)) allowed.add(token);
+      }));
+      let decoded = token.value;
+      for (let index = matches.length - 1; index >= 0; index--) if (proven[index]) {
+        const match = matches[index]; decoded = `${decoded.slice(0, match.index)}verified-native-provenance${decoded.slice(match.index + match[0].length)}`;
+      }
+      if (decoded !== token.value) masked.set(token, decoded);
     }
   }
   let audited = content;
-  for (const token of [...allowed].sort((left, right) => right.begin - left.begin)) audited = `${audited.slice(0, token.begin)}"verified-native-provenance"${audited.slice(token.end)}`;
-  return `${audited}\n${tokens.filter((token) => !allowed.has(token)).map(({value: decoded}) => decoded).join("\n")}`;
+  for (const [token, decoded] of [...masked].sort(([left], [right]) => right.begin - left.begin)) audited = `${audited.slice(0, token.begin)}${JSON.stringify(decoded)}${audited.slice(token.end)}`;
+  return `${audited}\n${tokens.map((token) => masked.get(token) ?? token.value).join("\n")}`;
 }
 
 async function walk(directory, {includeDist}, files = []) {

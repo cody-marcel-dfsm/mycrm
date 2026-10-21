@@ -58,30 +58,44 @@ export async function controllerProcess(pid) {
   }
 }
 
-async function inspect(record, state) {
+async function legacyTerminal(record, state) {
+  const run = path.join(state.owner, "oracle", "runs", record.legacy_invocation.id);
+  const filename = path.join(run, "outcome.json"), native = await optional(filename, state.owner);
+  if (!native) return null;
+  if (native.kind !== "review" || typeof native.started_at !== "string" || typeof native.finished_at !== "string") throw new Error("Legacy native review outcome is malformed");
+  const evidence = await optional(path.join(run, "evidence.json"), state.owner);
+  return {outcome: native.outcome, native_outcome: native, native_outcome_file: filename,
+    native_outcome_sha256: contentHash(await readMetadataFile(filename)),
+    result: {action: "LEGACY_REVIEW_COMPLETED", native_outcome: native, invocation: record.legacy_invocation,
+      candidate_commit: evidence?.inputs?.candidate_commit ?? record.candidate_commit ?? null}, error: null};
+}
+
+async function terminal(record, state, directory) {
+  if (record.legacy_invocation) return legacyTerminal(record, state);
+  const outcome = await optional(path.join(directory, "outcome.json"), state.owner);
+  if (outcome) {
+    verify(outcome);
+    if (outcome.controller_id !== record.id) throw new Error("Review controller outcome identity differs");
+  }
+  return outcome;
+}
+
+async function inspect(record, state, processIdentity = controllerProcess) {
   verify(record);
   if (record.schema !== "my-crm.review-controller/v1" || record.root !== state.root || record.kind !== "review" || record.scope !== "completed-source" || !/^[a-f0-9-]{36}$/.test(record.id ?? "")) throw new Error("Review controller has foreign or malformed root, kind or scope");
   const command = Array.isArray(record.process?.command) ? record.process.command.join(" ") : record.process?.command;
   if (typeof command !== "string" || !nativeParent(command)) throw new Error("Review controller is not a native completed-review parent");
   const directory = path.join(state.directory, record.id);
-  if (record.legacy_invocation) {
-    const filename = path.join(state.owner, "oracle", "runs", record.legacy_invocation.id, "outcome.json");
-    const native = await optional(filename, state.owner);
-    if (native) {
-      if (native.kind !== "review" || typeof native.started_at !== "string" || typeof native.finished_at !== "string") throw new Error("Legacy native review outcome is malformed");
-      return {...record, directory, state: "TERMINAL", outcome: {outcome: native.outcome,
-        native_outcome: native, native_outcome_file: filename, native_outcome_sha256: contentHash(await readMetadataFile(filename)),
-        result: {action: "LEGACY_REVIEW_COMPLETED", native_outcome: native, invocation: record.legacy_invocation}, error: null}};
-    }
-  }
-  const outcome = await optional(path.join(directory, "outcome.json"), state.owner);
-  if (outcome) {
-    verify(outcome);
-    if (outcome.controller_id !== record.id) throw new Error("Review controller outcome identity differs");
-    return {...record, directory, state: "TERMINAL", outcome};
-  }
-  const current = await controllerProcess(record.process?.pid);
+  const outcome = await terminal(record, state, directory);
+  if (outcome) return {...record, directory, state: "TERMINAL", outcome};
+  const current = await processIdentity(record.process?.pid);
   const live = current && bindingHash(current) === bindingHash(record.process);
+  // Publication precedes process exit. A process can finish during the async
+  // identity sample, so read its immutable terminal bytes again before STALE.
+  if (!live) {
+    const completed = await terminal(record, state, directory);
+    if (completed) return {...record, directory, state: "TERMINAL", outcome: completed};
+  }
   const progress = live ? await optional(path.join(directory, "progress.json"), state.owner) : null;
   return {...record, directory, state: live ? "RUNNING" : "STALE", progress};
 }
@@ -186,14 +200,18 @@ async function claim(state) {
   throw new Error("Review controller admission history exceeds its supported bound");
 }
 
-export async function observeReviewController(record, {root = process.cwd(), args = []} = {}) {
+export async function observeReviewController(record, {root = process.cwd(), args = [], processIdentity = controllerProcess} = {}) {
   const state = await layout(root);
   if (record.legacy_unregistered) {
     for (;;) {
-      const outcome = await optional(path.join(state.owner, "oracle", "runs", record.legacy_invocation.id, "outcome.json"), state.owner);
-      if (outcome) return {action: "LEGACY_REVIEW_COMPLETED", native_outcome: outcome, invocation: record.legacy_invocation};
-      const identity = await controllerProcess(record.process.pid);
-      if (!identity || bindingHash(identity) !== bindingHash(record.process)) throw new Error("Legacy review process ended without its native outcome; retain original observations");
+      const outcome = await legacyTerminal(record, state);
+      if (outcome) return outcome.result;
+      const identity = await processIdentity(record.process.pid);
+      if (!identity || bindingHash(identity) !== bindingHash(record.process)) {
+        const completed = await legacyTerminal(record, state);
+        if (completed) return completed.result;
+        throw new Error("Legacy review process ended without its native outcome; retain original observations");
+      }
       await pause(500);
     }
   }
@@ -204,7 +222,7 @@ export async function observeReviewController(record, {root = process.cwd(), arg
   for (;;) {
     const original = await optional(path.join(state.directory, `${String(record.generation).padStart(8, "0")}.json`), state.owner);
     if (!original || original.sha256 !== record.sha256) throw new Error("Attached review controller observation changed");
-    const current = await inspect(original, state);
+    const current = await inspect(original, state, processIdentity);
     if (current.state === "TERMINAL") {
       if (current.outcome.error) throw new Error(`Attached review controller failed: ${current.outcome.error.message}`);
       if (record.legacy_invocation) {
@@ -227,8 +245,14 @@ export async function withReviewController({root = process.cwd(), args = [], act
     const result = await observeReviewController(record, {root: state.root, args});
     if (result?.action === "LEGACY_REVIEW_COMPLETED") {
       const head = (await execute("git", ["rev-parse", "HEAD"], {cwd: state.root})).stdout.trim();
-      if (record.candidate_commit && record.candidate_commit !== head || args.length) return withReviewController({root: state.root, args, action});
-      if (result.native_outcome.outcome !== "APPROVED") throw new Error(`Legacy native review finished ${result.native_outcome.outcome}: ${result.native_outcome.error?.message ?? "unfinished or rejected assessment"}`);
+      const outcome = result.native_outcome, candidate = result.candidate_commit;
+      const drift = ["ORACLE_INPUT_DRIFT", "ORACLE_CANDIDATE_MOVED"].includes(outcome.error?.code)
+        || /Oracle inputs drifted|candidate.*moved|committed source moved/i.test(outcome.error?.message ?? "");
+      if (outcome.outcome === "ERROR" && !drift) throw new Error(`Legacy native review finished ERROR: ${outcome.error?.message ?? "reviewer execution failed"}`);
+      // PREPARING may have no candidate evidence even at termination. Unknown
+      // success supplies no current approval: run exact current selection.
+      if (!candidate || candidate !== head || args.length || drift) return withReviewController({root: state.root, args, action});
+      if (outcome.outcome !== "APPROVED") throw new Error(`Legacy native review finished ${outcome.outcome}: ${outcome.error?.message ?? "unfinished or rejected assessment"}`);
     }
     return result?.action === "UNCONSUMED_REVIEW_REQUEST" ? withReviewController({root: state.root, args, action}) : result;
   }

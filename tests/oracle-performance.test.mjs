@@ -1335,7 +1335,7 @@ function runningReview(repo, env, args = []) {
   return {child, done, output: () => stdout};
 }
 
-async function runningLegacyReview(repo, root, env) {
+async function runningLegacyReview(repo, root, env, {withholdEvidence = false, failure = null, allowMovement = false} = {}) {
   const directory = path.join(root, "legacy"); await mkdir(directory);
   const script = path.join(directory, "oracle-review.mjs"), ready = path.join(root, "legacy-ready");
   await writeFile(script, `import {writeFile} from 'node:fs/promises';
@@ -1345,10 +1345,11 @@ import {withOracleRun,atomicJson} from ${JSON.stringify(new URL("../scripts/orac
 const git=(...args)=>execFileSync('git',args,{encoding:'utf8'}).trim();
 const original=git('rev-parse','HEAD');
 try { await withOracleRun(path.join(git('rev-parse','--absolute-git-dir'),'oracle'),async({run})=>{
- await atomicJson(path.join(run,'evidence.json'),{inputs:{candidate_commit:original}});
+ ${withholdEvidence ? "" : "await atomicJson(path.join(run,'evidence.json'),{inputs:{candidate_commit:original}});"}
  await writeFile(${JSON.stringify(ready)},'Native legacy parent admitted and preparing.');
  await new Promise(resolve=>setTimeout(resolve,1800));
- if(git('rev-parse','HEAD')!==original) throw new Error('Oracle inputs drifted: committed source moved during legacy assessment');
+ ${failure ? `throw new Error(${JSON.stringify(failure)});` : ""}
+ if(!${allowMovement} && git('rev-parse','HEAD')!==original) throw new Error('Oracle inputs drifted: committed source moved during legacy assessment');
  return {verdict:'APPROVED'};
 },{kind:'review'}); } catch(e) { console.error(e.message); process.exitCode=1; }
 `);
@@ -1388,6 +1389,34 @@ test("legacy native failure after an arrived commit retains its outcome before c
   assert.equal(native.outcome, "ERROR"); assert.match(native.error.message, /committed source moved/);
   const {readValidatedCheckpoint} = await import("../scripts/shipment-state.mjs");
   assert.equal((await readValidatedCheckpoint(repo)).record.last_validated_commit, await git("rev-parse", "HEAD"));
+});
+
+for (const oldSuccess of [false, true]) test(`PREPARING legacy ${oldSuccess ? "success" : "drift failure"} with unknown candidate continues exact committed scope`, async (t) => {
+  const {repo, root, env, prepare, git} = await fixture(t); await prepare(); await git("branch", "-m", "main");
+  await git("-c", "user.name=Synthetic", "-c", "user.email=synthetic@example.invalid", "commit", "-qm", "Initial preparing source");
+  const legacy = await runningLegacyReview(repo, root, env, {withholdEvidence: true, allowMovement: oldSuccess});
+  const original = JSON.parse(await readFile(path.join(repo, ".git/oracle/active-review.json")));
+  const calls = path.join(root, "current-calls"), follower = command(repo, ["review"], {...env, ORACLE_CALLS: calls});
+  await waitFor(path.join(repo, ".git/oracle/controllers/00000000.json"));
+  const admitted = JSON.parse(await readFile(path.join(repo, ".git/oracle/controllers/00000000.json")));
+  assert.equal(admitted.legacy_phase, "PREPARING"); assert.equal(admitted.candidate_commit, null);
+  await writeFile(path.join(repo, "candidate.txt"), "Committed after legacy admission before candidate capture\n"); await git("add", ".");
+  await git("-c", "user.name=Synthetic", "-c", "user.email=synthetic@example.invalid", "commit", "-qm", "Arrived preparing source");
+  await follower; await legacy.done;
+  const native = JSON.parse(await readFile(path.join(repo, ".git/oracle/runs", original.id, "outcome.json")));
+  assert.equal(native.outcome, oldSuccess ? "APPROVED" : "ERROR");
+  const {readValidatedCheckpoint} = await import("../scripts/shipment-state.mjs");
+  assert.equal((await readValidatedCheckpoint(repo)).record.last_validated_commit, await git("rev-parse", "HEAD"));
+  assert.equal((await readFile(calls, "utf8")).trim().split("\n").length, 3);
+});
+
+test("unknown PREPARING legacy execution failure retains its literal ERROR without new models", async (t) => {
+  const {repo, root, env, prepare} = await fixture(t); await prepare();
+  const legacy = await runningLegacyReview(repo, root, env, {withholdEvidence: true, failure: "Synthetic provider execution failure"});
+  const calls = path.join(root, "unexpected-calls");
+  await assert.rejects(command(repo, ["review"], {...env, ORACLE_CALLS: calls}), /Synthetic provider execution failure/);
+  assert.equal((await legacy.done).code, 1);
+  await assert.rejects(readFile(calls), {code: "ENOENT"});
 });
 
 test("simultaneous native starters elect one immutable live parent and observer cancellation leaves it running", async (t) => {

@@ -5,6 +5,7 @@ import os from "node:os";
 import path from "node:path";
 import {cohortPlan, partitionPayload, aggregateCohorts, runParallelReview, verifyParallelArtifacts, payloadLimit} from "../scripts/oracle-parallel.mjs";
 import {atomicJson, bindingHash, withOracleRun} from "../scripts/oracle-inputs.mjs";
+import {prepareSeries, assessRound, saveRound} from "../scripts/oracle-series.mjs";
 
 const candidate = {commit: "1".repeat(40), tree: "2".repeat(40), base: "3".repeat(40)};
 const inputs = {authorities: [], owner: null};
@@ -75,6 +76,45 @@ test("concurrent findings are consolidated and incompatible finding resolutions 
   assert.equal(aggregateCohorts(plan, all).response.verdict, "REJECTED");
   all[2].envelope.response.resolutions = [{id: "F-cross-area", status: "RESOLVED", evidence: "Different conclusion"}];
   assert.equal(aggregateCohorts(plan, all).response.verdict, null);
+});
+
+test("an OPEN disposition and its stable current finding reach native assessment and repair synthesis", async (t) => {
+  const directory = await mkdtemp(path.join(os.tmpdir(), "mycrm-parallel-open-"));
+  t.after(() => rm(directory, {recursive: true, force: true}));
+  const options = {directory, candidate: {...candidate, files: names}, inputs: {...inputs, tool_sha256: "synthetic-tool", proposal_sha256: "synthetic-proposal", validation: []},
+    files: Object.fromEntries(names.map((name) => [name, "same-content"])), environment: "synthetic"};
+  const finding = {id: "OPEN-FINDING", code: "OPEN-FINDING", severity: "high", path: names[1], message: "Synthetic open repair",
+    reproduction: "Invoke synthetic consumer", required_behavior: "Preserve failure recovery", affected_paths: [names[1]],
+    acceptance_checks: ["Exercise recovery"], origin: "initial", missed_finding_reason: null};
+  const initial = await prepareSeries(options), first = {...response(names), verdict: "REJECTED", findings: [finding]};
+  await saveRound(initial, first, assessRound(initial, first, []));
+  const current = await prepareSeries(options), plan = cohortPlan({candidate, inputs, context: current.public});
+  const all = plan.cohorts.map((cohort) => ({id: cohort.id, envelope: envelope(plan, cohort)}));
+  all[0].envelope.response.resolutions = [{id: finding.id, status: "OPEN", evidence: "Current independent inspection confirms the remaining defect"}];
+  all[1].envelope.response.findings = [finding]; all[1].envelope.response.verdict = "REJECTED";
+  const merged = aggregateCohorts(plan, all);
+  assert.deepEqual(merged.issues, []); assert.equal(merged.response.review_status, "COMPLETE"); assert.equal(merged.response.verdict, "REJECTED");
+  const saved = await saveRound(current, merged.response, assessRound(current, merged.response, []));
+  assert.equal(saved.rounds.at(-1).findings[0].id, finding.id);
+  const again = await prepareSeries(options);
+  const synthesized = await saveRound(again, merged.response, assessRound(again, merged.response, []));
+  assert.ok(synthesized.rounds.at(-1).repair_plan, "Two failed repair rounds retain native consolidated repair synthesis");
+});
+
+test("effective inherited effects retain independent deployment permission status", () => {
+  const plan = cohortPlan({candidate, inputs, context: evidence().review_context});
+  const all = plan.cohorts.map((cohort) => ({id: cohort.id, envelope: envelope(plan, cohort)}));
+  const cross = all[0].envelope.response;
+  cross.deployment_effect_dispositions = [{receipt_sha256: "a".repeat(64), effect_id: "INHERITED", disposition: "EFFECTIVE", evidence: "Verified current consumer retains exact effect"}];
+  cross.owner_approval_status = "MISSING";
+  assert.equal(aggregateCohorts(plan, all).response.verdict, "APPROVED");
+  assert.equal(aggregateCohorts(plan, all).response.owner_approval_status, "MISSING");
+  cross.owner_approval_status = "APPROVED";
+  assert.equal(aggregateCohorts(plan, all).response.owner_approval_status, "APPROVED");
+  for (const disposition of ["REVERTED", "SUPERSEDED"]) {
+    cross.deployment_effect_dispositions[0].disposition = disposition;
+    assert.equal(aggregateCohorts(plan, all).response.owner_approval_status, "NOT_REQUIRED");
+  }
 });
 
 async function runFixture(invoke, after) {
