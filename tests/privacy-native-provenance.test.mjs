@@ -41,6 +41,15 @@ test("private copied native diagnostics retain proven run identities without per
   const filename = await f.write("Vault/tmp/native-continuation.json", record), original = await readFile(filename);
   await checkPrivacy({root: f.root, denylistValues: []});
   assert.deepEqual(await readFile(filename), original);
+  const validationRun = randomUUID(), validationRoot = `.git/oracle/runs/${validationRun}`;
+  await f.write(`${validationRoot}/outcome.json`, {kind: "validation", reviewer_invoked: false, started_at: "synthetic-start", finished_at: "synthetic-finish", outcome: "COMPLETED"});
+  await f.write(`${validationRoot}/timings.json`, {total_ms: 1});
+  const nativeOutput = await f.write(`${validationRoot}/validation.output.log`, "Synthetic captured output");
+  await f.write("Vault/tmp/native-validation.json", {output_file: nativeOutput});
+  await checkPrivacy({root: f.root, denylistValues: []});
+  await rm(path.join(f.root, validationRoot, "outcome.json"));
+  await assert.rejects(checkPrivacy({root: f.root, denylistValues: []}), /uuid-value/);
+  await rm(path.join(f.root, "Vault/tmp/native-validation.json"));
   await f.write("Vault/tmp/native-continuation.json", {...record, customer_id: f.run});
   await assert.rejects(checkPrivacy({root: f.root, denylistValues: []}), /uuid-value/);
   await f.write("Vault/tmp/native-continuation.json", {...record, authority_handle: randomUUID()});

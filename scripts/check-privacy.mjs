@@ -49,7 +49,14 @@ async function nativeProvenance(root) {
     try {
       await pathCustody(owner, run, {scopeRoot: owner, allowFinalLink: false});
       const outcome = JSON.parse(await readMetadataFile(path.join(run, "outcome.json"), "utf8", {root: owner}));
+      if (typeof outcome.started_at !== "string" || typeof outcome.finished_at !== "string") return false;
+      if (outcome.kind === "validation" && outcome.reviewer_invoked === false) {
+        await readMetadataFile(path.join(run, "validation.output.log"), {}, {root: owner});
+        const timings = JSON.parse(await readMetadataFile(path.join(run, "timings.json"), "utf8", {root: owner}));
+        return Number.isFinite(timings.total_ms) && ["COMPLETED", "ERROR"].includes(outcome.outcome);
+      }
       const reviewer = JSON.parse(await readMetadataFile(path.join(run, "reviewer.json"), "utf8", {root: owner}));
+      if (outcome.reviewer_invoked === false && outcome.outcome === "ERROR" && typeof outcome.error?.message === "string") return ["review", "proposal", "deployment-authorization"].includes(outcome.kind) && reviewer.role === "independent-project-oracle" && /^[a-f0-9]{64}$/.test(reviewer.role_instruction_sha256 ?? "");
       const execution = JSON.parse(await readMetadataFile(path.join(run, "process.json"), "utf8", {root: owner}));
       return ["review", "proposal", "deployment-authorization"].includes(outcome.kind) && outcome.reviewer_invoked === true && typeof outcome.started_at === "string" && typeof outcome.finished_at === "string" && reviewer.role === "independent-project-oracle" && /^[a-f0-9]{64}$/.test(reviewer.role_instruction_sha256 ?? "") && (Number.isInteger(execution.exit_code) || typeof execution.signal === "string");
     } catch { return false; }
