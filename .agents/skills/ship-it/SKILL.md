@@ -10,6 +10,13 @@ current governing instructions first and use the independent local Oracle
 commands. The shipping agent never classifies authentication impact or adopts
 `.agents/skills/oracle/SKILL.md`.
 
+Bind inherited policy and the declared family/review-coordination designs as
+governing inputs. The parent Oracle command is its supported invocation reference;
+bind command content/custody when explicitly consumed as evidence or an actual
+dependency. Preserve those actual bindings and their affected coverage without
+an automatic source dependency from merely naming the command. MyCRM retains its
+own implementation, review and release authority.
+
 ## Clock and coordination
 
 Start timing at the original user release instruction, including time before the

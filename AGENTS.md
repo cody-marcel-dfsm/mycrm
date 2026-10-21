@@ -248,12 +248,16 @@ rechecks their current dependency/configuration/environment applicability.
 Omitted attachment alone never requires repeating a passing check. Missing or
 altered originals produce concrete invalidations. Legacy logs, owner approval
 and API-version request evidence are never inferred from command history.
-Review inputs also bind inherited parent AGENTS policy and the exact parent
-family architecture, review-coordination design and Oracle command declared above, including absent-file
-tombstones. Their allowlisted absolute paths may identify coverage dependencies;
-changed parent policy invalidates reuse globally, while other external changes
-invalidate their own coverage and actual dependents. This evidence binding
-creates no sibling runtime import, execution or approval authority.
+Review inputs bind inherited parent AGENTS policy and the exact declared parent
+family architecture and review-coordination design, including absent-file
+tombstones. The declared Projects Oracle command identifies the supported
+invocation; its content and custody participate when explicitly consumed as
+review evidence or a source dependency. Invocation references alone create no
+automatic command-source read or binding. Allowlisted absolute paths identify
+actual coverage dependencies; changed parent policy reopens governing criteria,
+while other consumed external changes reopen their own coverage and actual
+dependents. This evidence binding preserves MyCRM ownership and creates no
+sibling runtime import, execution or approval authority.
 
 ## Canonical main and project agent context
 
