@@ -43,7 +43,18 @@ async function nativeProvenance(root) {
       return ["review", "proposal", "deployment-authorization"].includes(outcome.kind) && outcome.reviewer_invoked === true && typeof outcome.started_at === "string" && typeof outcome.finished_at === "string" && reviewer.role === "independent-project-oracle" && /^[a-f0-9]{64}$/.test(reviewer.role_instruction_sha256 ?? "") && (Number.isInteger(execution.exit_code) || execution.signal !== null && typeof execution.signal === "string");
     } catch { return false; }
   };
-  return {series, runFile};
+  const runIdentity = async (id) => {
+    if (!nativeUuid.test(id)) return false;
+    const run = path.join(owner, "oracle", "runs", id);
+    try {
+      await pathCustody(owner, run, {scopeRoot: owner, allowFinalLink: false});
+      const outcome = JSON.parse(await readMetadataFile(path.join(run, "outcome.json"), "utf8", {root: owner}));
+      const reviewer = JSON.parse(await readMetadataFile(path.join(run, "reviewer.json"), "utf8", {root: owner}));
+      const execution = JSON.parse(await readMetadataFile(path.join(run, "process.json"), "utf8", {root: owner}));
+      return ["review", "proposal", "deployment-authorization"].includes(outcome.kind) && outcome.reviewer_invoked === true && typeof outcome.started_at === "string" && typeof outcome.finished_at === "string" && reviewer.role === "independent-project-oracle" && /^[a-f0-9]{64}$/.test(reviewer.role_instruction_sha256 ?? "") && (Number.isInteger(execution.exit_code) || typeof execution.signal === "string");
+    } catch { return false; }
+  };
+  return {series, runFile, runIdentity, runPrefix: `${path.join(owner, "oracle", "runs")}${path.sep}`};
 }
 
 async function uuidAuditContent(content, relative, provenance) {
@@ -82,6 +93,24 @@ async function uuidAuditContent(content, relative, provenance) {
     if (token.key) continue;
     if (record?.schema === "my-crm.shipment-completion/v1" && JSON.stringify(token.location) === '["oracle","series_id"]' && provenance.series.has(token.value)) allowed.add(token);
     if (record?.schema === "my-crm.proposal-evidence-custody/v1" && token.location.length === 3 && token.location[0] === "files" && Number.isInteger(token.location[1]) && token.location[2] === "original" && await provenance.runFile(token.value, record.files?.[token.location[1]]?.sha256)) allowed.add(token);
+    // Private copied diagnostics retain exact native provenance. These are
+    // generated reviewer/series identities, distinct from customer or BOS
+    // authority handles. Every occurrence must be proven in owner-local
+    // metadata and used as a native reference; public/customer fields keep
+    // the original identity prohibition. Originals remain byte-for-byte intact.
+    if (record?.schema !== "my-crm.proposal-evidence-custody/v1") {
+      const matches = [...token.value.matchAll(/[a-f0-9]{8}-[a-f0-9]{4}-[a-f0-9]{4}-[a-f0-9]{4}-[a-f0-9]{12}/g)];
+      const leaf = token.location.at(-1), parent = token.location.slice(0, -1).reduce((value, key) => value?.[key], record);
+      const seriesField = leaf === "series_id" || leaf === "id" && token.location.at(-2) === "series";
+      const runField = leaf === "id" && ["review", "proposal", "deployment-authorization"].includes(parent?.kind)
+        || leaf === "existing_other_scope_proposal" || token.location.at(-2) === "original_error_outcomes_preserved";
+      if (matches.length && (await Promise.all(matches.map(async (match) => {
+        if (seriesField && token.value === match[0] && provenance.series.has(match[0])) return true;
+        const nativePath = token.value.slice(0, match.index).endsWith(provenance.runPrefix)
+          && [undefined, path.sep].includes(token.value[match.index + match[0].length]);
+        return (nativePath || runField && token.value === match[0]) && await provenance.runIdentity(match[0]);
+      }))).every(Boolean)) allowed.add(token);
+    }
   }
   let audited = content;
   for (const token of [...allowed].sort((left, right) => right.begin - left.begin)) audited = `${audited.slice(0, token.begin)}"verified-native-provenance"${audited.slice(token.end)}`;

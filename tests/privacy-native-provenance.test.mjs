@@ -32,6 +32,24 @@ test("only verified native Oracle provenance is allowed in exact private typed f
   await assert.rejects(checkPrivacy({root: f.root, denylistValues: []}), /uuid-value/);
 });
 
+test("private copied native diagnostics retain proven run identities without permitting authority handles", async (t) => {
+  const f = await fixture(t);
+  const record = {invocation: {id: f.run, kind: "proposal"}, existing_other_scope_proposal: f.run,
+    original_error_outcomes_preserved: [f.run], series: {id: f.seriesId},
+    summary: `Original native execution: ${path.dirname(f.original)}/outcome.json`,
+    response: {path: f.original}};
+  const filename = await f.write("Vault/tmp/native-continuation.json", record), original = await readFile(filename);
+  await checkPrivacy({root: f.root, denylistValues: []});
+  assert.deepEqual(await readFile(filename), original);
+  await f.write("Vault/tmp/native-continuation.json", {...record, customer_id: f.run});
+  await assert.rejects(checkPrivacy({root: f.root, denylistValues: []}), /uuid-value/);
+  await f.write("Vault/tmp/native-continuation.json", {...record, authority_handle: randomUUID()});
+  await assert.rejects(checkPrivacy({root: f.root, denylistValues: []}), /uuid-value/);
+  await f.write("Vault/tmp/native-continuation.json", record);
+  await rm(path.join(path.dirname(f.original), "outcome.json"));
+  await assert.rejects(checkPrivacy({root: f.root, denylistValues: []}), /uuid-value/);
+});
+
 test("raw and decoded UUIDs survive duplicate-key JSON representations without exemptions", async (t) => {
   const f = await fixture(t), unverified = randomUUID();
   const cases = [
