@@ -456,7 +456,10 @@ export function assessRound(context, response, validation) {
   if (response.verdict === "APPROVED" && findings.length) throw new Error("Oracle approved assessment contains unresolved findings");
   if (response.verdict === "REJECTED" && !findings.length) throw new Error("Oracle source rejection requires consolidated source findings");
   const resolutions = response.resolutions;
-  if (new Set(resolutions.map((item) => item.id)).size !== resolutions.length || resolutions.some((item) => !priorFindings.some((finding) => finding.id === item.id))) throw new Error("Oracle finding resolutions are duplicated or unknown");
+  const resolvedHistory = new Set(current.finding_history.filter((item) => item.last_status === "RESOLVED").map((item) => item.id));
+  if (new Set(resolutions.map((item) => item.id)).size !== resolutions.length || resolutions.some((item) =>
+    !priorFindings.some((finding) => finding.id === item.id) &&
+    !(resolvedHistory.has(item.id) && item.status === "RESOLVED" && item.evidence?.trim() && !findings.some((finding) => finding.id === item.id)))) throw new Error("Oracle finding resolutions are duplicated or unknown");
   for (const prior of priorFindings) {
     const resolution = resolutions.find((item) => item.id === prior.id);
     const finding = findings.find((item) => item.id === prior.id);

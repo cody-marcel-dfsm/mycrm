@@ -80,6 +80,28 @@ test("raw moved-input assessments retain custody and findings without promoting 
   assert.match((await inheritObservedEvidence({directory, base: options.candidate.base})).invalidated[0].reason, /missing/);
 });
 
+test("fresh resolution of known historical findings is idempotent while unknown and duplicate IDs fail closed", async (t) => {
+  const {prepare, record} = await fixture(t);
+  await record(await prepare(), response({verdict: "REJECTED", findings: [finding(), finding("F-2")]}));
+  await record(await prepare(), response({verdict: "REJECTED", findings: [finding("F-2")], resolutions: [
+    {id: "F-1", status: "RESOLVED", evidence: "Independent first repair verification."},
+    {id: "F-2", status: "OPEN", evidence: "Independent remaining finding verification."}
+  ]}));
+  const current = await prepare();
+  assert.deepEqual(current.public.prior_findings.map((item) => item.id), ["F-2"]);
+  const resolutions = ["F-1", "F-2"].map((id) => ({id, status: "RESOLVED", evidence: "Fresh exact-candidate repair and historical applicability verification."}));
+  assert.doesNotThrow(() => assessRound(current, response({resolutions}), []));
+  assert.throws(() => assessRound(current, response({resolutions: [...resolutions, resolutions[0]]}), []), /duplicated or unknown/);
+  assert.throws(() => assessRound(current, response({resolutions: [...resolutions, {id: "UNKNOWN", status: "RESOLVED", evidence: "Unbound claim."}]}), []), /duplicated or unknown/);
+  assert.throws(() => assessRound(current, response({resolutions: [{...resolutions[0], status: "OPEN"}, resolutions[1]]}), []), /duplicated or unknown/);
+  assert.throws(() => assessRound(current, response({resolutions: [{...resolutions[0], evidence: ""}, resolutions[1]]}), []), /duplicated or unknown/);
+  assert.throws(() => assessRound(current, response({resolutions: [resolutions[0]]}), []), /explicit resolution evidence/);
+  await record(current, response({resolutions}));
+  const repeated = await prepare();
+  assert.deepEqual(repeated.public.prior_findings, []);
+  assert.ok(repeated.public.finding_history.every((item) => item.last_status === "RESOLVED"));
+});
+
 test("candidate mode and type changes selectively invalidate consumers and classify membership movement", async (t) => {
   const {prepare, options, record} = await fixture(t);
   const fileFacts = Object.fromEntries(Object.keys(options.files).map((name) => [name, {mode: "100644", type: "blob"}]));
