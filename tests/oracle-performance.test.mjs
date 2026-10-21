@@ -1241,9 +1241,10 @@ test("committed-range review checkpoints exact source and unchanged shipment exe
 
 test("new proposals retain committed review lineage while current criteria remain independently assessed", async (t) => {
   const {repo, env, git, prepare} = await fixture(t); await prepare();
+  const runEnv = {...env, ORACLE_REUSE_COVERAGE: "1"};
   await git("branch", "-m", "main");
   await git("-c", "user.name=Synthetic", "-c", "user.email=synthetic@example.invalid", "commit", "-qm", "Synthetic original prepared candidate");
-  await command(repo, ["review"], env);
+  await command(repo, ["review"], runEnv);
   const {readValidatedCheckpoint} = await import("../scripts/shipment-state.mjs");
   const first = await readValidatedCheckpoint(repo), originalBase = first.record.reviewed_base;
   const seriesFile = path.join(repo, ".git/oracle/series", `${originalBase}.json`);
@@ -1254,7 +1255,7 @@ test("new proposals retain committed review lineage while current criteria remai
   assert.notEqual(proposal.base_commit, originalBase);
   await writeFile(path.join(repo, "new-area.txt"), "Synthetic new committed scope\n"); await git("add", ".");
   await git("-c", "user.name=Synthetic", "-c", "user.email=synthetic@example.invalid", "commit", "-qm", "Synthetic current committed scope");
-  await command(repo, ["review"], {...env, ORACLE_REUSE_COVERAGE: "1"});
+  await command(repo, ["review"], runEnv);
   const current = await readValidatedCheckpoint(repo), series = JSON.parse(await readFile(seriesFile));
   assert.equal(current.record.last_validated_commit, await git("rev-parse", "HEAD"));
   assert.equal(current.record.reviewed_base, originalBase);
