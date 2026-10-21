@@ -148,6 +148,12 @@ export async function activeReviewController(root = process.cwd()) {
 async function claim(state) {
   const identity = await controllerProcess(process.pid);
   if (!identity || identity.root !== state.root) throw new Error("Cannot verify this native review controller process");
+  const contextFile = path.join(state.owner, "oracle", "shipment-context.json");
+  const clockContext = await optional(contextFile, state.owner);
+  if (clockContext) {
+    verify(clockContext);
+    if (clockContext.schema !== "my-crm.shipment-context/v1" || [clockContext.review_started_at, clockContext.release_started_at].some((item) => item !== null && !Number.isFinite(Date.parse(item)))) throw new Error("Native shipment original-clock context is malformed");
+  }
   let previous = null, priorReview = null, priorRelease = null;
   for (let generation = 0; generation < 100000; generation++) {
     const filename = path.join(state.directory, `${String(generation).padStart(8, "0")}.json`);
@@ -166,8 +172,9 @@ async function claim(state) {
     if (await optional(filename, state.owner)) { generation--; continue; }
     const record = seal({schema: "my-crm.review-controller/v1", id: randomUUID(), generation,
       kind: "review", scope: "completed-source", root: state.root, process: identity, ...legacy,
-      started_at: new Date().toISOString(), review_started_at: process.env.MYCRM_REVIEW_STARTED_AT ?? priorReview,
-      release_started_at: process.env.MYCRM_RELEASE_STARTED_AT ?? priorRelease, predecessor_observation: previous});
+      started_at: new Date().toISOString(), review_started_at: clockContext?.review_started_at ?? process.env.MYCRM_REVIEW_STARTED_AT ?? priorReview,
+      release_started_at: clockContext?.release_started_at ?? process.env.MYCRM_RELEASE_STARTED_AT ?? priorRelease,
+      clock_context: clockContext ? {path: contextFile, sha256: clockContext.sha256} : null, predecessor_observation: previous});
     try {
       await atomicJson(filename, record, {root: state.owner, exclusive: true});
       const directory = path.join(state.directory, record.id);

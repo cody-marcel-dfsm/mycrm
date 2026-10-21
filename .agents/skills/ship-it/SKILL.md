@@ -90,8 +90,13 @@ observations bind its PID, kernel birth identity, canonical root, kind and scope
 they impose no source or review reservation. Stale parents retain their evidence,
 foreign or malformed custody fails closed, and current publication awaits the
 whole-current decision. Supply known original clocks through
-`MYCRM_REVIEW_STARTED_AT` and `MYCRM_RELEASE_STARTED_AT`; unavailable clocks remain
-explicitly null rather than receiving a new original timestamp.
+the sealed native `.git/oracle/shipment-context.json`, or through
+`MYCRM_REVIEW_STARTED_AT` and `MYCRM_RELEASE_STARTED_AT`. The context records
+original instruction provenance and keeps unchanged command environments intact;
+unavailable clocks remain explicitly null rather than receiving a new original
+timestamp. A pre-existing native parent without a new controller observation is
+identified through actual PID/birth/root/command and its pending native invocation;
+observe its genuine terminal outcome before continuing arrived committed scope.
 
 1. Submit the concise Problem, Cause and Recommended change through
    `npm run oracle:proposal -- "<proposal>"` before implementation, with at most
