@@ -104,10 +104,6 @@ export async function atomicJson(filename, value, {root} = {}) {
 export async function withOracleRun(requested, action, {kind = null, onAdmitted = null, ownerRoot = path.dirname(requested)} = {}) {
   const directory = await metadataDirectory(ownerRoot, requested);
   const store = {root: ownerRoot, requested, identity: await lstat(directory), lock: null};
-  const lock = path.join(directory, "run.lock");
-  try { await mkdir(lock, {mode: 0o700}); }
-  catch (error) { if (error.code === "EEXIST") throw new Error("Oracle publication state is busy or has an interrupted lock; inspect run.lock before retrying; source work may continue"); throw error; }
-  store.lock = lock; store.lockIdentity = await lstat(lock);
   return metadataScope.run(store, async () => {
   let run;
   const timings = {};
@@ -119,11 +115,14 @@ export async function withOracleRun(requested, action, {kind = null, onAdmitted 
     try { return await operation(); } finally { timings[name] = performance.now() - begin; }
   };
   try {
-    // Serialize private publication state only; source work continues freely.
-    await onAdmitted?.();
-    await atomicJson(path.join(lock, "owner.json"), {pid: process.pid, started_at: new Date().toISOString()});
     run = path.join(directory, "runs", randomUUID());
     await metadataDirectory(ownerRoot, run);
+    if (["review", "proposal"].includes(kind)) {
+      store.invocation = {id: path.basename(run), kind};
+      store.directory = directory;
+      await atomicJson(path.join(directory, `active-${kind}.json`), store.invocation);
+    }
+    await onAdmitted?.();
     result = await action({run, phase});
     return result;
   } catch (error) {
@@ -143,12 +142,20 @@ export async function withOracleRun(requested, action, {kind = null, onAdmitted 
       }
     } catch (error) {
       if (!failure) throw error;
-    } finally {
-      try { await removeMetadataFile(lock, {recursive: true, force: true}); }
-      catch (error) { if (!failure) throw error; }
     }
   }
   });
+}
+
+export function currentInvocation() { return metadataScope.getStore()?.invocation ?? null; }
+export async function assertPublishedInvocation(invocation, directory, ownerRoot = path.dirname(directory)) {
+  if (!invocation) return; // Immutable historical receipts retain original custody.
+  const active = JSON.parse(await readMetadataFile(path.join(directory, `active-${invocation.kind}.json`), "utf8", {root: ownerRoot}));
+  if (bindingHash(active) !== bindingHash(invocation)) throw new Error("Oracle invocation was superseded by a newer attempt; retain original observations without publishing current approval");
+}
+export async function assertCurrentInvocation() {
+  const store = metadataScope.getStore();
+  if (store?.invocation) await assertPublishedInvocation(store.invocation, store.directory, store.root);
 }
 
 // Resolve each link before inspecting its target. Checking only final realpath

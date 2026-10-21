@@ -3,7 +3,7 @@ import {promisify} from "node:util";
 import path from "node:path";
 import process from "node:process";
 import {fileURLToPath} from "node:url";
-import {atomicJson, bindingHash, metadataDirectory, readMetadataFile} from "./oracle-inputs.mjs";
+import {atomicJson, bindingHash, metadataDirectory, readMetadataFile, assertPublishedInvocation} from "./oracle-inputs.mjs";
 
 const execute = promisify(execFile);
 const commitHash = /^[a-f0-9]{40}$/;
@@ -45,6 +45,7 @@ export async function recordValidatedCommit({root = process.cwd(), receipt}) {
   await exactSource(root, receipt.candidate_commit, receipt.reviewed_tree);
   await atomicJson(path.join(directory, "committed-receipts", `${receipt.candidate_commit}.json`), record, {root: owner});
   await exactSource(root, receipt.candidate_commit, receipt.reviewed_tree);
+  await assertPublishedInvocation(receipt.invocation, directory, owner);
   await atomicJson(path.join(directory, "shipment-validated.json"), record, {root: owner});
   return record;
 }
@@ -55,6 +56,7 @@ export async function shipmentPlan({root = process.cwd(), publishedRef = "refs/r
   if (dirty) return {action: "PREPARE", candidate_commit: head, reason: "Commit every authored file before validation"};
   const checkpoint = await readValidatedCheckpoint(root), {owner, directory} = await store(root);
   if (checkpoint?.record.last_validated_commit === head) {
+    await assertPublishedInvocation(checkpoint.receipt.invocation, directory, owner);
     const delivered = await optionalJson(path.join(directory, "shipment-delivered.json"), owner);
     if (delivered && (delivered.schema !== "my-crm.shipment-delivered/v1" || delivered.checkpoint_sha256 !== checkpointDigest(delivered))) throw new Error("Shipment delivery checkpoint is malformed or changed");
     const complete = delivered?.delivered_commit === head && delivered.validated_checkpoint_sha256 === checkpoint.record.checkpoint_sha256;

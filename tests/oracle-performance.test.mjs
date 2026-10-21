@@ -354,14 +354,14 @@ test("declared external governing inputs bind proposal, review, execution and re
   await assert.rejects(readFile(path.join(repo, ".git/oracle/approval.json")), {code: "ENOENT"});
 });
 
-test("same checkout runs serialize while separate checkout runs proceed independently", async (t) => {
+test("same checkout runs proceed concurrently without a session reservation", async (t) => {
   const {root} = await fixture(t);
   const directory = path.join(root, "state-a");
   let release; const blocker = new Promise((resolve) => { release = resolve; });
   let started; const ready = new Promise((resolve) => { started = resolve; });
   const first = withOracleRun(directory, async () => { started(); await blocker; });
   await ready;
-  await assert.rejects(withOracleRun(directory, async () => {}), /busy/);
+  await withOracleRun(directory, async () => {});
   await withOracleRun(path.join(root, "state-b"), async () => {});
   release(); await first;
   await withOracleRun(directory, async () => {});

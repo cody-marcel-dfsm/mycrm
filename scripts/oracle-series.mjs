@@ -1,7 +1,7 @@
 import {randomUUID} from "node:crypto";
 import {readFile, realpath} from "node:fs/promises";
 import path from "node:path";
-import {atomicJson, bindingHash, contentHash, observedSourceBindings, pathCustody, readMetadataFile} from "./oracle-inputs.mjs";
+import {atomicJson, bindingHash, contentHash, observedSourceBindings, pathCustody, readMetadataFile, writeMetadataFile, assertCurrentInvocation} from "./oracle-inputs.mjs";
 import {legacyPolicy} from "./oracle-policy.mjs";
 
 // Private maintainer state. It carries evidence; approval still requires a fresh
@@ -179,6 +179,19 @@ export async function prepareSeries({directory, candidate, inputs, files, fileFa
   let series;
   try { series = verifySeries(JSON.parse(await readMetadataFile(filename, "utf8", {root: path.dirname(directory)})), candidate.base); }
   catch (error) { if (error.code !== "ENOENT") throw error; }
+  // An immutable round survives interruption before its mutable head update.
+  // Replay only its exact verified predecessor; this grants no active approval.
+  for (;;) {
+    const journal = path.join(path.dirname(filename), "rounds", candidate.base, `${(series?.rounds.length ?? 0) + 1}.json`);
+    let entry;
+    try { entry = JSON.parse(await readMetadataFile(journal, "utf8", {root: path.dirname(directory)})); }
+    catch (error) { if (error.code === "ENOENT") break; throw error; }
+    const next = verifySeries(entry.series, candidate.base);
+    if (entry.previous_sha256 !== (series?.sha256 ?? null) || next.rounds.length !== (series?.rounds.length ?? 0) + 1 || series && (next.series_id !== series.series_id || bindingHash(next.rounds.slice(0, -1)) !== bindingHash(series.rounds))) throw new Error("Immutable review round does not extend its exact predecessor");
+    series = next;
+    await assertCurrentInvocation();
+    await atomicJson(filename, series, {root: path.dirname(directory)});
+  }
   series ??= {schema: "my-crm.oracle-series/v1", series_id: randomUUID(), base_commit: candidate.base, rounds: []};
   const previous = series.rounds.at(-1) ?? null;
   // Proposal records may change during an in-scope repair. Preserve series
@@ -483,13 +496,17 @@ export async function saveRound(context, response, assessed, {error = null, obse
   const series = {...context.series, rounds: [...context.series.rounds, round]};
   series.sha256 = seriesDigest(series);
   await beforePublish?.(series);
+  await assertCurrentInvocation();
+  const journal = path.join(path.dirname(context.filename), "rounds", context.series.base_commit, `${context.public.round}.json`);
+  await writeMetadataFile(journal, `${JSON.stringify({previous_sha256: context.series.sha256 ?? null, series}, null, 2)}\n`, {flag: "wx"}, {root: context.metadataRoot});
+  await assertCurrentInvocation();
   await atomicJson(context.filename, series, {root: context.metadataRoot});
   return series;
 }
 
 export const reviewSeriesPolicy = [
   "Owner workflow, 2026-10-21: Confirm current governing instructions first and read each current authority once. Make one complete assessment pass over each unvalidated commit or batched range; return all findings together. Ordinary direct commits and repair commits require no approval or Oracle trailer. Supporting_coverage preserves prior complete observations across instruction/control changes with eligibility NONE; independently assess changed criteria and missing/affected paths, emit fresh coverage and retain valid unchanged tests. Every product family member executes its entire validation lifecycle concurrently with the other changed members. Validation and delivered checkpoints are distinct; unchanged repeated shipments execute no validation, build, version increment, deployment or publication.",
-  "Owner review direction, 2026-10-17: Source work by every implementation and author continues during review and after INCOMPLETE or ERROR. Impose no source-file or code-line lock, checkout freeze or work pause. Include and validate every arrived change in the integrated current candidate. The private publication-state lock serializes reviewer records only. Inspect path_dispositions alongside changed_since_previous (actual prior attempted-snapshot delta) and pending_changed_paths (cumulative repair delta). Hash equality or an absent graph edge supplies no proof of semantic independence; investigate uncertain dependencies narrowly and explain expanded coverage. State each path's reviewed behavior, criteria, source/configuration dependencies, result evidence and finding identities.",
+  "Owner review direction, 2026-10-17: Source work by every implementation and author continues during review and after INCOMPLETE or ERROR. Impose no source-file or code-line lock, checkout freeze or work pause. Include and validate every arrived change in the integrated current candidate. No long-held review-session or review-series reservation is taken. Atomic exclusive journal rounds and invocation comparisons protect publication. Inspect path_dispositions alongside changed_since_previous (actual prior attempted-snapshot delta) and pending_changed_paths (cumulative repair delta). Hash equality or an absent graph edge supplies no proof of semantic independence; investigate uncertain dependencies narrowly and explain expanded coverage. State each path's reviewed behavior, criteria, source/configuration dependencies, result evidence and finding identities.",
   "observed_assessments retains raw schema-valid ERROR-attempt observations under their original tree, dependency witnesses, original response hash and actual execution status. Its reported verdict describes only the original raw response. Intact original response files are automatically rebound as supporting evidence; missing or changed custody is explicit. These records create no eligible coverage, passing aggregate, native witness or approval. Independently compare actual current source, consumed dependencies, criteria and evidence, then emit fresh re-attested coverage and stable findings where applicable. Account for every retained raw finding through explicit OPEN or RESOLVED resolution evidence; independent examination may establish, repair or dismiss an observed issue without promoting its original status. Preserve every original status and explain concrete changed-identity reasons. Finish with the independent decision for the entire exact current candidate.",
   "Initially unknown unsafe or unbindable raw source claims retain stable IDs as UNAVAILABLE scope, with no external reads, source identity or coverage. Independently disposition every unavailable_sources entry in scope_dispositions with its exact path, disposition UNAVAILABLE and current scope evidence, and separately resolve each retained raw finding. Never invent original source presence or promote raw coverage. Previously bound source becoming unsafe remains an execution ERROR. Current prepared source bindings control assessment; historical context supplied as evidence supplies no replacement source manifest. A source also supplied as evidence retains full source mode and ancestor custody.",
   "Authoritative execution policy: The initial assessment completes the full relevant scope and consolidates all established actionable findings. Followup starts with the actual source/control delta, then affected dependencies, open findings and unfinished coverage. Mechanical guard invalidation requires independent applicability checks and new re-attestation of sealed unchanged facts; it does not by itself require rereading all source or authority or rerunning tests. Original passing-case support from FAILED or ERROR aggregates, strict-ineligible native records or historical logs can support independently verified unchanged behavior; retain every original status and scope and never promote native eligibility. Absence of a current green aggregate or being outside the preverified subset is never an execution reason. Before any command, name the concrete changed consumed dependency or new uncovered behavior being checked and include that reason in the result. Use compact context projections; consult full original records or source only for a specific unresolved fact. Fresh exact-candidate, authentication and public-API request decisions remain mandatory. Assess actual protected deployment effects separately; missing human deployment authority never blocks technical assessment, receipt or commit.",

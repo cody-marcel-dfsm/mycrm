@@ -144,7 +144,7 @@ function policyConstruction(source, names, promptCount = 0, externalNames = []) 
       if (root) { guarded.add(target); allowed.add(match.index + match[0].indexOf(target)); aliases[target] = value; aliasRoots[target] = aliasRoots[root] ?? root; expanded = true; }
     }
   }
-  const readMethods = new Set(["JSON.stringify", "JSON.parse", "Object.keys", "Object.values", "Object.entries", "Object.fromEntries", "Object.hasOwn", "Object.freeze", "process.cwd", "process.once", "process.removeListener", "process.stdout.write", "process.stderr.write", "process.argv.slice", "path.isAbsolute", "path.join", "path.relative", "path.resolve", "path.dirname", "path.basename"]);
+  const readMethods = new Set(["JSON.stringify", "JSON.parse", "Object.keys", "Object.values", "Object.entries", "Object.fromEntries", "Object.hasOwn", "Object.freeze", "process.cwd", "process.once", "process.on", "process.removeListener", "process.stdout.write", "process.stderr.write", "process.argv.slice", "path.isAbsolute", "path.join", "path.relative", "path.resolve", "path.dirname", "path.basename"]);
   const calls = [...masked.matchAll(/\b(Object\.(?:assign|defineProperty|defineProperties)|Reflect\.(?:set|deleteProperty)|[A-Za-z_$][\w$]*)\s*\(/g)].map((call) => {
     const body = expression(source, call.index + call[0].length, ")");
     const receiver = masked.slice(0, call.index).match(/([A-Za-z_$][\w$]*(?:\.[A-Za-z_$][\w$]*)*)\.$/)?.[1];

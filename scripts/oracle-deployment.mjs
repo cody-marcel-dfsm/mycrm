@@ -4,7 +4,7 @@ import {promisify} from "node:util";
 import {fileURLToPath} from "node:url";
 import path from "node:path";
 import process from "node:process";
-import {bindingHash, evidenceBinding, metadataDirectory, readMetadataFile, writeMetadataFile} from "./oracle-inputs.mjs";
+import {bindingHash, evidenceBinding, metadataDirectory, readMetadataFile, writeMetadataFile, assertPublishedInvocation} from "./oracle-inputs.mjs";
 import {readValidationProofs} from "./oracle-validation.mjs";
 
 const execute = promisify(execFile);
@@ -216,6 +216,7 @@ export async function pendingDeploymentEffects(plan, root = process.cwd()) {
 export async function deploymentPlan({root = process.cwd(), reference = "HEAD", requireClean = true} = {}) {
   const current = await committedReceipt(root, reference);
   const {owner, value} = await directory(root);
+  await assertPublishedInvocation(current.receipt.invocation, value, owner);
   if ((await readBaseline(value, owner)).commit !== current.receipt.deployment_baseline_commit) throw new Error("Deployment candidate differs from the immutable adoption baseline");
   if (requireClean && (await git(root, ["status", "--porcelain=v1", "--untracked-files=all"]) || await git(root, ["rev-parse", "HEAD^{tree}"]) !== current.tree)) throw new Error("Deployment requires the complete clean canonical source matching the reviewed target tree");
   const history = await historyBetween(root, current.receipt.deployment_baseline_commit, current.commit, new Map(), current.receipt);

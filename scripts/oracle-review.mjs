@@ -6,7 +6,7 @@ import path from "node:path";
 import process from "node:process";
 import {promisify} from "node:util";
 import {selectedSettings} from "./codex-child-model.mjs";
-import {atomicJson, withOracleRun, captureInputs, assertInputsMatch, preparedEvidence, bindingHash, pathCustody, metadataDirectory, readMetadataFile, writeMetadataFile, removeMetadataFile} from "./oracle-inputs.mjs";
+import {atomicJson, withOracleRun, captureInputs, assertInputsMatch, preparedEvidence, bindingHash, pathCustody, metadataDirectory, readMetadataFile, writeMetadataFile, removeMetadataFile, currentInvocation, assertCurrentInvocation, assertPublishedInvocation} from "./oracle-inputs.mjs";
 import {prepareSeries, reviewSnapshot, assessRound, saveRound, verifySeries, inheritObservedEvidence, observationSourcePaths, reviewSeriesPolicy, reviewSeriesSchemaProperties, seriesFindingSchema} from "./oracle-series.mjs";
 import {environmentHash, executionEnvironment, executableBinding, readValidationProofs, assertValidationProofsMatch, inheritNativeEvidence, validationDigest, fileMetadata} from "./oracle-validation.mjs";
 import Ajv from "ajv";
@@ -32,8 +32,8 @@ function execOracle(args, run, effort) {
     child.stdout.on("data", (chunk) => stdout.push(chunk));
     child.stderr.on("data", (chunk) => stderr.push(chunk));
     let interrupted = false;
-    const cancel = () => { interrupted = true; child.kill("SIGTERM"); };
-    process.once("SIGINT", cancel); process.once("SIGTERM", cancel);
+    const cancel = () => { if (interrupted) return; interrupted = true; child.kill("SIGTERM"); };
+    process.on("SIGINT", cancel); process.on("SIGTERM", cancel);
     child.once("error", reject);
     child.once("close", async (code, signal) => {
       process.removeListener("SIGINT", cancel); process.removeListener("SIGTERM", cancel);
@@ -352,6 +352,7 @@ async function review(args = [], {run, phase}) {
       const currentProofs = await readValidationProofs({root: process.cwd(), directory, validation: inputs.validation});
       assertValidationProofsMatch(series.public.validation_proofs, currentProofs);
       assertInputsMatch(inputs, await capture());
+      await assertCurrentInvocation();
     }});
   } catch (error) {
     let observationError = null, execution = null, executionEvidence = null;
@@ -382,11 +383,11 @@ async function review(args = [], {run, phase}) {
   if (completedSeries.rounds.at(-1).repair_plan) process.stdout.write(`ORACLE_REPAIR_PLAN=${JSON.stringify(completedSeries.rounds.at(-1).repair_plan)}\n`);
   if (response.synthesis) process.stdout.write(`ORACLE_REPAIR_SYNTHESIS=${response.synthesis}\n`);
   if (response.review_status === "INCOMPLETE") { process.exitCode = 1; return response; }
-  const receipt = {schema: "my-crm.oracle-approval/v2", ...reviewerRecord, input_binding: inputs, proposal_record_sha256: proposalRecord.record_sha256, repository: "my-crm", reviewed_tree: candidate.tree, base_commit: candidate.base, ...(candidate.commit ? {candidate_commit: candidate.commit, deployment_history_base_commit: candidate.parent} : {}), ...response, deployment_baseline_commit: deployment.baseline, deployment_history_sha256: deployment.sha256, deployment_history_status: deployment.status, recovered_deployment_commits: deployment.recovered_commits, review_series_sha256: completedSeries.sha256, review_series_id: completedSeries.series_id, review_round: series.public.round, validation_evidence: validationEvidence, requested_validation_evidence: requestedValidationEvidence, inherited_validation_evidence: inherited.evidence, owner_approval_evidence: ownerApprovalEvidence};
+  const receipt = {schema: "my-crm.oracle-approval/v2", ...reviewerRecord, input_binding: inputs, proposal_record_sha256: proposalRecord.record_sha256, repository: "my-crm", invocation: currentInvocation(), reviewed_tree: candidate.tree, base_commit: candidate.base, ...(candidate.commit ? {candidate_commit: candidate.commit, deployment_history_base_commit: candidate.parent} : {}), ...response, deployment_baseline_commit: deployment.baseline, deployment_history_sha256: deployment.sha256, deployment_history_status: deployment.status, recovered_deployment_commits: deployment.recovered_commits, review_series_sha256: completedSeries.sha256, review_series_id: completedSeries.series_id, review_round: series.public.round, validation_evidence: validationEvidence, requested_validation_evidence: requestedValidationEvidence, inherited_validation_evidence: inherited.evidence, owner_approval_evidence: ownerApprovalEvidence};
   receipt.receipt_sha256 = receiptSha256(receipt);
   // The final exact-input check precedes series publication above. Live receipt
   // verification independently rejects source movement after that observation.
-  await phase("publication_ms", async () => { await archiveTechnicalReceipt(receipt, directory); await atomicJson(await receiptPath(), receipt); if (receipt.verdict === "APPROVED") await recordValidatedCommit({receipt}); });
+  await phase("publication_ms", async () => { await assertCurrentInvocation(); await archiveTechnicalReceipt(receipt, directory); await assertCurrentInvocation(); await atomicJson(await receiptPath(), receipt); await assertCurrentInvocation(); if (receipt.verdict === "APPROVED") await recordValidatedCommit({receipt}); });
   process.stdout.write(`ORACLE_VERDICT=${receipt.verdict} tree=${receipt.reviewed_tree} receipt=${receipt.receipt_sha256}\n`);
   if (receipt.verdict !== "APPROVED") process.exitCode = 1;
   return receipt;
@@ -534,6 +535,7 @@ async function reviewProposal(request, args = [], {run, phase}) {
   } finally { await phase("postcheck_ms", async () => assertInputsMatch(inputs, await capture())); }
   const record = {
     schema: "my-crm.oracle-proposal/v2",
+    invocation: currentInvocation(),
     ...reviewerRecord,
     input_binding: inputs,
     repository: "my-crm",
@@ -545,7 +547,7 @@ async function reviewProposal(request, args = [], {run, phase}) {
     review: response,
   };
   record.record_sha256 = proposalRecordSha256(record);
-  await phase("publication_ms", async () => { assertInputsMatch(inputs, await capture()); await atomicJson(await proposalPath(), record); });
+  await phase("publication_ms", async () => { assertInputsMatch(inputs, await capture()); await assertCurrentInvocation(); await atomicJson(await proposalPath(), record); });
   process.stdout.write(`${response.summary}\nORACLE_PROPOSAL=${response.verdict} record=${record.record_sha256}\n`);
   if (response.verdict !== "APPROVED") process.exitCode = 1;
   return response;
@@ -553,6 +555,7 @@ async function reviewProposal(request, args = [], {run, phase}) {
 
 async function verifyLiveReceipt(tree) {
   const receipt = verifyReceipt(await readReceipt(), tree);
+  await assertPublishedInvocation(receipt.invocation, await oracleDirectory());
   if (receipt.schema !== "my-crm.oracle-approval/v2" || !receipt.input_binding) throw new Error("Legacy Oracle receipt requires a fresh input-bound review; historical commit stamps remain valid");
   if (typeof receipt.reviewer?.model !== "string" || !receipt.reviewer.model.trim() || !["read-only", "danger-full-access"].includes(receipt.reviewer.sandbox) || receipt.reviewer.ephemeral !== true || receipt.reviewer.ignore_user_config !== true) throw new Error("Oracle reviewer provenance is invalid");
   if (!Object.hasOwn(receipt.reviewer, "reasoning_effort") || receipt.reviewer.reasoning_effort !== null && (typeof receipt.reviewer.reasoning_effort !== "string" || !receipt.reviewer.reasoning_effort.trim())) throw new Error("Oracle reviewer reasoning effort provenance is invalid");
@@ -621,6 +624,7 @@ async function authorizeDeployment(reference, args, {run, phase}) {
 
 async function verifyProposal() {
   const record = await readProposalRecord();
+  await assertPublishedInvocation(record.invocation, await oracleDirectory());
   // Explicit current-proposal admission is strict. Completed review separately
   // retains the sealed proposal as scope evidence and assesses current criteria.
   verifyProposalRecord(record, await git(["rev-parse", "HEAD"]));

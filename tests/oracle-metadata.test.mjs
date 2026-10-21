@@ -87,7 +87,7 @@ test("safe owner/store/file aliases and source-mode ERROR retention remain usabl
   await assert.rejects(lstat(path.join(actual, "run.lock")), {code: "ENOENT"});
 });
 
-test("existing file, alias and FIFO directory-lock entries remain busy without IO", async (t) => {
+test("abandoned legacy session markers never reserve review or receive IO", async (t) => {
   for (const kind of ["file", "alias", "fifo"]) await t.test(kind, async (t) => {
     const {root, outside} = await fixture(t), directory = path.join(root, "oracle");
     await mkdir(directory);
@@ -95,7 +95,9 @@ test("existing file, alias and FIFO directory-lock entries remain busy without I
     if (kind === "file") await writeFile(lock, "original");
     if (kind === "alias") await symlink(outside, lock);
     if (kind === "fifo") await execute("mkfifo", [lock]);
-    await assert.rejects(withOracleRun(directory, async () => assert.fail("No admission"), {ownerRoot: root}), /busy/);
+    let admitted = false;
+    await withOracleRun(directory, async () => { admitted = true; }, {ownerRoot: root});
+    assert.equal(admitted, true);
     assert.deepEqual(await readdir(outside), []);
     if (kind === "file") assert.equal(await readFile(lock, "utf8"), "original");
   });
