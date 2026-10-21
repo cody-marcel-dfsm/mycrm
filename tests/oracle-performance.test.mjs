@@ -1267,3 +1267,19 @@ test("checkpoint custody rejects changed receipts, stale source and malformed de
   assert.deepEqual(await readFile(checkpointFile), checkpointBytes);
   assert.equal(checkpointDigest(original.record), original.record.checkpoint_sha256);
 });
+
+test("late older approval cannot overwrite a newer rejected concurrent attempt", async (t) => {
+  const {repo, root, env, prepare, git} = await fixture(t); await prepare();
+  const ready = path.join(root, "older-ready"), args = [launcher, "review"];
+  const older = spawn(process.execPath, args, {cwd: repo, env: {...process.env, ...env, CODEX_THREAD_ID: "", CODEX_SELECTED_MODEL: "synthetic-test-model", CODEX_SELECTED_REASONING_EFFORT: "high", ORACLE_DELAY: "700", ORACLE_READY: ready}, stdio: ["ignore", "pipe", "pipe"]});
+  let stderr = ""; older.stderr.on("data", (chunk) => { stderr += chunk; }); older.stdout.resume();
+  const stopped = new Promise((resolve, reject) => { older.once("error", reject); older.once("close", resolve); });
+  await waitFor(ready);
+  await assert.rejects(command(repo, ["review"], {...env, ORACLE_SOURCE_FINDING: "1"}), /Command failed/);
+  assert.equal(await stopped, 1, stderr);
+  const current = JSON.parse(await readFile(path.join(repo, ".git/oracle/approval.json")));
+  assert.equal(current.verdict, "REJECTED");
+  const history = JSON.parse(await readFile(path.join(repo, ".git/oracle/series", `${await git("rev-parse", "HEAD")}.json`)));
+  assert.equal(history.rounds.at(-1).verdict, "REJECTED");
+  assert.equal(history.rounds.length, 1);
+});

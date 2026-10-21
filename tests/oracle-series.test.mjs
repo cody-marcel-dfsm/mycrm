@@ -548,3 +548,18 @@ test("instruction changes retain sealed complete supporting coverage while requi
   assert.throws(() => assessRound(current, response({coverage: [], reused_coverage: ["a.mjs", "b.mjs"]}), []), /reused coverage is invalid/);
   await record(current, response({coverage: current.public.required_paths.map((name) => coverage(name))}));
 });
+
+test("exclusive round publication retains the first result when optimistic publishers collide", async (t) => {
+  const {prepare, record, inputs, directory} = await fixture(t);
+  const older = await prepare(), newer = await prepare();
+  const first = response({verdict: "REJECTED", findings: [finding()]});
+  await assert.rejects(saveRound(older, response(), assessRound(older, response(), inputs.validation), {beforePublish: () => record(newer, first)}), /EEXIST/);
+  const current = JSON.parse(await readFile(older.filename));
+  assert.equal(current.rounds.length, 1); assert.equal(current.rounds[0].verdict, "REJECTED");
+  const replay = await prepare(); assert.equal(replay.public.round, 2);
+  const journal = path.join(directory, "series", "rounds", "base-a", "1.json");
+  assert.equal(JSON.parse(await readFile(journal)).series.sha256, current.sha256);
+  await rm(older.filename);
+  const recovered = await prepare();
+  assert.equal(recovered.series.sha256, current.sha256); assert.equal(recovered.public.round, 2);
+});
