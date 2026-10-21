@@ -1375,10 +1375,11 @@ test("live parent catches batched committed movement and preserves actual ERROR 
 test("unchanged-content commits retain valid coverage while the parent approves the exact new commit", async (t) => {
   const {repo, root, env, git, prepare} = await fixture(t); await prepare(); await git("branch", "-m", "main");
   await git("-c", "user.name=Synthetic", "-c", "user.email=synthetic@example.invalid", "commit", "-qm", "Initial current source");
-  await command(repo, ["review"], env);
+  const ready = path.join(root, "ready"), runEnv = {...env, ORACLE_DELAY: "700", ORACLE_READY: ready, ORACLE_REUSE_COVERAGE: "1"};
+  await command(repo, ["review"], runEnv); await rm(ready);
   const tree = await git("rev-parse", "HEAD^{tree}");
   await git("-c", "user.name=Synthetic", "-c", "user.email=synthetic@example.invalid", "commit", "--allow-empty", "-qm", "First history-only commit");
-  const ready = path.join(root, "ready"), owner = runningReview(repo, {...env, ORACLE_DELAY: "700", ORACLE_READY: ready, ORACLE_REUSE_COVERAGE: "1"});
+  const owner = runningReview(repo, runEnv);
   await waitFor(ready);
   await git("-c", "user.name=Synthetic", "-c", "user.email=synthetic@example.invalid", "commit", "--allow-empty", "-qm", "Arrived history-only commit");
   const result = await owner.done; assert.equal(result.code, 0, result.stderr);
@@ -1386,6 +1387,30 @@ test("unchanged-content commits retain valid coverage while the parent approves 
   const current = await readValidatedCheckpoint(repo);
   assert.equal(current.record.last_validated_commit, await git("rev-parse", "HEAD"));
   assert.equal(current.record.tree, tree); assert.ok(current.receipt.reused_coverage.includes("candidate.txt"));
+});
+
+test("late commit during native checkpoint finalization continues before reporting current readiness", async (t) => {
+  const {repo, root, env, git, prepare} = await fixture(t); await prepare(); await git("branch", "-m", "main");
+  await git("-c", "user.name=Synthetic", "-c", "user.email=synthetic@example.invalid", "commit", "-qm", "Prepared source before finalization");
+  const original = await git("rev-parse", "HEAD"), trigger = path.join(root, "late-commit");
+  const actualGit = (await execute("which", ["git"])).stdout.trim(), shim = path.join(root, "bin/git");
+  await writeFile(shim, `#!${process.execPath}
+const fs=require('node:fs'), cp=require('node:child_process'), path=require('node:path');
+const trigger=${JSON.stringify(trigger)}, actual=${JSON.stringify(actualGit)};
+if(fs.existsSync(trigger) && fs.existsSync(path.join(process.cwd(),'.git/oracle/approval.json')) && process.argv.slice(2).join(' ')==='status --porcelain=v1 --untracked-files=all') {
+ fs.unlinkSync(trigger);
+ cp.execFileSync(actual,['-c','user.name=Synthetic','-c','user.email=synthetic@example.invalid','commit','--allow-empty','-qm','Commit during actual checkpoint finalization'],{cwd:process.cwd()});
+}
+try { process.stdout.write(cp.execFileSync(actual,process.argv.slice(2),{cwd:process.cwd()})); }
+catch(e) { if(e.stderr) process.stderr.write(e.stderr); process.exitCode=e.status??1; }
+`); await chmod(shim, 0o700);
+  const ready = path.join(root, "ready"), owner = runningReview(repo, {...env, ORACLE_DELAY: "600", ORACLE_READY: ready});
+  await waitFor(ready); await writeFile(trigger, "Commit on the actual checkpoint source check.\n");
+  const result = await owner.done; assert.equal(result.code, 0, result.stderr); assert.match(result.stdout, /CONTINUING/);
+  const {readValidatedCheckpoint, shipmentPlan} = await import("../scripts/shipment-state.mjs");
+  const checkpoint = await readValidatedCheckpoint(repo), head = await git("rev-parse", "HEAD");
+  assert.notEqual(head, original); assert.equal(checkpoint.record.last_validated_commit, head);
+  assert.equal((await shipmentPlan({root: repo})).action, "DELIVER");
 });
 
 test("attached evidence is independently consumed by the same parent before current completion", async (t) => {

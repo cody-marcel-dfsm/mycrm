@@ -121,10 +121,13 @@ export async function observeReviewController(record, {root = process.cwd(), arg
     seal({controller_id: record.id, args, received_at: new Date().toISOString()}), {root: state.owner, exclusive: true});
   process.stdout.write(`ORACLE_REVIEW=ATTACHED controller=${record.id} pid=${record.process.pid}\n`);
   for (;;) {
-    const current = await inspect(record, state);
+    const original = await optional(path.join(state.directory, `${String(record.generation).padStart(8, "0")}.json`), state.owner);
+    if (!original || original.sha256 !== record.sha256) throw new Error("Attached review controller observation changed");
+    const current = await inspect(original, state);
     if (current.state === "TERMINAL") {
       if (current.outcome.error) throw new Error(`Attached review controller failed: ${current.outcome.error.message}`);
       if (current.outcome.result?.verdict === "REJECTED" || current.outcome.result?.review_status === "INCOMPLETE") process.exitCode = 1;
+      process.stdout.write(`ORACLE_REVIEW=COMPLETED controller=${record.id} outcome=${current.outcome.outcome} receipt=${current.outcome.result?.receipt_sha256 ?? "NONE"}\n`);
       return current.outcome.result;
     }
     if (current.state !== "RUNNING") throw new Error("Attached review controller process ended without a terminal outcome; original observations retained");

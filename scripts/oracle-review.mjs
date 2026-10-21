@@ -211,7 +211,7 @@ async function assertExactStagedCandidate() {
     }
     if (await git(["branch", "--show-current"]) !== "main") throw new Error("Committed Oracle review requires canonical main");
     const files = await git(["diff", "--name-only", base, commit]);
-    if (!files) throw new Error("Oracle review requires unvalidated commits or a non-empty staged candidate");
+    if (!files && commit === base) throw new Error("Oracle review requires unvalidated commits or a non-empty staged candidate");
     return {tree: await git(["rev-parse", "HEAD^{tree}"]), base, commit, parent: await git(["rev-parse", "HEAD^"]), files: files.split("\n")};
   }
   const [tree, base] = await Promise.all([git(["write-tree"]), git(["rev-parse", "HEAD"])]);
