@@ -1,311 +1,143 @@
 ---
 name: ship-it
-description: Create the next MyCRM release version, validate and review the complete current worktree, publish it through a release pull request, install the merged plugin, and verify deployment. Use when the user says “ship it,” “send it,” or explicitly asks to release MyCRM.
+description: Ship outstanding MyCRM commits through bootstrap, direct Git preparation, independent validation, and exact validated-commit delivery. Repeated unchanged shipments finish without a new release.
 ---
 
 # Ship It
 
-## Model inheritance
+Run in canonical `/Users/cody/Development/Projects/MyCRM` on `main`. Read the
+current governing instructions first and use the independent local Oracle
+commands. The shipping agent never classifies authentication impact or adopts
+`.agents/skills/oracle/SKILL.md`.
 
-Spawn native agents without a model override so they inherit the current task's
-selected model. Oracle CLI launchers pass that model explicitly to isolated
-`codex exec` processes and stop if it is unknown. Do not silently select a
-different model during release recovery.
+## Clock and coordination
 
-## API-version request requirement
+Start timing at the original user release instruction, including time before the
+first tool call. Preserve that timestamp across retries and continuation; record
+an unavailable original timestamp honestly. Record each step's start/end and
+elapsed time in one local shipment record. Bootstrap is under 120 seconds; the
+complete review lifecycle target is 180 seconds and the complete release target
+is 300 seconds from the original instruction. Record a breach and continue the
+authorized work while correcting its concrete cause.
 
-An API-version change requires the user's explicit request for that exact
-change. Approval of implementation or shipment supplies no version-change
-request. Keep behavior fixes and all implemented improvements in the existing
-API version unless explicitly requested. Package release versions and
-independent authentication-envelope identifiers are separate. Preserve exact
-request evidence for independent proposal and completed-tree assessment.
+The Projects agent coordinates member ownership, progress and evidence. During a
+family shipment, run this member's entire step 3 concurrently with step 3 in every
+other family member that has unvalidated commits. Each member owns its lint,
+tests, independent review, repair commits, revalidation and checkpoint. A member
+with no new commits performs no validation or release work. Sequence deployment
+only for a concrete dependency between the prepared releases.
 
-## Technical review and protected deployment authority
+## 1. Bootstrap
 
-Complete independent technical proposal/source review, receipts, commits and
-review-branch publication without human approval gates. The direct owner rule
-of 2026-10-18 requires human authority only for actual specifically protected
-deployment effects. Broad architecture, public API-contract, authentication or
-authorization labels, filenames, ordinary corrections and compatible repairs
-alone create no requirement. Missing human permission is a nonblocking deployment
-warning; technical defects and the explicit public API-version REQUEST gate retain
-their existing outcomes.
+1. Read `AGENTS.md`, relevant current Vault authorities and `README.md` release
+   guidance once. Retain loaded instruction identities; reread only changed or
+   missing instructions. Reuse the coordinator's once-only family inventory.
+2. Use canonical main, preserve every author's staged/unstaged/untracked work,
+   existing stashes and recovery sources. Fetch the configured default once when
+   creating the inventory, record the base and semantically integrate newer
+   remote work. Recheck only concrete freshness before final publication.
+3. Run `npm run shipment:plan -- --json`. Its native actions are `PREPARE`,
+   `VALIDATE`, `DELIVER` and `NO_CHANGES`. Clean main with unpublished or
+   unvalidated commits is work. Missing checkpoint state supplies no approval.
+   With no commits beyond the configured published ref and no outstanding work,
+   `NO_CHANGES` creates no approval and stops with zero tests, review, build,
+   version increment, deployment, installation or publication.
+4. `HEAD == last_validated_commit` skips validation. A verified already-delivered
+   candidate is `NO_CHANGES`; a validated undelivered candidate resumes `DELIVER`
+   using its existing immutable receipt and release version.
 
-Before implementation, submit concise Problem, Cause and Recommended change
-sections through `npm run oracle:proposal`. Continue technically approved work
-within the user's task authorization automatically. Record exact credential-trust,
-permission-authority, tenant-isolation or incompatible-contract effects in the
-native technical receipt. The owner-local `npm run oracle:deployment -- <ref>`
-checks the full sealed release history, effective effects and exact human authority
-before main promotion, release-artifact publication or local installation.
+## 2. Prepare
 
-If a specific deployment decision is missing, finish the source and technical
-assessment first, then present only that exact deployment decision under Problem,
-Cause and Recommended change, with no more than three sentences per section.
-Reuse an existing applicable direct request or approval. Later permission is
-verified through `npm run oracle:authorize-deployment -- <ref> --owner-approval
-@<exact-evidence-file>` and stored separately; preserve the technical receipt and
-unchanged coverage. Never request human approval to perform or finish review.
+Prepare means direct Git commits. Use Git CLI for Git-only work; create no Git
+agent or guardian. Commit every authored file, including earlier authors' work,
+independently of review, approval, receipt or Oracle trailers. Keep secret and
+source hygiene. Never stash, discard, defer or omit authored work to make status
+clean; generated files follow the canonical artifact policy.
 
-Complete the MyCRM release loop inside
-the My CRM repository root.
+For a genuinely new release candidate, choose one package patch increment unless
+the user requests another package version. Keep `package.json`, `package-lock.json`,
+`plugins/my-crm/.codex-plugin/plugin.json`,
+`plugins/my-crm/.claude-plugin/plugin.json` and
+`plugins/my-crm/.bos-product.json` consistent, then commit the complete candidate.
+Persist the prepared version/commit and reuse them on continuation. A package
+version remains distinct from a public API version; preserve the exact explicit
+user request requirement for any public API-version change.
 
-## Invocation authorization
+Use the normal hooks with `git add -A` and `git commit`. Vault and generated
+`dist/` output remain private/ignored. Run `npm run vault:sync` after meaningful
+Vault changes. A technical review governs release readiness.
 
-Within this skill, `$ship-it`, “ship it,” and “send it” are the user's explicit
-and final authorization for all of these MyCRM-scoped actions:
+## 3. Validate
 
-- create the next semantic release version and deterministic candidate;
-- correct in-scope release defects and obtain MyCRM Oracle approval;
-- commit the complete approved Git-visible worktree;
-- push the release branch to `https://github.com/cody-marcel-dfsm/mycrm.git`;
-- open and merge its pull request into `main` after required checks pass;
-- restore a clean, synchronized local `main`;
-- install or upgrade the merged plugin through supported Codex controls; and
-- execute read-only native acceptance against the installed BOS dependency.
+Run the entire lifecycle in parallel with the other changed family members.
 
-Start immediately and ask no conversational approval questions for those
-actions. The authorization is prospective and remains attached to the final
-reviewed version, branch, commit, package digest, and in-scope corrections
-created by this invocation. Host permission controls may collect their own
-approval.
+1. Submit the concise Problem, Cause and Recommended change through
+   `npm run oracle:proposal -- "<proposal>"` before implementation, with at most
+   three concise sentences per section. A sealed
+   in-scope proposal remains supporting history through commits and instruction
+   changes; the current independent reviewer reassesses affected criteria.
+2. Validate the exact committed range. `npm run oracle:review` accepts clean
+   canonical main and reviews the proposal-base-to-current-commit range; staged
+   compatibility mode remains available. Make one complete pass per unvalidated
+   commit or batched range, covering real entrypoints, dependencies, consumers,
+   publication and failure/recovery paths. Return every established finding
+   together with stable identities, reproduction and acceptance evidence.
+3. Establish the complete integrated `npm test` baseline once. Capture reusable
+   execution with `npm run oracle:validate -- -- npm test`; for a focused check,
+   repeat `--input <exact-project-file>` for its complete consumed dependency
+   closure before `-- <command>`. Capture build and package checks as needed.
+   Supply the emitted original `--validation @<record>` to `oracle:review`.
+4. Preserve genuine prior review observations and passing source/dependency/
+   configuration/environment/output-bound tests. Changed governing instructions
+   require fresh assessment of affected criteria and missing coverage. Inspect
+   `supporting_coverage` when global eligibility changes; confirm applicability
+   and emit current coverage without blanket source rereads or test reruns.
+5. Repair the full finding set, commit repairs directly, and validate only new,
+   missing or affected committed work and checks. Source work continues during
+   review. `INCOMPLETE` and `ERROR` preserve verified checkpoints and continue
+   missing assessment. Two failed repair rounds require consolidated synthesis.
+6. Only a complete independent `APPROVED` decision atomically advances
+   `last_validated_commit`. Its detached receipt binds the exact committed SHA,
+   tree and history, including inherited protected effects. Recheck the current
+   candidate before the final verdict and automatically assess arrived commits.
 
-The invocation grants no authority to mutate BOS Service, BOS Operations
-Center, provider data, production infrastructure, or another repository. Live
-destructive acceptance remains separately authorized for exact isolated
-records and effects.
+## 4. Deploy
 
-## Product and repository boundary
+Use `last_validated_commit` as the release candidate and approval identity. Build,
+publish and install that exact SHA. Reuse valid tests and deterministic build
+outputs from step 3; rerun only checks with changed consumed inputs or missing
+coverage. Source movement returns only the newly unvalidated work to step 3.
 
-- MyCRM is an independent external BOS plugin. Use only this repository,
-  committed public contracts, official host documentation, and authenticated
-  public endpoints.
-- Never inspect or depend on sibling private source. Record a missing public
-  capability in `Vault/docs/platform-gaps.md`.
-- Preserve the one BOS-owned authenticated connection. MyCRM declares no MCP,
-  OAuth, token, credential, app, database, or provider binding.
-- Never patch an installed plugin cache, personal skill directory, or released
-  version in place. Build, publish, and install a new immutable version.
-- `Vault/` is private and ignored. Update it when evidence or implementation
-  status changes, run `npm run vault:sync`, and never stage, commit, package, or
-  publish any Vault file.
+The release instruction authorizes the prepared release and ordinary in-scope
+repairs. Proceed without another conversational approval question. Preserve the
+independent exact public API-version request gate, specifically protected actual
+credential-trust/permission-authority/tenant-isolation/incompatible-contract
+runtime effects, authentication boundaries, existing idle/cost settings and new
+spending authorization. Broad architecture, public API-contract and authentication
+labels alone create no new approval gate. Technical review identifies effects; exact authority is
+checked immediately before a protected publication/install mutation.
 
-## Security gate
+Publish a `codex/release-v<version>` ref from the validated commit without switching
+canonical main. The remote is `https://github.com/cody-marcel-dfsm/mycrm.git`.
+Push, open its PR, wait for required checks and merge only the exact validated
+source. Use `npm run oracle:deployment -- <exact-ref>` before main/release
+promotion and `npm run install:reviewed` for supported native installation.
+The pre-push hook and maintainer install wrapper enforce exact receipt/effect
+admission. Preserve immutable historical stamped receipts alongside committed
+review checkpoints. Ordinary commits and source-review branch publication remain
+independent of review readiness.
 
-The shipping agent never classifies authentication impact or impersonates the
-Oracle. It invokes the independent local reviewer, which completes technical
-assessment and identifies actual protected deployment effects. The invocation
-supplies no new human authority for a specifically protected runtime effect.
-Review the maintained `Vault/docs/review-deployment-approval.md` design and tasks.
-MYCRM-AUTH-005 historical rollback authority remains relevant only to an actual
-effective protected rollback being deployed; it never blocks technical review or
-commit eligibility. Preserve product authentication and cost controls.
+After actual publication and supported installation verification, record the
+separate delivered SHA and artifact digest. The native install wrapper records
+this only for the exact validated candidate on published main. An already
+validated delivery retry performs only its pending delivery work. A repeated
+already-delivered candidate runs zero release actions. Never patch installed
+cache files or an existing immutable version.
 
-## Preflight
+MyCRM owns only its package/client; use this repository, published public
+contracts and authenticated endpoints. Preserve the BOS-owned shared connection
+and customer-identity isolation. Create no sibling source/build/runtime imports.
 
-1. Read `AGENTS.md`, relevant Vault designs and evidence, and the release
-   instructions in `README.md`. Never read or adopt
-   `.agents/skills/oracle/SKILL.md`; invoke the Oracle command when directed
-   below.
-2. Fetch the configured remote default branch, record its SHA, and resolve the
-   current branch, upstream, remotes, divergence from that default branch, and
-   complete staged, unstaged, untracked, renamed, and deleted status. Require
-   the push remote to resolve to
-   `https://github.com/cody-marcel-dfsm/mycrm.git`.
-3. Stop on merge, rebase, cherry-pick, conflicts, detached HEAD, ambiguous
-   targets, missing credentials, or branch protection that prevents the
-   governed workflow. Report the exact evidence and remedy declaratively.
-4. Treat every amended repository file as user-owned and in scope. Inspect all
-   files and preserve intent. Block credentials, private data, accidental large
-   artifacts, material correctness defects, and constitutional violations.
-5. When a dirty checkout is behind the remote default branch, preserve it
-   intact and integrate the remote semantically on canonical main. Account
-   for every amended file while reconciling its intended behavior with current
-   code; retain newer remote safeguards and stop when an overlap cannot be
-   resolved safely. Rerun affected tests and Oracle review. Never publish an
-   old tree wholesale. Re-fetch and compare with the recorded base before
-   final review and publication; integrate any new remote changes through the
-   repository's governed workflow and repeat affected gates.
-6. Never discard, reset, stash, or overwrite user work. Resolve safe in-scope
-   release failures and repeat the affected gates.
-7. Verify applicable exact authority for actual effective protected deployment
-   effects at main/release promotion and installation, after complete technical review.
-
-## Create the immutable release
-
-1. Work on canonical `main` throughout implementation, validation, review and
-   release. Publish a `codex/release-v<next-version>` ref from the approved commit
-   without switching the canonical checkout; never create a worktree.
-2. Default to a patch increment unless the user or compatibility policy calls
-   for another semantic version.
-3. Update the version consistently in `package.json`, `package-lock.json`,
-   `plugins/my-crm/.codex-plugin/plugin.json`,
-   `plugins/my-crm/.claude-plugin/plugin.json`, and
-   `plugins/my-crm/.bos-product.json`.
-4. Run `npm run build`. Treat `dist/my-crm` as ignored deterministic output and
-   never stage it.
-
-## Validate and review
-
-Run the strongest applicable repository gates, including:
-
-```bash
-npm test
-npm run release:check
-npm run install:verify
-git diff --check
-```
-
-The maintainer wrapper calls the public install:local helper only after exact
-source/effect admission. The public helper remains available from a fresh published
-checkout without private review metadata. Use `npm run install:reviewed` only after
-the versioned candidate is built and the
-installed BOS dependency is ready, then run `npm run install:verify`.
-
-Install the repository hooks with `npm run hooks:install`, stage the complete
-candidate with `git add -A`, confirm no Vault or generated output is staged,
-then call `npm run oracle:review`. The utility submits the exact staged tree and
-repeatable `--validation` evidence to the independent project-local Oracle.
-When exact owner-approval evidence applies, pass it once through
-`--owner-approval`; the Oracle alone determines whether it covers the staged
-change. The utility records a complete tree-bound decision and issues usable
-approval only for `COMPLETE` and `APPROVED`. Every mutation after approval
-invalidates the receipt.
-
-Preserve the launcher's private review-series records. The initial assessment
-finishes coverage of the complete candidate, callers, dependencies, boundaries
-and failure paths before returning consolidated actionable findings. Repair
-the full finding set together, retain stable finding IDs, and provide the
-reproduction, required behavior and acceptance-check evidence for each
-resolution. An `INCOMPLETE` assessment or process `ERROR` resumes unfinished
-coverage without creating a source rejection or approval.
-
-For each repair, inspect the changes since the previous candidate and affected
-dependencies. Stage the candidate and capture reusable successful checks through
-`npm run oracle:validate -- -- <command> [args]` for a complete-candidate baseline.
-For a focused repair check, use `npm run oracle:validate -- --input <file>
---input <another-file> -- <command> [args]`, repeating `--input` for the complete
-source, test, fixture, configuration and consumed authority dependency closure;
-package configuration, environment and executable bindings are included automatically.
-New scoped captures retain base/branch and reviewer authority, policy, proposal
-and owner identities separately as provenance. Unrelated changes to those facts
-preserve an unchanged command observation. Explicitly select each authority or
-policy file the command consumes; selected source/index/configuration/authority
-drift invalidates it. Existing records retain their original conservative scope.
-Pass the emitted native record
-unchanged through `oracle:review --validation`. This executes the command and
-retains original before/after inputs, executable, environment, outcome and
-output hashes. Existing raw logs remain readable evidence and never gain
-reusable status from current dependency labels. Reuse prior coverage and
-successful checks only after the
-independent reviewer verifies their complete dependency witnesses and supplied
-hash-bound file evidence, including source, tests, fixtures, configuration,
-tools and environment against the original recorded execution. Record why each
-invalidated result needs rerunning.
-A verified native pass on identical inputs fulfills that check's execution
-requirement. Retain its witness in the result and run additional checks only for
-an invalidated input, new behavior or a concrete coverage gap. Exact-tree
-receipt verification checks original evidence/output integrity across hook and
-CLI contexts without requiring their ambient environment to match a past run.
-Original passing-case output from a failed aggregate can support unaffected
-coverage when exact source, test, shared-fixture, configuration and environment
-inputs remain proven unchanged. Preserve the aggregate's FAILED outcome; an
-absent green aggregate alone supplies no reason to rerun passing cases. Declare
-the complete source, test, fixture and configuration closure for each new capture.
-Keep global controlling policy/schema distinct from per-observation Vault
-dependencies. The exact receipt binds every canonical authority; an unrelated
-status/design update invalidates its own coverage and declared dependents.
-The Oracle automatically retains and revalidates its original native execution
-records across follow-ups, even when a client omits reattaching them. It binds
-the verified originals and outputs into the effective current evidence manifest.
-Missing/tampered data invalidates the affected check with a concrete reason;
-owner/API approval evidence and unstructured legacy logs are never inferred.
-Additive exact owner metadata preserves unrelated source coverage. Native
-execution facts depend on actual declared inputs, configuration, environment
-and provenance; a declared owner-file dependency still invalidates on change.
-Every fresh complete receipt independently assesses actual protected effects;
-missing human deployment authority never blocks its technical verdict.
-Restage, sync the Vault after Vault changes, rerun affected validation and call
-the utility again. Shared behavior changes justify broader regression checks;
-establish the required complete integrated `npm test` baseline, retain verified
-unaffected observations and execute affected repair checks instead of repeating
-the identical complete suite after each repair. The reviewer
-classifies a late unchanged-code discovery as missed first-pass coverage and
-identifies a changed affected path for a repair-induced defect. After two
-unsuccessful repair rounds, reconcile all findings and one concrete repair
-plan before making the next implementation edits. The wrapper publishes this
-plan immediately with the second rejected follow-up and preserves it in review
-context; missing model prose creates no retry. In-scope repair proposals retain series
-history. Every resubmission still needs a fresh independent decision for the
-whole current candidate and an exact current receipt; reused evidence supplies
-no approval authority.
-
-When an assessment returns INCOMPLETE or ERROR, retain verified coverage and raw
-observations with their original candidate, dependencies, criteria, evidence and
-actual execution status. Continue the same review series against the next current
-candidate while all implementations and authors continue source work. Impose no
-source-file or code-line locks, checkout freezes or work pauses. Compare actual
-source movement and cumulative pending repairs, independently re-attest applicable
-observations, and examine new or affected scope. Collect consolidated findings
-and repair them together under the existing workflow. Every included change,
-including changes from other implementations, receives review and validation;
-final approval binds the entire exact current candidate.
-
-## Commit and publish
-
-1. Run `npm run oracle:verify` against the complete Oracle-approved staged
-   payload. Confirm no Vault file or ignored build output is staged and no
-   untracked or unstaged release input remains.
-2. Inspect `git diff --cached --stat` and `git diff --cached --check`. Create one
-   concise release commit. The hooks append and validate the exact-tree Oracle
-   stamp. Never amend, squash, rebase, force-push, skip hooks, forge an Oracle
-   stamp, or create an empty commit.
-3. Push the approved release ref to `origin` and open a pull request into `main`.
-   Review/source refs remain publishable with missing human deployment permission.
-   Include the version, behavior delivered, package digest, Oracle verdict, and
-   validation evidence.
-4. Wait for every required check. Correct in-scope failures on the same branch,
-   repeat validation and Oracle review after mutations, push, and wait again.
-5. Merge only when GitHub reports the pull request mergeable and all required
-   checks pass. Immediately before main promotion or release-artifact publication,
-   run `npm run oracle:deployment -- <exact-release-ref>`; stop only the protected
-   mutation if exact authority is missing. The pre-push hook enforces the same
-   admission for main and semantic release tags. Verify remote main contains the release.
-6. Remain on canonical main, fast-forward from origin/main, confirm a clean
-   synchronized checkout, verify the release ref is merged, and delete only an
-   owned merged release ref through the safe merged-ref workflow.
-
-The repository shipment remains incomplete while any release commit exists
-only locally. Require local `main` and `origin/main` to resolve to the same
-commit and verify that the complete release branch is reachable from remote
-`main` before reporting completion.
-
-## Verify the merged installation
-
-1. Build the merged release again and verify its manifest and content digest.
-2. Install or upgrade with `npm run install:reviewed`, then run
-   `npm run install:verify`. Never uninstall a working version first and never
-   rewrite plugin-cache files.
-3. Re-run the installed read-only smoke path against the authenticated BOS
-   connection and confirm it matches the pre-publication acceptance evidence.
-   Require successful MCP discovery, operation-scoped Describe, exact
-   advertised deterministic HTTPS invocation, public response-schema
-   assertions, source provenance, and freshness. Server-only and inventory-only
-   evidence are insufficient, and this post-merge smoke check never substitutes
-   for the complete pre-publication matrix.
-4. Confirm the installation retains one BOS-owned connection and creates no
-   MyCRM MCP, OAuth, credential, app, or authority binding. Confirm existing BOS
-   and Education Center behavior remains unchanged.
-5. Treat Git merge, Codex Git-marketplace refresh, local-marketplace install,
-   and public ChatGPT/Codex directory publication as distinct lifecycles.
-   Report only the lifecycle actually completed.
-
-## Completion report
-
-Report the previous and new versions, pull-request URL and number, release and
-merge commits, source/default branches, remote destination, included file count,
-package content digest, test/build/install results, Oracle
-verdict, and confirmation that the workspace is clean on synchronized `main`
-with the merged local release branch removed. If stopped, report the exact
-blocker and preserve all work safely.
+Report the four step durations, exact validated/delivered commits, performed
+publication/install lifecycle, validation verdict/evidence and clean synchronized
+main. Optional outside verification adds no acceptance gate unless requested.

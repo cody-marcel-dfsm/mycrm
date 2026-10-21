@@ -84,13 +84,22 @@ async function committedReceipt(root, reference) {
   const tree = await git(root, ["rev-parse", `${commit}^{tree}`]);
   let reviewedCommit = commit;
   let message = await git(root, ["show", "-s", "--format=%B", reviewedCommit]);
+  let detached = null;
   if (!parseTrailers(message)["Oracle-Verdict"]) {
+    const {owner, value} = await directory(root);
+    try {
+      detached = JSON.parse(await readMetadataFile(path.join(value, "committed-receipts", `${commit}.json`), "utf8", {root: owner}));
+      const {checkpointDigest} = await import("./shipment-state.mjs");
+      if (detached.schema !== "my-crm.shipment-validated/v1" || detached.checkpoint_sha256 !== checkpointDigest(detached) || detached.last_validated_commit !== commit || detached.tree !== tree || !hashPattern.test(detached.receipt_sha256 ?? "")) throw new Error("Detached committed-source checkpoint is malformed or changed");
+    } catch (error) { if (error.code !== "ENOENT") throw error; }
+  }
+  if (!parseTrailers(message)["Oracle-Verdict"] && !detached) {
     const parents = (await git(root, ["show", "-s", "--format=%P", commit])).split(" ");
     if (parents.length !== 2 || await git(root, ["rev-parse", `${parents[1]}^{tree}`]) !== tree) throw missingHistory("Publication candidate has no exact-tree technical review stamp");
     reviewedCommit = parents[1];
     message = await git(root, ["show", "-s", "--format=%B", reviewedCommit]);
   }
-  const trailers = verifyPublishedCommitTrailers({message, tree});
+  const trailers = detached ? {"Oracle-Receipt-SHA256": detached.receipt_sha256} : verifyPublishedCommitTrailers({message, tree});
   const {owner, value} = await directory(root);
   const filename = path.join(value, "technical-receipts", `${trailers["Oracle-Receipt-SHA256"]}.json`);
   let original;
@@ -102,7 +111,10 @@ async function committedReceipt(root, reference) {
   if (receipt.schema !== "my-crm.oracle-approval/v2" || receipt.review_status !== "COMPLETE" || receipt.reviewer?.role !== "independent-project-oracle" || receipt.reviewer.ephemeral !== true || receipt.reviewer.ignore_user_config !== true || !text(receipt.reviewer.model) || !hashPattern.test(receipt.reviewer.role_instruction_sha256 ?? "") || receipt.reviewer_metadata_sha256 !== sha256(`${JSON.stringify(receipt.reviewer, null, 2)}\n`)) throw new Error("Archived technical receipt lacks original independent reviewer custody");
   validateDeploymentAssessment(receipt, {required: true});
   const parents = (await git(root, ["show", "-s", "--format=%P", reviewedCommit])).split(" ");
-  if (parents[0] !== receipt.base_commit) throw new Error("Technical receipt base differs from the reviewed source commit parent");
+  if (detached) {
+    if (receipt.candidate_commit !== commit || parents[0] !== receipt.deployment_history_base_commit) throw new Error("Detached receipt differs from its exact reviewed commit or history parent");
+    await git(root, ["merge-base", "--is-ancestor", receipt.base_commit, commit]);
+  } else if (parents[0] !== receipt.base_commit) throw new Error("Technical receipt base differs from the reviewed source commit parent");
   await readValidationProofs({root, directory: value, validation: receipt.input_binding?.validation ?? [], checkCurrentExecutable: false});
   if (receipt.deployment_history_status === "UNAVAILABLE") throw missingHistory("Technical receipt lacks its sealed deployment-history binding: original readiness was UNAVAILABLE; assess the complete current range");
   if (receipt.deployment_history_status !== "READY" || !commitPattern.test(receipt.deployment_baseline_commit ?? "") || !hashPattern.test(receipt.deployment_history_sha256 ?? "")) throw new Error("Technical receipt lacks its sealed deployment-history binding");
@@ -132,7 +144,7 @@ async function historyBetween(root, baseline, target, cache = new Map(), recover
     if (seen.has(entry.receipt.receipt_sha256)) continue;
     if (entry.receipt.deployment_baseline_commit !== baseline) throw new Error("Deployment history changed its sealed adoption baseline");
     if (entry.receipt.base_commit === commit) throw new Error("Deployment history has a cyclic receipt base");
-    const prior = await historyBetween(root, baseline, entry.receipt.base_commit, cache, entry.receipt);
+    const prior = await historyBetween(root, baseline, (entry.receipt.deployment_history_base_commit ?? entry.receipt.base_commit), cache, entry.receipt);
     if (entry.receipt.deployment_history_sha256 !== historyDigest(prior)) throw new Error("Technical receipt deployment-history binding is stale or incomplete");
     validateDeploymentDispositions(entry.receipt, prior);
     history.push(entry); seen.add(entry.receipt.receipt_sha256);
@@ -142,8 +154,8 @@ async function historyBetween(root, baseline, target, cache = new Map(), recover
   return history;
 }
 
-export async function deploymentHistoryForReview(root = process.cwd()) {
-  const head = await git(root, ["rev-parse", "HEAD"]), {owner, value} = await directory(root);
+export async function deploymentHistoryForReview(root = process.cwd(), {head: requestedHead = "HEAD"} = {}) {
+  const head = await git(root, ["rev-parse", requestedHead]), {owner, value} = await directory(root);
   let baseline = null, unavailable = null;
   try { baseline = (await readBaseline(value, owner)).commit; }
   catch (error) {
@@ -163,7 +175,7 @@ export async function deploymentHistoryForReview(root = process.cwd()) {
     try {
       const entry = await committedReceipt(root, commit);
       if (entry.receipt.deployment_baseline_commit !== baseline) throw new Error("Original receipt uses another adoption baseline");
-      const prior = await historyBetween(root, baseline, entry.receipt.base_commit, new Map(), entry.receipt);
+      const prior = await historyBetween(root, baseline, (entry.receipt.deployment_history_base_commit ?? entry.receipt.base_commit), new Map(), entry.receipt);
       if (entry.receipt.deployment_history_sha256 !== historyDigest(prior)) throw new Error("Original receipt history binding is incomplete");
       validateDeploymentDispositions(entry.receipt, prior);
       if (!seen.has(entry.receipt.receipt_sha256)) { history.push(entry); seen.add(entry.receipt.receipt_sha256); }

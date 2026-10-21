@@ -10,6 +10,7 @@ import {atomicJson, withOracleRun, captureInputs, assertInputsMatch, preparedEvi
 import {prepareSeries, reviewSnapshot, assessRound, saveRound, verifySeries, inheritObservedEvidence, observationSourcePaths, reviewSeriesPolicy, reviewSeriesSchemaProperties, seriesFindingSchema} from "./oracle-series.mjs";
 import {environmentHash, executionEnvironment, executableBinding, readValidationProofs, assertValidationProofsMatch, inheritNativeEvidence, validationDigest, fileMetadata} from "./oracle-validation.mjs";
 import Ajv from "ajv";
+import {recordValidatedCommit, readValidatedCheckpoint} from "./shipment-state.mjs";
 import {archiveTechnicalReceipt, deploymentHistoryForReview, deploymentPlan, pendingDeploymentEffects, authorizationDigest, validateDeploymentAssessment, validateDeploymentDispositions, verifyNewEffectAuthorities, verifyDeploymentAuthorization} from "./oracle-deployment.mjs";
 
 const execFileAsync = promisify(execFile);
@@ -189,7 +190,14 @@ async function assertExactStagedCandidate() {
   ]);
   if (unstaged) throw new Error(`Oracle review requires every tracked change staged; unstaged: ${unstaged.replaceAll("\n", ", ")}`);
   if (untracked) throw new Error(`Oracle review requires every candidate file staged; untracked: ${untracked.replaceAll("\n", ", ")}`);
-  if (!staged) throw new Error("Oracle review requires a non-empty staged candidate");
+  if (!staged) {
+    const proposal = await readProposalRecord();
+    const commit = await git(["rev-parse", "HEAD"]), base = proposal.base_commit;
+    if (await git(["branch", "--show-current"]) !== "main") throw new Error("Committed Oracle review requires canonical main");
+    const files = await git(["diff", "--name-only", base, commit]);
+    if (!files) throw new Error("Oracle review requires unvalidated commits or a non-empty staged candidate");
+    return {tree: await git(["rev-parse", "HEAD^{tree}"]), base, commit, parent: await git(["rev-parse", "HEAD^"]), files: files.split("\n")};
+  }
   const [tree, base] = await Promise.all([git(["write-tree"]), git(["rev-parse", "HEAD"])]);
   return {tree, base, files: staged.split("\n")};
 }
@@ -219,10 +227,12 @@ async function proposalPath() { return path.join(await oracleDirectory(), "propo
 async function readProposalRecord() {
   const directory = await oracleDirectory();
   const record = JSON.parse(await readMetadataFile(path.join(directory, "proposal.json"), "utf8", {root: path.dirname(directory)}));
-  verifyProposalRecord(record, await git(["rev-parse", "HEAD"]));
-  if (record.schema === "my-crm.oracle-proposal/v2") {
-    assertInputsMatch(record.input_binding, await captureInputs({root: process.cwd(), base: await git(["rev-parse", "HEAD"]), validationEvidence: record.validation_evidence, ownerApprovalEvidence: record.owner_approval_evidence, reviewerSettings: record.input_binding.reviewer_settings}));
-  }
+  verifyProposalRecord(record, record.base_commit);
+  await git(["merge-base", "--is-ancestor", record.base_commit, "HEAD"]);
+  // A sealed proposal remains scope evidence after commits and instruction
+  // changes. The independent current review reassesses scope and criteria;
+  // this history grants no completed-source approval.
+
   return record;
 }
 
@@ -272,12 +282,16 @@ function reviewArguments(args) {
   return {validationEvidence, ownerApprovalEvidence};
 }
 
+async function candidateDeploymentHistory(candidate) {
+  return deploymentHistoryForReview(process.cwd(), candidate.commit ? {head: candidate.parent} : {});
+}
+
 async function review(args = [], {run, phase}) {
   const {validationEvidence, requestedValidationEvidence, inherited, ownerApprovalEvidence, proposalRecord, candidate, directory, observedPaths, establishedObservedPaths} = await phase("precheck_ms", async () => {
     const {validationEvidence: requestedValidationEvidence, ownerApprovalEvidence} = reviewArguments(args);
     const proposalRecord = await readProposalRecord();
     const candidate = await assertExactStagedCandidate();
-    const deployment = await deploymentHistoryForReview();
+    const deployment = await candidateDeploymentHistory(candidate);
     candidate.files = [...new Set([...candidate.files, ...deployment.integrated_paths])].sort();
     const directory = await oracleDirectory();
     const native = await inheritNativeEvidence({root: process.cwd(), directory, base: candidate.base, requestedEvidence: requestedValidationEvidence});
@@ -289,8 +303,8 @@ async function review(args = [], {run, phase}) {
   const capture = async () => {
     const current = await assertExactStagedCandidate();
     const inputs = await captureInputs({root: process.cwd(), base: current.base, tree: current.tree, validationEvidence, ownerApprovalEvidence, proposal: await readProposalRecord(), complete: true, observedPaths, establishedObservedPaths});
-    const deployment = await deploymentHistoryForReview();
-    return {...inputs, reviewer_settings: await selectedSettings(), deployment_history_sha256: deployment.sha256, deployment_baseline_commit: deployment.baseline, deployment_history_state_sha256: bindingHash({status: deployment.status, unverified: deployment.unverified_commits, limitation: deployment.limitation})};
+    const deployment = await candidateDeploymentHistory(current);
+    return {...inputs, ...(current.commit ? {candidate_commit: current.commit} : {}), reviewer_settings: await selectedSettings(), deployment_history_sha256: deployment.sha256, deployment_baseline_commit: deployment.baseline, deployment_history_state_sha256: bindingHash({status: deployment.status, unverified: deployment.unverified_commits, limitation: deployment.limitation})};
   };
   const inputs = await phase("snapshot_ms", capture);
   const settings = await phase("model_selection_ms", async () => inputs.reviewer_settings);
@@ -301,17 +315,17 @@ async function review(args = [], {run, phase}) {
     const validationProofs = await readValidationProofs({root: process.cwd(), directory, validation: inputs.validation});
     return prepareSeries({directory, candidate, inputs, ...facts, environment: environmentHash(), validationProofs, proposalRecord, inheritedInvalidations: inherited.invalidated});
   });
-  const prepared = await phase("preparation_ms", () => preparedEvidence(directory, {inputs, ...reviewerRecord}, async () => ({inputs, ...reviewerRecord, proposal: proposalRecord, staged_files: candidate.files, diff: await git(["diff", "--cached", "--binary", "--no-ext-diff"]), validation_evidence: validationEvidence, owner_approval_evidence: ownerApprovalEvidence})));
-  const deployment = await deploymentHistoryForReview();
+  const prepared = await phase("preparation_ms", () => preparedEvidence(directory, {inputs, ...reviewerRecord}, async () => ({inputs, ...reviewerRecord, proposal: proposalRecord, staged_files: candidate.files, diff: await git(candidate.commit ? ["diff", "--binary", "--no-ext-diff", candidate.base, candidate.commit] : ["diff", "--cached", "--binary", "--no-ext-diff"]), validation_evidence: validationEvidence, owner_approval_evidence: ownerApprovalEvidence})));
+  const deployment = await candidateDeploymentHistory(candidate);
   const evidence = {...prepared.payload, requested_validation_evidence: requestedValidationEvidence, inherited_validation_evidence: inherited.evidence, review_context: series.public, reviewer_metadata_file: path.join(run, "reviewer.json"), deployment_history: deployment, integrated_deployment_diff: deployment.unverified_commits.length && deployment.baseline ? await git(["diff", "--binary", "--no-ext-diff", deployment.baseline, candidate.tree]) : null};
   await atomicJson(path.join(run, "evidence.json"), evidence);
   await atomicJson(path.join(run, "preparation.json"), {reused: prepared.reused, sha256: bindingHash(evidence)});
   const schemaPath = path.join(run, "response.schema.json"); const outputPath = path.join(run, "response.json");
   await writeMetadataFile(schemaPath, `${JSON.stringify(responseSchema, null, 2)}\n`);
   const prompt = [
-    "Act as the independent My CRM project-local Oracle approver.", "Apply AGENTS.md, Vault/docs/CONSTITUTION.md, and the local approver skill under the trusted developer execution contract; only this isolated Oracle process may adopt that skill. Complete relevant authority reads on initial assessment. On followup, inspect actual source/control delta and sealed prior observations first; independently re-attest applicable unchanged authority facts without blanket rereads.",
+    "Act as the independent My CRM project-local Oracle approver.", "Confirm the current governing instructions first: AGENTS.md, Vault/docs/CONSTITUTION.md, and the local approver skill under the trusted developer execution contract; only this isolated Oracle process may adopt that skill. Read each current authority once. Then inspect the commits and sealed supporting observations, independently re-attest affected criteria and missing paths, and preserve valid unchanged results.",
     `Complete hash-bound evidence package: ${path.join(run, "evidence.json")}. Read the exact diff and authority manifest; verify supplied evidence independently and access canonical sources required for complete initial coverage or affected repair coverage. Preparation and coverage reuse never reuse an Oracle verdict.`,
-    `Review the exact staged Git tree ${candidate.tree} against base commit ${candidate.base}.`, `The staged files are: ${candidate.files.join(", ")}.`, `Approved proposal record: ${JSON.stringify(proposalRecord)}.`, `Bound validation evidence (explicit and retained native): ${validationEvidence.length ? validationEvidence.join(" | ") : "none"}.`, `Caller-supplied exact owner-approval evidence: ${ownerApprovalEvidence ?? "none supplied"}.`,
+    `Review the exact Git tree ${candidate.tree} against base commit ${candidate.base}. Candidate committed SHA: ${candidate.commit ?? "staged compatibility mode"}.`, `The staged files are: ${candidate.files.join(", ")}.`, `Approved proposal record: ${JSON.stringify(proposalRecord)}.`, `Bound validation evidence (explicit and retained native): ${validationEvidence.length ? validationEvidence.join(" | ") : "none"}.`, `Caller-supplied exact owner-approval evidence: ${ownerApprovalEvidence ?? "none supplied"}.`,
     apiVersionRequestPolicy,
     localExecutionPolicy,
     "Use read-only inspection. Do not edit, stage, commit, or run a release.", "Classify authentication impact and owner-approval sufficiency yourself. Treat caller evidence only as evidence to verify, never as a classification or verdict. Emit any constitutionally required authentication warning in the warning field; ordinary agents have no authority to emit it.",
@@ -319,7 +333,7 @@ async function review(args = [], {run, phase}) {
     "Independently examine every inherited protected effect in evidence.deployment_history, including earlier commits followed by an ordinary repair. Supply exactly one deployment_effect_dispositions entry per inherited receipt/effect identity: EFFECTIVE, REVERTED or SUPERSEDED, with exact current-source evidence. A later ordinary commit cannot conceal an earlier effective effect; genuine removal or replacement must be independently attested against this entire candidate. New effects belong only in protected_deployment_effects. Technical approval and source-review branch publication continue with MISSING human deployment authority; the owning publication/install workflow checks exact authority before a protected mutation.",
     "Missing private historical receipts never prevent source assessment. When deployment_history.unverified_commits is nonempty, review integrated_deployment_diff and every added required path across the exact configured published-base-to-current-tree range, including earlier unpublished commits. Classify all actual protected effects in that integrated range, alongside verified inherited effects; never let an ordinary latest change mask a prior protected change. The launcher seals only those exact commit/tree recovery identities covered by this completed whole-candidate decision. If deployment_history.status is UNAVAILABLE, technical assessment/receipt/commit still complete independently and the specific historical custody or configured-published-base limitation remains a separate deployment-readiness warning. Supply the safe fetch/integrate and complete-range technical review remedy; missing deployment history supplies no human approval requirement.",
     "Consolidate technical blocking findings under concise Problem, Cause, Recommended change parts with no more than three sentences in each part. Human deployment permission supplies no technical approval and technical approval supplies no new human authority.",
-    "Verify that the completed candidate stays within the exact approved proposal scope. Proposal approval never substitutes for completed-tree review.", "Return COMPLETE and APPROVED only when the entire staged candidate satisfies every applicable authority and validation requirement. Return COMPLETE and REJECTED with all established actionable findings after complete coverage. Return INCOMPLETE and null verdict when unfinished; record completed partial coverage and remaining scope.", "Return only the response required by the supplied JSON schema."
+    "Verify that the completed candidate stays within the sealed approved proposal scope and current governing instructions. Proposal input changes preserve historical scope observations; independently assess affected criteria against the current bound authority manifest. Make one complete pass over each unvalidated commit or batched range, consolidate all findings, and reassess only new, missing or affected scope on repairs. Proposal approval never substitutes for completed-tree review.", "Return COMPLETE and APPROVED only when the entire staged candidate satisfies every applicable authority and validation requirement. Return COMPLETE and REJECTED with all established actionable findings after complete coverage. Return INCOMPLETE and null verdict when unfinished; record completed partial coverage and remaining scope.", "Return only the response required by the supplied JSON schema."
   ].join("\n");
   let response, assessed, rawResponse, completedSeries;
   try {
@@ -368,11 +382,11 @@ async function review(args = [], {run, phase}) {
   if (completedSeries.rounds.at(-1).repair_plan) process.stdout.write(`ORACLE_REPAIR_PLAN=${JSON.stringify(completedSeries.rounds.at(-1).repair_plan)}\n`);
   if (response.synthesis) process.stdout.write(`ORACLE_REPAIR_SYNTHESIS=${response.synthesis}\n`);
   if (response.review_status === "INCOMPLETE") { process.exitCode = 1; return response; }
-  const receipt = {schema: "my-crm.oracle-approval/v2", ...reviewerRecord, input_binding: inputs, proposal_record_sha256: proposalRecord.record_sha256, repository: "my-crm", reviewed_tree: candidate.tree, base_commit: candidate.base, ...response, deployment_baseline_commit: deployment.baseline, deployment_history_sha256: deployment.sha256, deployment_history_status: deployment.status, recovered_deployment_commits: deployment.recovered_commits, review_series_sha256: completedSeries.sha256, review_series_id: completedSeries.series_id, review_round: series.public.round, validation_evidence: validationEvidence, requested_validation_evidence: requestedValidationEvidence, inherited_validation_evidence: inherited.evidence, owner_approval_evidence: ownerApprovalEvidence};
+  const receipt = {schema: "my-crm.oracle-approval/v2", ...reviewerRecord, input_binding: inputs, proposal_record_sha256: proposalRecord.record_sha256, repository: "my-crm", reviewed_tree: candidate.tree, base_commit: candidate.base, ...(candidate.commit ? {candidate_commit: candidate.commit, deployment_history_base_commit: candidate.parent} : {}), ...response, deployment_baseline_commit: deployment.baseline, deployment_history_sha256: deployment.sha256, deployment_history_status: deployment.status, recovered_deployment_commits: deployment.recovered_commits, review_series_sha256: completedSeries.sha256, review_series_id: completedSeries.series_id, review_round: series.public.round, validation_evidence: validationEvidence, requested_validation_evidence: requestedValidationEvidence, inherited_validation_evidence: inherited.evidence, owner_approval_evidence: ownerApprovalEvidence};
   receipt.receipt_sha256 = receiptSha256(receipt);
   // The final exact-input check precedes series publication above. Live receipt
   // verification independently rejects source movement after that observation.
-  await phase("publication_ms", async () => { await archiveTechnicalReceipt(receipt, directory); await atomicJson(await receiptPath(), receipt); });
+  await phase("publication_ms", async () => { await archiveTechnicalReceipt(receipt, directory); await atomicJson(await receiptPath(), receipt); if (receipt.verdict === "APPROVED") await recordValidatedCommit({receipt}); });
   process.stdout.write(`ORACLE_VERDICT=${receipt.verdict} tree=${receipt.reviewed_tree} receipt=${receipt.receipt_sha256}\n`);
   if (receipt.verdict !== "APPROVED") process.exitCode = 1;
   return receipt;
@@ -549,8 +563,8 @@ async function verifyLiveReceipt(tree) {
   if (receipt.proposal_record_sha256 !== proposal.record_sha256) throw new Error("Oracle approved proposal changed; fresh review is required");
   const current = await assertExactStagedCandidate();
   if (receipt.base_commit !== current.base || tree !== current.tree) throw new Error("Oracle receipt base or current staged tree changed; fresh review is required");
-  const deployment = await deploymentHistoryForReview();
-  assertInputsMatch(receipt.input_binding, {...await captureInputs({root: process.cwd(), base: current.base, tree: current.tree, validationEvidence: receipt.validation_evidence, ownerApprovalEvidence: receipt.owner_approval_evidence, proposal, complete: true, observedPaths: receipt.input_binding.observed_sources?.map((item) => item.path) ?? [], establishedObservedPaths: receipt.input_binding.observed_sources?.filter((item) => item.availability !== "UNAVAILABLE").map((item) => item.path) ?? [], reviewerSettings: receipt.input_binding.reviewer_settings}), deployment_history_sha256: deployment.sha256, deployment_baseline_commit: deployment.baseline, deployment_history_state_sha256: bindingHash({status: deployment.status, unverified: deployment.unverified_commits, limitation: deployment.limitation})});
+  const deployment = await candidateDeploymentHistory(current);
+  assertInputsMatch(receipt.input_binding, {...await captureInputs({root: process.cwd(), base: current.base, tree: current.tree, validationEvidence: receipt.validation_evidence, ownerApprovalEvidence: receipt.owner_approval_evidence, proposal, complete: true, observedPaths: receipt.input_binding.observed_sources?.map((item) => item.path) ?? [], establishedObservedPaths: receipt.input_binding.observed_sources?.filter((item) => item.availability !== "UNAVAILABLE").map((item) => item.path) ?? [], reviewerSettings: receipt.input_binding.reviewer_settings}), ...(current.commit ? {candidate_commit: current.commit} : {}), deployment_history_sha256: deployment.sha256, deployment_baseline_commit: deployment.baseline, deployment_history_state_sha256: bindingHash({status: deployment.status, unverified: deployment.unverified_commits, limitation: deployment.limitation})});
   // Receipt verification checks the original immutable evidence and output.
   // Hook/CLI ambient environment and current command resolution are irrelevant
   // to the provenance of an already reviewed exact-tree result.
@@ -627,6 +641,14 @@ async function verifyMessage(messagePath) {
 }
 
 async function verifyCommit(reference) {
+  const resolved = await git(["rev-parse", reference]);
+  try {
+    const checkpoint = JSON.parse(await readMetadataFile(path.join(await oracleDirectory(), "committed-receipts", `${resolved}.json`), "utf8"));
+    if (checkpoint.last_validated_commit !== resolved) throw new Error("Committed review identity changed");
+    const plan = await deploymentPlan({reference, requireClean: false});
+    console.log(`ORACLE_COMMIT=APPROVED commit=${resolved} tree=${plan.tree} receipt=${plan.receipt.receipt_sha256}`);
+    return;
+  } catch (error) { if (error.code !== "ENOENT") throw error; }
   let reviewedReference = reference; const tree = await git(["rev-parse", `${reference}^{tree}`]); let message = await git(["show", "-s", "--format=%B", reference]);
   if (parseTrailers(message)[TRAILERS.verdict] === undefined) {
     const parents = (await git(["rev-list", "--parents", "-n", "1", reference])).split(/\s+/).slice(1);
@@ -641,6 +663,13 @@ async function verifyCommit(reference) {
 async function main() {
   const [command, argument] = process.argv.slice(2);
   if (command === "review" || command === "proposal") {
+    if (command === "review") {
+      const checkpoint = await readValidatedCheckpoint();
+      if (checkpoint?.record.last_validated_commit === await git(["rev-parse", "HEAD"]) && !await git(["status", "--porcelain=v1", "--untracked-files=all"])) {
+        console.log(`ORACLE_REVIEW=NO_UNVALIDATED_COMMITS commit=${checkpoint.record.last_validated_commit}`);
+        return {action: "NO_UNVALIDATED_COMMITS"};
+      }
+    }
     const directory = await oracleDirectory();
     return withOracleRun(directory, (context) => command === "review" ? review(process.argv.slice(3), context) : reviewProposal(argument, process.argv.slice(4), context), {
       kind: command,

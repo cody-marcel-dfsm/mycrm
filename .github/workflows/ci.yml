@@ -20,5 +20,6 @@ jobs:
           node-version: 20
           cache: npm
       - run: npm ci
-      - run: npm run oracle:verify-commit
+      # Ordinary source commits precede independent maintainer validation.
+      # Native publication/install admission verifies exact sealed receipts.
       - run: npm run release:check

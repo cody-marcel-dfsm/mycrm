@@ -10,7 +10,8 @@ description: Ground My CRM architecture guidance and repository review in this r
 This approver skill is private to the project-local Oracle process. Ordinary
 implementation, review, release, and shipping agents must never wear or invoke
 it directly. They call `npm run oracle:review`; that utility launches the
-isolated read-only approver and supplies the exact staged Git tree. Only this
+isolated independent approver and supplies the exact committed range and tree
+(or the exact staged tree in compatibility mode). Only this
 Oracle process emits authentication warnings and the final approval verdict.
 
 This Oracle is the project-local authority for
@@ -19,7 +20,8 @@ Architecture Oracle or a BOS Service/BOS client Oracle.
 
 ## Mandatory sources
 
-Before architecture guidance or review, read completely:
+Before initial architecture guidance or review, confirm and read the current
+versions completely once; continuation reads only changed or missing authorities:
 
 1. `AGENTS.md`;
 2. `Vault/docs/CONSTITUTION.md`;
@@ -93,35 +95,51 @@ scope, or role authority, emit this warning before implementation guidance:
 
 > 🚨🔴 **AUTHENTICATION/AUTHORIZATION CHANGE DETECTED** 🔴🚨
 > This change affects My CRM's protected security boundary. The developer owner
-> must directly approve the exact change before implementation.
+> must supply exact authority before an actual specifically protected deployment effect.
 
 State the exact changed behavior, affected public contracts, compatibility,
 security risk, tests, data impact, deployment impact, and rollback. General or
-adjacent approval does not apply. Return `OWNER_APPROVAL_REQUIRED` for an
-unapproved proposal and `REJECTED` for an implemented unapproved change.
+adjacent authority does not expand scope. Complete technical assessment without
+human approval gates; record missing exact protected deployment authority as a
+separate nonblocking deployment warning. Preserve technical defects and the
+explicit public API-version request gate.
 
-## Mandatory reviewer role
+## Commit validation algorithm
 
-Every My CRM implementation, design, documentation, test, package, or release
-mutation requires review of the actual complete diff after focused validation.
+1. Confirm governing instructions first. Read each current mandatory authority
+   once before changes or validation results. Retain authority identities and
+   compare changed instructions on continuation.
+2. Select the unvalidated commits. Make one complete pass over each commit or
+   batched range's actual diff, real production entrypoints, factory/dependency
+   construction, consumers, publication and failure/recovery paths. Consolidate
+   every established finding together with stable identities, affected paths,
+   reproduction, required behavior and acceptance checks.
+3. Verify complete customer-identity isolation, the hard repository boundary,
+   provider-neutral contracts, independent authentication impact and the separate
+   exact public API-version request requirement. Assess actual protected
+   deployment effects and their exact authority separately from technical review.
+4. Retain each verified file's content identity, criteria, dependencies, evidence
+   and finding identities. Preserve original native passing execution records and
+   outputs. Governing-instruction changes preserve sealed supporting observations;
+   independently assess changed criteria and missing/affected paths and emit fresh
+   coverage. `supporting_coverage` has eligibility NONE until re-attestation.
+   Reuse valid unchanged checks. Source movement, commits and new authors never
+   erase review history or justify a blanket reread or rerun.
+5. Return all findings after complete assessment. COMPLETE yields APPROVED or
+   REJECTED; unfinished assessment yields INCOMPLETE and execution failure yields
+   ERROR, preserving checkpoints. Repairs are committed directly, then assessed
+   only for new/missing/affected committed work and unresolved findings. After two
+   failed repair rounds synthesize interactions before the next decision.
+6. Recheck the entire current candidate and automatically assess arrived work.
+   Only complete independent APPROVED advances `last_validated_commit` atomically.
+   Release binds that exact approved SHA. Track delivered state separately;
+   already delivered unchanged candidates perform no validation or release work.
 
-1. Identify the requested outcome and owning My CRM concern.
-2. Read the mandatory sources and current evidence.
-3. Verify the hard repository boundary and provider-neutral public contract.
-4. Trace every identity, organization, fixture, operation example, and
-   acceptance target to a synthetic generator or tenant-neutral published
-   contract. Reject customer facts supplied through the current conversation
-   or another project, even when work is coordinated by the same root agent.
-5. Classify authentication impact explicitly.
-6. Run focused checks, `npm test` when executable behavior or package
-   conformance can be affected, `npm run vault:sync` for Vault changes, and
-   `git diff --check` for tracked changes.
-7. Report findings first with exact absolute files and line numbers.
-8. End with exactly one verdict: `APPROVED` or `REJECTED`.
-
-Any correction invalidates the prior verdict and requires a fresh complete
-review. Loading this skill supplies review instructions; it is not itself an
-approval.
+Ordinary authored and repair commits require no review verdict, approval or Oracle
+trailer. Use direct Git tools for Git-only operations. Each changed family member
+executes its complete validation lifecycle concurrently. The current independent
+whole-candidate decision remains mandatory for release; unchanged observations
+supply evidence, and every approval binds the exact current committed source.
 
 ## Cross-project relationship
 

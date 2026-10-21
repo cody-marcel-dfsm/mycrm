@@ -42,7 +42,8 @@
     "check:clients": "node scripts/build-clients.mjs --check",
     "oracle:verify-proposal": "node scripts/oracle-review.mjs verify-proposal",
     "oracle:deployment": "node scripts/oracle-deployment.mjs check",
-    "oracle:authorize-deployment": "node scripts/oracle-review.mjs authorize-deployment"
+    "oracle:authorize-deployment": "node scripts/oracle-review.mjs authorize-deployment",
+    "shipment:plan": "node scripts/shipment-state.mjs"
   },
   "engines": {
     "node": ">=20"

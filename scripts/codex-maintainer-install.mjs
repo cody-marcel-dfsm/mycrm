@@ -6,6 +6,7 @@ import {fileURLToPath} from "node:url";
 import {admitDeployment} from "./oracle-deployment.mjs";
 import {installLocal} from "./codex-local-install.mjs";
 import {checkRelease} from "./check-release.mjs";
+import {shipmentPlan, recordDeliveredCommit} from "./shipment-state.mjs";
 import {repositoryRoot} from "./release-utils.mjs";
 
 const execute = promisify(execFile);
@@ -14,7 +15,9 @@ const mutation = (args) => args[0] === "plugin" && (args[1] === "add" || args[1]
 
 // Maintainer release admission stays outside the public install:local helper.
 // Published consumers need only the supported host controls and BOS dependency.
-export async function installReviewed({admit = admitDeployment, install = installLocal, runCommand = nativeRun, ...options} = {}) {
+export async function installReviewed({admit = admitDeployment, install = installLocal, runCommand = nativeRun, plan = shipmentPlan, recordDelivery = recordDeliveredCommit, ...options} = {}) {
+  const selection = await plan({root: repositoryRoot});
+  if (selection.action === "NO_CHANGES" && selection.approval_state === "APPROVED") return {action: "NO_CHANGES", candidate_commit: selection.candidate_commit};
   const original = await admit({root: repositoryRoot});
   let artifactDigest = null;
   const guardedRun = async (args) => {
@@ -30,9 +33,11 @@ export async function installReviewed({admit = admitDeployment, install = instal
   };
   const result = await install({...options, runCommand: guardedRun});
   if (artifactDigest !== null && result.release.content_sha256 !== artifactDigest) throw new Error("Installed artifact differs from the admitted maintainer artifact");
+  if (selection.action === "DELIVER") await recordDelivery({root: repositoryRoot, admission: await admit({root: repositoryRoot}), installation: result});
   return result;
 }
 
 if (process.argv[1] && path.resolve(process.argv[1]) === fileURLToPath(import.meta.url)) installReviewed().then((result) => {
-  console.log(`MYCRM_REVIEWED_INSTALL=APPROVED plugin=${result.pluginId} release=${result.release.content_sha256}`);
+  if (result.action === "NO_CHANGES") console.log(`MYCRM_REVIEWED_INSTALL=NO_CHANGES commit=${result.candidate_commit}`);
+  else console.log(`MYCRM_REVIEWED_INSTALL=APPROVED plugin=${result.pluginId} release=${result.release.content_sha256}`);
 }).catch((error) => { console.error(error.message); process.exitCode = 1; });

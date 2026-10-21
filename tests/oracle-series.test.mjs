@@ -536,3 +536,15 @@ test("immutable earlier observations recover after ERROR dropped coverage and ex
   const changed = await prepare({files: {...options.files, "test.mjs": "changed dependency"}});
   assert.equal(changed.public.eligible_validations.length, 0);
 });
+
+test("instruction changes retain sealed complete supporting coverage while requiring current criteria and new files", async (t) => {
+  const {prepare, record, options, inputs} = await fixture(t);
+  await record(await prepare(), response());
+  const current = await prepare({inputs: {...inputs, authorities: inputs.authorities.map((item) => item.path === "AGENTS.md" ? {...item, sha256: "changed-criteria"} : item)}, candidate: {...options.candidate, tree: "next-tree", files: [...options.candidate.files, "new.mjs"]}, files: {...options.files, "new.mjs": "new-source"}});
+  assert.equal(current.public.eligible_coverage.length, 0);
+  assert.deepEqual(current.public.supporting_coverage.map((item) => item.path).sort(), ["a.mjs", "b.mjs"]);
+  assert.ok(current.public.supporting_coverage.every((item) => item.coverage_eligibility === "NONE" && item.independent_applicability_required && item.changed_context.includes("authorities")));
+  assert.ok(current.public.required_paths.includes("new.mjs"));
+  assert.throws(() => assessRound(current, response({coverage: [], reused_coverage: ["a.mjs", "b.mjs"]}), []), /reused coverage is invalid/);
+  await record(current, response({coverage: current.public.required_paths.map((name) => coverage(name))}));
+});

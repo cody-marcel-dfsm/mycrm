@@ -1198,3 +1198,72 @@ test("deployment verifies consumed native records and output custody without amb
   finally { if (prior === undefined) delete process.env.MYCRM_SYNTHETIC_AMBIENT; else process.env.MYCRM_SYNTHETIC_AMBIENT = prior; }
   assert.deepEqual(await readFile(receiptFile), receiptBytes);
 });
+
+test("committed-range review checkpoints exact source and unchanged shipment executes zero callbacks", async (t) => {
+  const {repo, env, git, prepare} = await fixture(t); await prepare();
+  await git("branch", "-m", "main");
+  await git("-c", "user.name=Synthetic", "-c", "user.email=synthetic@example.invalid", "commit", "-qm", "Synthetic prepared source before validation");
+  const first = await git("rev-parse", "HEAD");
+  await writeFile(path.join(repo, "newly-arrived.txt"), "Synthetic arrived committed scope\n"); await git("add", ".");
+  await git("-c", "user.name=Synthetic", "-c", "user.email=synthetic@example.invalid", "commit", "-qm", "Synthetic new commit before review");
+  const head = await git("rev-parse", "HEAD");
+  const {shipmentPlan, runShipment, readValidatedCheckpoint, recordDeliveredCommit} = await import("../scripts/shipment-state.mjs");
+  assert.equal((await shipmentPlan({root: repo})).action, "VALIDATE");
+  await command(repo, ["review"], env);
+  const checkpoint = await readValidatedCheckpoint(repo);
+  assert.equal(checkpoint.record.last_validated_commit, head);
+  assert.equal(checkpoint.receipt.candidate_commit, head);
+  assert.equal(checkpoint.receipt.deployment_history_base_commit, first);
+  assert.equal((await shipmentPlan({root: repo})).action, "DELIVER");
+  const roundsBefore = JSON.parse(await readFile(path.join(repo, ".git/oracle/series", `${checkpoint.receipt.base_commit}.json`))).rounds.length;
+  assert.match((await command(repo, ["review"], env)).stdout, /NO_UNVALIDATED_COMMITS/);
+  assert.equal(JSON.parse(await readFile(path.join(repo, ".git/oracle/series", `${checkpoint.receipt.base_commit}.json`))).rounds.length, roundsBefore);
+  const admission = await admitDeployment({root: repo}); assert.equal(admission.source_commit, head);
+  await assert.rejects(recordDeliveredCommit({root: repo, admission, installation: {pluginId: "my-crm@synthetic", release: {content_sha256: "a".repeat(64)}}}), /published main/);
+  await git("update-ref", "refs/remotes/origin/main", head);
+  await recordDeliveredCommit({root: repo, admission, installation: {pluginId: "my-crm@synthetic", release: {content_sha256: "a".repeat(64)}}});
+  const called = [], fail = (step) => async () => { called.push(step); throw new Error(`Unexpected ${step}`); };
+  const result = await runShipment({root: repo, prepare: fail("prepare"), validate: fail("validate"), deliver: fail("deliver")});
+  assert.equal(result.action, "NO_CHANGES"); assert.deepEqual(called, []);
+  await writeFile(path.join(repo, "candidate.txt"), "Synthetic next arrived commit\n"); await git("add", ".");
+  await git("-c", "user.name=Synthetic", "-c", "user.email=synthetic@example.invalid", "commit", "-qm", "Synthetic next source");
+  const pending = await shipmentPlan({root: repo}); assert.equal(pending.action, "VALIDATE"); assert.equal(pending.validation_base, head); assert.equal(pending.commits.length, 1);
+  await assert.rejects(recordDeliveredCommit({root: repo, admission, installation: {pluginId: "my-crm@synthetic", release: {content_sha256: "a".repeat(64)}}}), /exact validated commit/);
+});
+
+test("missing checkpoint never approves a clean published candidate and ordinary hooks need no reviewer", async (t) => {
+  const {repo, git} = await fixture(t); await git("branch", "-m", "main");
+  const {shipmentPlan, readValidatedCheckpoint} = await import("../scripts/shipment-state.mjs");
+  const unchanged = await shipmentPlan({root: repo}); assert.equal(unchanged.action, "NO_CHANGES"); assert.equal(unchanged.approval_state, "UNKNOWN"); assert.equal(await readValidatedCheckpoint(repo), null);
+  await mkdir(path.join(repo, ".githooks"));
+  for (const name of ["prepare-commit-msg", "commit-msg"]) {
+    await cp(new URL(`../.githooks/${name}`, import.meta.url), path.join(repo, ".githooks", name)); await chmod(path.join(repo, ".githooks", name), 0o755);
+  }
+  await git("config", "core.hooksPath", ".githooks");
+  await writeFile(path.join(repo, "candidate.txt"), "Synthetic authored unverified code\n"); await git("add", ".");
+  await git("-c", "user.name=Synthetic", "-c", "user.email=synthetic@example.invalid", "commit", "-qm", "Synthetic ordinary unreviewed commit");
+  assert.doesNotMatch(await git("show", "-s", "--format=%B", "HEAD"), /Oracle-Verdict/);
+  assert.equal((await shipmentPlan({root: repo})).action, "VALIDATE");
+  await assert.rejects(admitDeployment({root: repo}), /technical review stamp|receipt/);
+});
+
+test("checkpoint custody rejects changed receipts, stale source and malformed delivery without promoting readiness", async (t) => {
+  const {repo, env, git, prepare} = await fixture(t); await prepare(); await git("branch", "-m", "main");
+  await git("-c", "user.name=Synthetic", "-c", "user.email=synthetic@example.invalid", "commit", "-qm", "Synthetic candidate for checkpoint custody");
+  await command(repo, ["review"], env);
+  const {shipmentPlan, readValidatedCheckpoint, recordValidatedCommit, checkpointDigest} = await import("../scripts/shipment-state.mjs");
+  const original = await readValidatedCheckpoint(repo), checkpointFile = path.join(repo, ".git/oracle/shipment-validated.json"), checkpointBytes = await readFile(checkpointFile);
+  const malformed = {...original.record, last_validated_commit: "f".repeat(40)};
+  await writeFile(checkpointFile, JSON.stringify(malformed)); await assert.rejects(shipmentPlan({root: repo}), /malformed or changed/);
+  await writeFile(checkpointFile, checkpointBytes);
+  const archive = path.join(repo, ".git/oracle/technical-receipts", `${original.record.receipt_sha256}.json`), archiveBytes = await readFile(archive);
+  await writeFile(archive, JSON.stringify({...original.receipt, summary: "Synthetic changed observation"})); await assert.rejects(shipmentPlan({root: repo}), /digest/); await writeFile(archive, archiveBytes);
+  const delivered = {schema: "my-crm.shipment-delivered/v1", delivered_commit: original.record.last_validated_commit, validated_checkpoint_sha256: original.record.checkpoint_sha256}; delivered.checkpoint_sha256 = "0".repeat(64);
+  await writeFile(path.join(repo, ".git/oracle/shipment-delivered.json"), JSON.stringify(delivered)); await assert.rejects(shipmentPlan({root: repo}), /delivery checkpoint/);
+  await rm(path.join(repo, ".git/oracle/shipment-delivered.json"));
+  await writeFile(path.join(repo, "candidate.txt"), "Synthetic uncommitted new source\n");
+  assert.equal((await shipmentPlan({root: repo})).action, "PREPARE");
+  await assert.rejects(recordValidatedCommit({root: repo, receipt: original.receipt}), /complete clean canonical/);
+  assert.deepEqual(await readFile(checkpointFile), checkpointBytes);
+  assert.equal(checkpointDigest(original.record), original.record.checkpoint_sha256);
+});
