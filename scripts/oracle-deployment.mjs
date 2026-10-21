@@ -218,6 +218,10 @@ export async function deploymentPlan({root = process.cwd(), reference = "HEAD", 
   const current = await committedReceipt(root, reference);
   const {owner, value} = await directory(root);
   await assertPublishedInvocation(current.receipt.invocation, value, owner);
+  if (current.receipt.candidate_commit) {
+    const {checkpointApplicable} = await import("./shipment-state.mjs");
+    await checkpointApplicable(root, {receipt: current.receipt});
+  }
   if ((await readBaseline(value, owner)).commit !== current.receipt.deployment_baseline_commit) throw new Error("Deployment candidate differs from the immutable adoption baseline");
   if (requireClean && (await git(root, ["status", "--porcelain=v1", "--untracked-files=all"]) || await git(root, ["rev-parse", "HEAD^{tree}"]) !== current.tree)) throw new Error("Deployment requires the complete clean canonical source matching the reviewed target tree");
   const history = await historyBetween(root, current.receipt.deployment_baseline_commit, current.commit, new Map(), current.receipt);
@@ -267,7 +271,7 @@ export async function admitDeployment({root = process.cwd(), reference = "HEAD"}
     }
     if (!accepted) throw new Error(`Protected deployment requires exact human authority for: ${pending.map(({key, effect}) => `${key} (${effect.description})`).join("; ")}. ${failures.join("; ")} Technical review and source-review publication remain complete and available.`);
   }
-  return {status: "ADMITTED", source_commit: plan.commit, reviewed_source_commit: plan.reviewedCommit, target_tree: plan.tree, technical_receipt_sha256: plan.receipt.receipt_sha256, plan_sha256: plan.plan_sha256, protected_effects: plan.effects.map(({key}) => key)};
+  return {status: "ADMITTED", technical_mode: plan.receipt.candidate_commit ? "COMMITTED_CHECKPOINT" : "HISTORICAL_STAMPED", source_commit: plan.commit, reviewed_source_commit: plan.reviewedCommit, target_tree: plan.tree, technical_receipt_sha256: plan.receipt.receipt_sha256, plan_sha256: plan.plan_sha256, protected_effects: plan.effects.map(({key}) => key)};
 }
 
 export function isProductPublicationRef(reference) {

@@ -11,6 +11,7 @@ import {receiptSha256, sha256} from "../scripts/oracle-review.mjs";
 import {seriesDigest, reviewSnapshot} from "../scripts/oracle-series.mjs";
 import {readValidationProofs, inheritNativeEvidence, executableBinding, fileMetadata} from "../scripts/oracle-validation.mjs";
 import {admitDeployment} from "../scripts/oracle-deployment.mjs";
+import {installReviewed} from "../scripts/codex-maintainer-install.mjs";
 
 const execute = promisify(execFile);
 const launcher = fileURLToPath(new URL("../scripts/oracle-review.mjs", import.meta.url));
@@ -1329,4 +1330,54 @@ test("same committed source reopens changed governing criteria and failed invoca
   await command(repo, ["review"], env);
   assert.equal((await shipmentPlan({root: repo})).action, "DELIVER");
   assert.equal(await git("rev-parse", "HEAD"), source);
+});
+
+test("current applicability guards publication and every maintainer installation mutation", async (t) => {
+  const {repo, env, git, prepare} = await fixture(t); await prepare(); await git("branch", "-m", "main");
+  await git("-c", "user.name=Synthetic", "-c", "user.email=synthetic@example.invalid", "commit", "-qm", "Synthetic governed publication");
+  const source = await git("rev-parse", "HEAD"); await command(repo, ["review"], env);
+  const {shipmentPlan, recordDeliveredCommit} = await import("../scripts/shipment-state.mjs");
+  const authority = path.join(repo, "Vault/docs/CONSTITUTION.md"), original = await readFile(authority);
+  const installation = {pluginId: "my-crm@synthetic", release: {content_sha256: "a".repeat(64)}};
+  const plan = () => shipmentPlan({root: repo}), admit = () => admitDeployment({root: repo});
+  let installers = 0, mutations = 0;
+  const install = async () => { installers++; return installation; };
+  const recordDelivery = (options) => recordDeliveredCommit({...options, root: repo});
+  await writeFile(authority, Buffer.concat([original, Buffer.from("\nSynthetic changed publication criterion.\n")]));
+  assert.equal((await plan()).action, "VALIDATE");
+  await assert.rejects(admit(), /changed/);
+  await assert.rejects(installReviewed({plan, admit, install, recordDelivery}), /changed|applicable/);
+  assert.equal(installers, 0); assert.equal(mutations, 0);
+  await command(repo, ["review"], env);
+  const current = await readFile(authority);
+  assert.equal((await admit()).status, "ADMITTED");
+  await assert.rejects(installReviewed({plan, admit, recordDelivery,
+    runCommand: async () => { mutations++; },
+    install: async ({runCommand}) => {
+      installers++;
+      await writeFile(authority, Buffer.concat([current, Buffer.from("\nSynthetic late criterion drift.\n")]));
+      await runCommand(["plugin", "add", "my-crm@synthetic"]);
+      return installation;
+    }}), /applicable/);
+  assert.equal(mutations, 0);
+  await writeFile(authority, current); await git("update-ref", "refs/remotes/origin/main", source);
+  assert.equal((await installReviewed({plan, admit, install, recordDelivery})).pluginId, installation.pluginId);
+  assert.equal((await plan()).action, "NO_CHANGES");
+  const unexpected = async () => { throw new Error("Unexpected repeated installation callback"); };
+  assert.equal((await installReviewed({plan, admit: unexpected, install: unexpected, recordDelivery: unexpected})).action, "NO_CHANGES");
+  await git("-c", "user.name=Synthetic", "-c", "user.email=synthetic@example.invalid", "commit", "--allow-empty", "-qm", "Synthetic unvalidated current commit");
+  await assert.rejects(admitDeployment({root: repo}), /exact-tree|stamp|reviewed/);
+  assert.equal((await admitDeployment({root: repo, reference: source})).source_commit, source);
+});
+
+test("maintainer selection rejects pending technical approval before installer callbacks", async () => {
+  for (const action of ["PREPARE", "VALIDATE", "NO_CHANGES"]) {
+    let callbacks = 0;
+    await assert.rejects(installReviewed({
+      plan: async () => ({action, approval_state: "PENDING", candidate_commit: "a".repeat(40)}),
+      admit: async () => ({status: "ADMITTED", technical_mode: "COMMITTED_CHECKPOINT", source_commit: "a".repeat(40)}),
+      install: async () => { callbacks++; }
+    }), /applicable|clean canonical/);
+    assert.equal(callbacks, 0);
+  }
 });
