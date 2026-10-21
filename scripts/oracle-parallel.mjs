@@ -84,6 +84,7 @@ export function aggregateCohorts(plan, outcomes) {
     if (seen.has(id) || !plan.cohorts.some((item) => item.id === id)) issues.push(`Unexpected or duplicate cohort ${id}`);
     seen.add(id);
     if (outcome.error) issues.push(`Cohort ${id} execution failed: ${outcome.error}`);
+    if (outcome.inputs_valid === false) issues.push(`Cohort ${id} bound inputs changed during assessment`);
     if (!envelope || envelope.cohort_id !== id || envelope.candidate_commit !== plan.candidate_commit
         || envelope.candidate_tree !== plan.candidate_tree || envelope.input_binding_sha256 !== plan.input_binding_sha256
         || envelope.plan_sha256 !== plan.plan_sha256 || envelope.reviewer_settings_sha256 !== bindingHash(plan.reviewer_settings)) { issues.push(`Cohort ${id} candidate or plan binding differs`); continue; }
@@ -121,7 +122,7 @@ export function aggregateCohorts(plan, outcomes) {
   // may return complete findings before its process exits unsuccessfully.
   const complete = !issues.some((item) => !item.includes(" execution failed:"));
   const rejected = findings.length > 0 || responses.some((item) => item.verdict === "REJECTED");
-  return {issues, reported_count: responses.length, response: {review_status: complete ? "COMPLETE" : "INCOMPLETE", verdict: complete ? rejected ? "REJECTED" : "APPROVED" : null,
+  return {issues, fatal_issues: issues.filter((item) => !/has unfinished assessment|omitted required coverage/.test(item)), reported_count: responses.length, response: {review_status: complete ? "COMPLETE" : "INCOMPLETE", verdict: complete ? rejected ? "REJECTED" : "APPROVED" : null,
     summary: `Concurrent independent assessment, plan ${plan.plan_sha256}: ${complete ? "all three cohorts reported complete assessment" : issues.join("; ")}. ${responses.map((item) => item.summary).join(" ")} ${outcomes.filter((item) => item.envelope).map((item) => `[${item.id} ${bindingHash(item.envelope)}] ${item.envelope.cross_area_assessment ?? ""}`).join(" ")}`,
     authentication_impact: responses.some((item) => item.authentication_impact),
     owner_approval_status: effects.length ? responses.some((item) => item.owner_approval_status === "MISSING") ? "MISSING" : "APPROVED" : "NOT_REQUIRED",
@@ -169,19 +170,22 @@ export async function runParallelReview({run, candidate, inputs, evidence, schem
     const schemaBytes = await readMetadataFile(path.join(directory, "response.schema.json"));
     const changesBytes = await readMetadataFile(path.join(directory, "changes.json"));
     const diffBytes = await readMetadataFile(path.join(directory, "delta.diff"));
-    const started = new Date().toISOString(); let error = null, envelope = null;
+    const started = new Date().toISOString(); let error = null, envelope = null, inputsValid = true;
     try {
       await invoke({directory, schema: path.join(directory, "response.schema.json"), output: path.join(directory, "response.json"),
         prompt: `${sharedPrompt}\nAssigned cohort: ${cohort.id}. ${cohort.cross_area}\nBounded cohort inputs: ${path.join(directory, "evidence.json")}. Assess ONLY its required new/missing/affected paths and relevant dependencies, re-attesting applicable unchanged sealed observations. The cross-cutting cohort owns the global proposal, criteria, inherited-effect and API assessment; other cohorts independently report any actual effect discovered in their assigned implementation and tests without rereading unrelated deployment history. Every cohort is required and runs concurrently; this response is your cohort's decision, never a whole-candidate approval. Return the exact echoed cohort/candidate/input/plan bindings and response wrapper required by the supplied schema. The native controller consolidates all findings and performs complete-candidate admission; no serial final reviewer follows. Return explicit cross_area_assessment tracing entrypoints, construction, consumers, dependencies, publication and recovery edges, with source/evidence references. Do not read the full original history/context unless a named unresolved fact requires a bounded projection.`});
       envelope = JSON.parse(await readMetadataFile(path.join(directory, "response.json"), "utf8"));
-      if (bindingHash(payloadBytes.toString()) !== bindingHash((await readMetadataFile(path.join(directory, "evidence.json"))).toString())) throw new Error("Cohort inputs changed during assessment");
-      if (bindingHash(schemaBytes.toString()) !== bindingHash((await readMetadataFile(path.join(directory, "response.schema.json"))).toString())
-          || bindingHash(changesBytes.toString()) !== bindingHash((await readMetadataFile(path.join(directory, "changes.json"))).toString())
-          || bindingHash(diffBytes.toString()) !== bindingHash((await readMetadataFile(path.join(directory, "delta.diff"))).toString())) throw new Error("Cohort schema or source-delta inputs changed during assessment");
     } catch (cause) { error = cause.message; try { envelope = JSON.parse(await readMetadataFile(path.join(directory, "response.json"), "utf8")); } catch {} }
+    // Failed provider execution can still return useful observations. Their
+    // original cohort inputs must be checked even on that error path.
+    try {
+      for (const [name, original] of [["evidence.json", payloadBytes], ["response.schema.json", schemaBytes], ["changes.json", changesBytes], ["delta.diff", diffBytes]]) {
+        if (contentHash(original) !== contentHash(await readMetadataFile(path.join(directory, name)))) throw new Error("Cohort inputs changed during assessment");
+      }
+    } catch (cause) { inputsValid = false; error = [error, cause.message].filter(Boolean).join("; "); }
     let process = null;
     try { process = JSON.parse(await readMetadataFile(path.join(directory, "process.json"), "utf8")); } catch {}
-    const outcome = {id: cohort.id, started_at: started, finished_at: new Date().toISOString(), error, process, envelope};
+    const outcome = {id: cohort.id, started_at: started, finished_at: new Date().toISOString(), error, inputs_valid: inputsValid, process, envelope};
     await atomicJson(path.join(directory, "outcome.json"), outcome, {exclusive: true});
     return outcome;
   }));
@@ -193,7 +197,7 @@ export async function runParallelReview({run, candidate, inputs, evidence, schem
     actual_process_overlap: outcomes.every((item) => item.process?.pid && item.process?.started_at && item.process?.finished_at)
       && Math.max(...outcomes.map((item) => Date.parse(item.process.started_at))) < Math.min(...outcomes.map((item) => Date.parse(item.process.finished_at)))}, {exclusive: true});
   if (aggregate.reported_count) await atomicJson(path.join(run, "response.json"), aggregate.response, {exclusive: true});
-  await atomicJson(path.join(run, "process.json"), {exit_code: aggregate.issues.length ? 1 : 0,
+  await atomicJson(path.join(run, "process.json"), {exit_code: aggregate.fatal_issues.length ? 1 : 0,
     signal: outcomes.find((item) => item.process?.signal)?.process.signal ?? null,
     interrupted: outcomes.some((item) => item.process?.interrupted), cohort_count: outcomes.length,
     cohort_exit_codes: outcomes.map((item) => ({id: item.id, ...item.process}))}, {exclusive: true});
@@ -207,6 +211,6 @@ export async function runParallelReview({run, candidate, inputs, evidence, schem
   const manifestPath = path.join(run, "cohort-artifacts.json");
   await atomicJson(manifestPath, {schema: "my-crm.parallel-artifacts/v1", plan_sha256: plan.plan_sha256, files}, {exclusive: true});
   const reference = {path: manifestPath, sha256: contentHash(await readMetadataFile(manifestPath))};
-  if (aggregate.issues.length) throw new Error(`Concurrent independent review incomplete: ${aggregate.issues.join("; ")}`);
+  if (aggregate.fatal_issues.length) throw new Error(`Concurrent independent review incomplete: ${aggregate.issues.join("; ")}`);
   return {response: aggregate.response, reference};
 }

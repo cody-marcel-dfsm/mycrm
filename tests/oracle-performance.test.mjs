@@ -35,8 +35,10 @@ async function fixture(t) {
 const fs = require('node:fs');
 const path = require('node:path');
 const args=process.argv.slice(2);
-if(process.env.ORACLE_CAPTURE_ARGS) fs.writeFileSync(process.env.ORACLE_CAPTURE_ARGS,JSON.stringify(args));
-if(process.env.ORACLE_CAPTURE_ENV) fs.writeFileSync(process.env.ORACLE_CAPTURE_ENV,JSON.stringify({CODEX_SELECTED_MODEL:process.env.CODEX_SELECTED_MODEL,CODEX_SELECTED_REASONING_EFFORT:process.env.CODEX_SELECTED_REASONING_EFFORT}));
+const captureOutput=args[args.indexOf('--output-last-message')+1];
+const captureThis=!captureOutput.includes('/cohorts/') || captureOutput.includes('/cohorts/cross-cutting/');
+if(process.env.ORACLE_CAPTURE_ARGS && captureThis) fs.writeFileSync(process.env.ORACLE_CAPTURE_ARGS,JSON.stringify(args));
+if(process.env.ORACLE_CAPTURE_ENV && captureThis) fs.writeFileSync(process.env.ORACLE_CAPTURE_ENV,JSON.stringify({CODEX_SELECTED_MODEL:process.env.CODEX_SELECTED_MODEL,CODEX_SELECTED_REASONING_EFFORT:process.env.CODEX_SELECTED_REASONING_EFFORT}));
 if(args[args.indexOf('--sandbox')+1]!=='danger-full-access') throw new Error('Oracle must execute natively');
 if(!args.some(arg=>arg.startsWith('developer_instructions=') && arg.includes('independent My CRM project-local Oracle approver'))) throw new Error('Trusted reviewer role missing');
 const out=args[args.indexOf('--output-last-message')+1];
@@ -86,7 +88,7 @@ if(!proposal && process.env.ORACLE_DELAY) setTimeout(emit,Number(process.env.ORA
 }
 
 async function waitFor(filename) {
-  for (let count = 0; count < 100; count++) {
+  for (let count = 0; count < 1000; count++) {
     try { await readFile(filename); return; } catch (error) { if (error.code !== "ENOENT") throw error; }
     await new Promise((resolve) => setTimeout(resolve, 20));
   }
