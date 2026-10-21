@@ -36,6 +36,16 @@ test("Oracle receipt is bound to the exact staged Git tree", () => {
   assert.throws(() => verifyReceipt(incomplete, receipt.reviewed_tree), /complete assessment/);
 });
 
+test("receipt candidate must agree with its original captured tree and committed identity", () => {
+  const receipt = {...approvedReceipt(), schema: "my-crm.oracle-approval/v2", candidate_commit: "4".repeat(40),
+    input_binding: {reviewed_tree: "3".repeat(40), candidate_commit: "4".repeat(40)}};
+  receipt.receipt_sha256 = receiptSha256(receipt);
+  assert.throws(() => verifyReceipt(receipt, receipt.reviewed_tree), /captured candidate identity differ/);
+  receipt.input_binding.reviewed_tree = receipt.reviewed_tree; receipt.input_binding.candidate_commit = "5".repeat(40);
+  receipt.receipt_sha256 = receiptSha256(receipt);
+  assert.throws(() => verifyReceipt(receipt, receipt.reviewed_tree), /captured candidate identity differ/);
+});
+
 test("proposal records are separate, base-bound, and must be approved", () => {
   const record = {
     schema: "my-crm.oracle-proposal/v1", repository: "my-crm",

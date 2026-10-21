@@ -163,6 +163,8 @@ export function verifyReceipt(receipt, tree) {
   if (receipt.review_status !== undefined && receipt.review_status !== "COMPLETE") throw new Error("Oracle receipt requires a complete assessment");
   if (receipt.reviewed_tree !== tree) throw new Error(`Oracle receipt is stale: reviewed ${receipt.reviewed_tree ?? "nothing"}, current tree is ${tree}`);
   if (receipt.receipt_sha256 !== receiptSha256(receipt)) throw new Error("Oracle receipt digest is invalid");
+  if (receipt.input_binding?.reviewed_tree !== undefined && receipt.input_binding.reviewed_tree !== receipt.reviewed_tree
+      || receipt.input_binding?.candidate_commit !== undefined && receipt.input_binding.candidate_commit !== receipt.candidate_commit) throw new Error("Oracle receipt and captured candidate identity differ");
   validateOracleResponse(receipt);
   return receipt;
 }
@@ -318,6 +320,10 @@ async function review(args = [], {run, phase}) {
   });
   const capture = async () => {
     const current = await assertExactStagedCandidate();
+    if (current.tree !== candidate.tree || current.base !== candidate.base || current.commit !== candidate.commit) {
+      const error = new Error("Oracle candidate moved during preparation; continue the latest committed candidate");
+      error.code = "ORACLE_CANDIDATE_MOVED"; throw error;
+    }
     const inputs = await captureInputs({root: process.cwd(), base: current.base, tree: current.tree, validationEvidence, ownerApprovalEvidence, proposal: await readProposalRecord(), complete: true, observedPaths, establishedObservedPaths});
     const deployment = await candidateDeploymentHistory(current);
     return {...inputs, ...(current.commit ? {candidate_commit: current.commit} : {}), reviewer_settings: await selectedSettings(), deployment_history_sha256: deployment.sha256, deployment_baseline_commit: deployment.baseline, deployment_history_state_sha256: bindingHash({status: deployment.status, unverified: deployment.unverified_commits, limitation: deployment.limitation})};
@@ -688,7 +694,13 @@ async function verifyCommit(reference) {
 }
 
 async function continuousReview(args, controller) {
-  const requested = reviewArguments(args);
+  let requested;
+  try { requested = reviewArguments(args); }
+  catch (error) {
+    const directory = await oracleDirectory();
+    return withOracleRun(directory, async () => { throw error; }, {kind: "review",
+      onAdmitted: () => removeMetadataFile(path.join(directory, "approval.json"), {force: true})});
+  }
   const evidence = new Set(requested.validationEvidence);
   const checkpoint = await readValidatedCheckpoint();
   let owner = requested.ownerApprovalEvidence, attempt = 0,

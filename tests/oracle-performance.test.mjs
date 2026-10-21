@@ -47,7 +47,7 @@ if(!proposal && JSON.stringify(JSON.parse(fs.readFileSync(args[args.indexOf('--o
 if(!proposal && process.env.ORACLE_READY) fs.writeFileSync(process.env.ORACLE_READY,'ready');
 if(!proposal && process.env.ORACLE_CALLS) fs.appendFileSync(process.env.ORACLE_CALLS,JSON.stringify({out,pid:process.pid})+'\\n');
 if(!proposal && process.env.ORACLE_MUTATE) fs.writeFileSync(process.env.ORACLE_MUTATE,'changed during review');
-if(process.env.ORACLE_MUTATE_SETTINGS) fs.writeFileSync(process.env.ORACLE_MUTATE_SETTINGS,process.env.ORACLE_SETTINGS_CONTENT);
+if(captureThis && process.env.ORACLE_MUTATE_SETTINGS) fs.writeFileSync(process.env.ORACLE_MUTATE_SETTINGS,process.env.ORACLE_SETTINGS_CONTENT);
 const emit=()=>{
   if(args[args.indexOf('--output-schema')+1]?.endsWith('authorization.schema.json')) {
     const proof=JSON.parse(fs.readFileSync(path.join(path.dirname(out),'authorization.evidence.json')));
@@ -66,7 +66,7 @@ const emit=()=>{
   if(!proposal && process.env.ORACLE_OBSERVED_PATH) { response.review_status='INCOMPLETE'; response.verdict=null; response.findings[0].path=process.env.ORACLE_OBSERVED_PATH; response.findings[0].affected_paths=[process.env.ORACLE_OBSERVED_PATH]; response.unreviewed=[process.env.ORACLE_OBSERVED_PATH]; }
   if(!proposal && process.env.ORACLE_RESOLVE_OBSERVED) { const findings=[...evidence.review_context.prior_findings,...evidence.review_context.observed_assessments.flatMap(item=>item.findings)]; response.resolutions=[...new Set(findings.map(item=>item.id))].map(id=>({id,status:'RESOLVED',evidence:'Independently assessed synthetic current source and verified repair.'})); }
   if(!proposal && process.env.ORACLE_DISPOSITION_SCOPE) response.scope_dispositions=evidence.review_context.unavailable_sources.map(item=>({path:item.path,disposition:'UNAVAILABLE',evidence:'Independent current scope disposition; no external source read or invented original facts.'}));
-  if(!proposal && process.env.ORACLE_RETARGET_MIDDLE) { fs.unlinkSync(process.env.ORACLE_RETARGET_MIDDLE); fs.symlinkSync(process.env.ORACLE_MIDDLE_TARGET,process.env.ORACLE_RETARGET_MIDDLE); }
+  if(!proposal && captureThis && process.env.ORACLE_RETARGET_MIDDLE) { fs.unlinkSync(process.env.ORACLE_RETARGET_MIDDLE); fs.symlinkSync(process.env.ORACLE_MIDDLE_TARGET,process.env.ORACLE_RETARGET_MIDDLE); }
   if(!proposal && process.env.ORACLE_TAMPER_PROOF_OUTPUT && proof) fs.writeFileSync(proof.record.output_file,'changed nested output during review');
   if(!proposal && process.env.ORACLE_CHMOD_PROOF_SOURCE) fs.chmodSync(path.join(process.cwd(),'candidate.txt'),0o755);
   if(proposal || !process.env.ORACLE_NO_OUTPUT) fs.writeFileSync(out,proposal?'Synthetic proposal.\\nAPI_VERSION_ASSESSMENT={"impact":"NONE","request_kind":"NOT_REQUIRED","requested_change":null,"request_quote":null,"request_evidence":null}\\nAUTHENTICATION_IMPACT=NONE\\nOWNER_APPROVAL_STATUS=NOT_REQUIRED\\nORACLE_VERDICT=APPROVED\\n':process.env.ORACLE_MALFORMED?'{}':JSON.stringify(evidence?.cohort?{cohort_id:evidence.cohort.id,candidate_commit:evidence.cohort.candidate_commit,candidate_tree:evidence.cohort.candidate_tree,input_binding_sha256:evidence.cohort.input_binding_sha256,plan_sha256:evidence.cohort.plan_sha256,reviewer_settings_sha256:evidence.cohort.reviewer_settings_sha256,cross_area_assessment:'Synthetic cross-area entrypoint, consumer, dependency, publication and recovery trace.',response}:response));
@@ -545,7 +545,7 @@ test("live gates bind all inputs, emit owner verifier JSON, and retain phase dia
 test("malformed responses and mid-review authority drift fail closed and invalidate prior receipt", async (t) => {
   const {repo, env, prepare} = await fixture(t); await prepare();
   await command(repo, ["review"], env);
-  await assert.rejects(command(repo, ["review"], {...env, ORACLE_MALFORMED: "1"}), /invalid verdict/);
+  await assert.rejects(command(repo, ["review"], {...env, ORACLE_MALFORMED: "1"}), /invalid verdict|candidate or plan binding differs/);
   await assert.rejects(readFile(path.join(repo, ".git/oracle/approval.json")), {code: "ENOENT"});
   await assert.rejects(command(repo, ["review"], {...env, ORACLE_MUTATE: path.join(repo, "Vault/docs/CONSTITUTION.md")}), /drifted/);
   await assert.rejects(readFile(path.join(repo, ".git/oracle/approval.json")), {code: "ENOENT"});
@@ -566,17 +566,18 @@ test("admitted malformed review arguments invalidate active completion before pa
   assert.ok(outcomes.some((outcome) => outcome.outcome === "ERROR" && !outcome.reviewer_invoked && outcome.error.message.includes("--validation requires")));
 });
 
-test("admitted diagnostic setup failure invalidates active completion and preserves history", async (t) => {
+test("pre-admission diagnostic custody failure preserves historical receipt and prevents current readiness", async (t) => {
   const {repo, env, prepare} = await fixture(t); await prepare();
   await command(repo, ["review"], env);
-  const approval = JSON.parse(await readFile(path.join(repo, ".git/oracle/approval.json")));
+  const receiptBytes = await readFile(path.join(repo, ".git/oracle/approval.json"));
+  const approval = JSON.parse(receiptBytes);
   const history = path.join(repo, ".git/oracle/series", `${approval.base_commit}.json`);
   const original = await readFile(history);
   const runs = path.join(repo, ".git/oracle/runs");
   await rename(runs, `${runs}-retained`);
   await writeFile(runs, "Synthetic unavailable diagnostic directory.\n");
   await assert.rejects(command(repo, ["review"], env), /ORACLE_PROCESS=ERROR/);
-  await assert.rejects(readFile(path.join(repo, ".git/oracle/approval.json")), {code: "ENOENT"});
+  assert.deepEqual(await readFile(path.join(repo, ".git/oracle/approval.json")), receiptBytes);
   await assert.rejects(command(repo, ["verify-index"], env), /ORACLE_PROCESS=ERROR/);
   assert.deepEqual(await readFile(history), original);
   await assert.rejects(readFile(path.join(repo, ".git/oracle/run.lock/owner.json")), {code: "ENOENT"});
@@ -1503,6 +1504,19 @@ test("stale PID identity is preserved and foreign controller metadata prevents n
   const pointer = await readFile(path.join(repo, ".git/oracle/active-review.json"));
   await assert.rejects(command(repo, ["review"], env), /foreign or malformed/);
   assert.deepEqual(await readFile(path.join(repo, ".git/oracle/active-review.json")), pointer);
+});
+
+test("native original-clock context binds lifecycle timing while execution environment stays unchanged", async (t) => {
+  const {repo, env, prepare} = await fixture(t); await prepare();
+  const context = {schema: "my-crm.shipment-context/v1", review_started_at: "2026-10-21T02:47:36.376299Z", release_started_at: "2026-10-21T07:48:57Z",
+    provenance: {source: "Synthetic original owner instruction"}};
+  await writeFile(path.join(repo, ".git/oracle/shipment-context.json"), JSON.stringify({...context, sha256: bindingHash(context)}));
+  await command(repo, ["review"], env);
+  const owner = JSON.parse(await readFile(path.join(repo, ".git/oracle/controllers/00000000.json")));
+  assert.equal(owner.review_started_at, context.review_started_at); assert.equal(owner.release_started_at, context.release_started_at);
+  assert.equal(owner.clock_context.sha256, bindingHash(context));
+  const record = JSON.parse(await readFile(path.join(repo, ".git/oracle/approval.json")));
+  assert.equal(record.input_binding.reviewer_settings.model, "synthetic-test-model");
 });
 
 test("detached reviewed source survives identical-tree publication merge and delivery", async (t) => {
