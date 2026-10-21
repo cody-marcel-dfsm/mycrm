@@ -731,7 +731,10 @@ async function producerFailure(error, filename) {
   if (relative.startsWith("..") || path.isAbsolute(relative)) return error;
   try {
     await git(["cat-file", "-e", `HEAD:${relative}`]);
-    if (await git(["status", "--porcelain=v1", "--", relative])) return Object.assign(new Error(`Oracle candidate moved: tracked producer disappeared before commit: ${error.message}`, {cause: error}), {code: "ORACLE_CANDIDATE_MOVED", original_code: "ENOENT"});
+    if (await git(["status", "--porcelain=v1", "--", relative])) {
+      const movement = new Error(`Oracle candidate moved: tracked producer disappeared before commit: ${error.message}`, {cause: error});
+      movement.code = "ORACLE_CANDIDATE_MOVED"; movement.original_code = "ENOENT"; return movement;
+    }
   } catch { /* A clean committed invalid graph retains its actual IO failure. */ }
   return error;
 }
