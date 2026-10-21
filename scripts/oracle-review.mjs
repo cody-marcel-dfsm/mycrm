@@ -10,7 +10,7 @@ import {atomicJson, withOracleRun, captureInputs, assertInputsMatch, preparedEvi
 import {prepareSeries, reviewSnapshot, assessRound, saveRound, verifySeries, inheritObservedEvidence, observationSourcePaths, reviewSeriesPolicy, reviewSeriesSchemaProperties, seriesFindingSchema} from "./oracle-series.mjs";
 import {environmentHash, executionEnvironment, executableBinding, readValidationProofs, assertValidationProofsMatch, inheritNativeEvidence, validationDigest, fileMetadata} from "./oracle-validation.mjs";
 import Ajv from "ajv";
-import {recordValidatedCommit, readValidatedCheckpoint} from "./shipment-state.mjs";
+import {recordValidatedCommit, readValidatedCheckpoint, shipmentPlan} from "./shipment-state.mjs";
 import {archiveTechnicalReceipt, deploymentHistoryForReview, deploymentPlan, pendingDeploymentEffects, authorizationDigest, validateDeploymentAssessment, validateDeploymentDispositions, verifyNewEffectAuthorities, verifyDeploymentAuthorization} from "./oracle-deployment.mjs";
 
 const execFileAsync = promisify(execFile);
@@ -672,9 +672,9 @@ async function main() {
   const [command, argument] = process.argv.slice(2);
   if (command === "review" || command === "proposal") {
     if (command === "review") {
-      const checkpoint = await readValidatedCheckpoint();
-      if (checkpoint?.record.last_validated_commit === await git(["rev-parse", "HEAD"]) && !await git(["status", "--porcelain=v1", "--untracked-files=all"])) {
-        console.log(`ORACLE_REVIEW=NO_UNVALIDATED_COMMITS commit=${checkpoint.record.last_validated_commit}`);
+      const selection = await shipmentPlan();
+      if (selection.last_validated_commit && ["DELIVER", "NO_CHANGES"].includes(selection.action)) {
+        console.log(`ORACLE_REVIEW=NO_UNVALIDATED_COMMITS commit=${selection.last_validated_commit}`);
         return {action: "NO_UNVALIDATED_COMMITS"};
       }
     }

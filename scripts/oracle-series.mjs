@@ -1,5 +1,5 @@
 import {randomUUID} from "node:crypto";
-import {readFile, realpath} from "node:fs/promises";
+import {readFile, readdir, realpath} from "node:fs/promises";
 import path from "node:path";
 import {atomicJson, bindingHash, contentHash, observedSourceBindings, pathCustody, readMetadataFile, writeMetadataFile, assertCurrentInvocation} from "./oracle-inputs.mjs";
 import {legacyPolicy} from "./oracle-policy.mjs";
@@ -30,6 +30,27 @@ export function verifySeries(record, base) {
   return record;
 }
 
+async function augmentedSeries(directory, base, series) {
+  const location = path.join(directory, "series", "supporting-assessments", base);
+  let names;
+  try { names = await readdir(location); } catch (error) { if (error.code === "ENOENT") return series; throw error; }
+  const rounds = [...series.rounds];
+  const identity = (round) => bindingHash({snapshot: round.snapshot, original: round.observed_assessment?.response_evidence});
+  const seen = new Set(rounds.filter((round) => round.observed_assessment).map(identity));
+  for (const name of names.sort()) {
+    if (!/^[a-f0-9]{64}\.json$/.test(name)) throw new Error("Supporting assessment archive name is malformed");
+    const filename = path.join(location, name), bytes = await readMetadataFile(filename, "utf8", {root: path.dirname(directory)});
+    const archive = JSON.parse(bytes), {sha256, ...body} = archive;
+    if (archive.schema !== "my-crm.oracle-supporting-assessment/v1" || sha256 !== bindingHash(body) || name !== `${sha256}.json`) throw new Error("Supporting assessment archive is malformed or changed");
+    const original = verifySeries(archive.series, base).rounds[0];
+    if (!original.observed_assessment || original.execution_status !== "ERROR" || original.verdict !== null) throw new Error("Supporting archive supplies no native approval");
+    const key = identity(original); if (seen.has(key)) continue;
+    rounds.push({...original, round: rounds.length + 1, supporting_origin: {path: filename, sha256: contentHash(bytes), original_round: archive.original_round}});
+    seen.add(key);
+  }
+  const value = {...series, rounds}; value.sha256 = seriesDigest(value); return value;
+}
+
 function witness(snapshot, dependencies) {
   return bindingHash({context: snapshot.context, files: Object.fromEntries(dependencies.map((name) => [name, snapshot.files[name] ?? null])),
     ...(snapshot.file_facts ? {file_facts: Object.fromEntries(dependencies.map((name) => [name, snapshot.file_facts[name] ?? null]))} : {})});
@@ -44,7 +65,8 @@ function changedDependencies(before, after, names) { return names.filter((name) 
 export async function observationSourcePaths({directory, base, series = null, withBindingState = false}) {
   if (!series) {
     try { series = verifySeries(JSON.parse(await readMetadataFile(path.join(directory, "series", `${base}.json`), "utf8", {root: path.dirname(directory)})), base); }
-    catch (error) { if (error.code === "ENOENT") return withBindingState ? {paths: [], established: []} : []; throw error; }
+    catch (error) { if (error.code !== "ENOENT") throw error; series = {schema: "my-crm.oracle-series/v1", base_commit: base, series_id: "supporting-only", rounds: []}; }
+    series = await augmentedSeries(directory, base, series);
   }
   const findings = new Map(), external = new Set(), known = new Set(), names = new Set();
   for (const round of series.rounds) {
@@ -68,7 +90,8 @@ export async function observationSourcePaths({directory, base, series = null, wi
 export async function inheritObservedEvidence({directory, base, requestedEvidence = [], root = directory}) {
   let series;
   try { series = verifySeries(JSON.parse(await readMetadataFile(path.join(directory, "series", `${base}.json`), "utf8", {root: path.dirname(directory)})), base); }
-  catch (error) { if (error.code === "ENOENT") return {evidence: [], invalidated: []}; throw error; }
+  catch (error) { if (error.code !== "ENOENT") throw error; series = {schema: "my-crm.oracle-series/v1", base_commit: base, series_id: "supporting-only", rounds: []}; }
+  series = await augmentedSeries(directory, base, series);
   const runs = path.join(await realpath(directory), "runs"), present = new Set(requestedEvidence);
   const evidence = [], invalidated = [];
   for (const round of series.rounds) for (const [kind, original] of [["response", round.observed_assessment?.response_evidence], ["process", round.observed_assessment?.execution_evidence]]) {
@@ -193,6 +216,17 @@ export async function prepareSeries({directory, candidate, inputs, files, fileFa
     await atomicJson(filename, series, {root: path.dirname(directory)});
   }
   series ??= {schema: "my-crm.oracle-series/v1", series_id: randomUUID(), base_commit: candidate.base, rounds: []};
+  const augmented = await augmentedSeries(directory, candidate.base, series);
+  for (const round of augmented.rounds.slice(series.rounds.length)) {
+    const next = {...series, rounds: [...series.rounds, round]}; next.sha256 = seriesDigest(next);
+    const journal = path.join(path.dirname(filename), "rounds", candidate.base, `${round.round}.json`);
+    await assertCurrentInvocation();
+    await writeMetadataFile(journal, `${JSON.stringify({previous_sha256: series.sha256 ?? null, series: next}, null, 2)}\n`, {flag: "wx"}, {root: path.dirname(directory)});
+    await assertCurrentInvocation();
+    await atomicJson(filename, next, {root: path.dirname(directory)});
+    series = next;
+  }
+
   const previous = series.rounds.at(-1) ?? null;
   // Proposal records may change during an in-scope repair. Preserve series
   // continuity and show scope changes explicitly for independent reassessment.
@@ -456,12 +490,6 @@ export function assessRound(context, response, validation) {
 }
 
 export async function saveRound(context, response, assessed, {error = null, observed = null, beforePublish = null} = {}) {
-  try {
-    const current = verifySeries(JSON.parse(await readMetadataFile(context.filename, "utf8", {root: context.metadataRoot})), context.series.base_commit);
-    if (current.sha256 !== context.series.sha256) throw new Error("Oracle review-series history changed during review");
-  } catch (failure) {
-    if (failure.code !== "ENOENT" || context.series.sha256) throw failure;
-  }
   let repairPlan = context.public.latest_repair_plan;
   if (response?.review_status === "COMPLETE") {
     const failedRepairs = response.verdict === "REJECTED" && context.public.last_complete_verdict === "REJECTED" ? context.public.unsuccessful_repair_rounds + 1 : 0;
@@ -493,6 +521,27 @@ export async function saveRound(context, response, assessed, {error = null, obse
     ...(observed ? {observed_assessment: {...observed.assessed, response: observed.response, response_sha256: bindingHash(observed.response), response_evidence: observed.response_evidence,
       execution: observed.execution ?? null, execution_evidence: observed.execution_evidence ?? null}} : {}),
   };
+  // ERROR observations have independent immutable custody before active-head,
+  // predecessor or exclusive-journal admission. Losing publishers retain facts.
+  if (error && observed) {
+    const original = {...round, round: 1, coverage: [], validations: [], findings: [], verdict: null, review_status: "INCOMPLETE"};
+    const support = {schema: "my-crm.oracle-series/v1", series_id: context.series.series_id,
+      base_commit: context.series.base_commit, rounds: [original]};
+    support.sha256 = seriesDigest(support);
+    verifySeries(support, context.series.base_commit);
+    const body = {schema: "my-crm.oracle-supporting-assessment/v1", original_round: context.public.round, series: support};
+    const archive = {...body, sha256: bindingHash(body)};
+    const target = path.join(path.dirname(context.filename), "supporting-assessments", context.series.base_commit, `${archive.sha256}.json`);
+    const bytes = `${JSON.stringify(archive, null, 2)}\n`;
+    try { await writeMetadataFile(target, bytes, {flag: "wx"}, {root: context.metadataRoot}); }
+    catch (failure) { if (failure.code !== "EEXIST" || await readMetadataFile(target, "utf8", {root: context.metadataRoot}) !== bytes) throw failure; }
+  }
+  try {
+    const current = verifySeries(JSON.parse(await readMetadataFile(context.filename, "utf8", {root: context.metadataRoot})), context.series.base_commit);
+    if (current.sha256 !== context.series.sha256) throw new Error("Oracle review-series history changed during review");
+  } catch (failure) {
+    if (failure.code !== "ENOENT" || context.series.sha256) throw failure;
+  }
   const series = {...context.series, rounds: [...context.series.rounds, round]};
   series.sha256 = seriesDigest(series);
   await beforePublish?.(series);

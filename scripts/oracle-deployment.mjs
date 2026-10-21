@@ -96,8 +96,9 @@ async function committedReceipt(root, reference) {
   if (!parseTrailers(message)["Oracle-Verdict"] && !detached) {
     const parents = (await git(root, ["show", "-s", "--format=%P", commit])).split(" ");
     if (parents.length !== 2 || await git(root, ["rev-parse", `${parents[1]}^{tree}`]) !== tree) throw missingHistory("Publication candidate has no exact-tree technical review stamp");
-    reviewedCommit = parents[1];
-    message = await git(root, ["show", "-s", "--format=%B", reviewedCommit]);
+    await git(root, ["merge-base", "--is-ancestor", parents[0], parents[1]]);
+    const reviewed = await committedReceipt(root, parents[1]);
+    return {...reviewed, commit, tree, reviewedCommit: reviewed.reviewedCommit};
   }
   const trailers = detached ? {"Oracle-Receipt-SHA256": detached.receipt_sha256} : verifyPublishedCommitTrailers({message, tree});
   const {owner, value} = await directory(root);
@@ -266,7 +267,7 @@ export async function admitDeployment({root = process.cwd(), reference = "HEAD"}
     }
     if (!accepted) throw new Error(`Protected deployment requires exact human authority for: ${pending.map(({key, effect}) => `${key} (${effect.description})`).join("; ")}. ${failures.join("; ")} Technical review and source-review publication remain complete and available.`);
   }
-  return {status: "ADMITTED", source_commit: plan.commit, target_tree: plan.tree, technical_receipt_sha256: plan.receipt.receipt_sha256, plan_sha256: plan.plan_sha256, protected_effects: plan.effects.map(({key}) => key)};
+  return {status: "ADMITTED", source_commit: plan.commit, reviewed_source_commit: plan.reviewedCommit, target_tree: plan.tree, technical_receipt_sha256: plan.receipt.receipt_sha256, plan_sha256: plan.plan_sha256, protected_effects: plan.effects.map(({key}) => key)};
 }
 
 export function isProductPublicationRef(reference) {
