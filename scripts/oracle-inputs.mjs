@@ -1,5 +1,5 @@
 import {createHash, randomUUID} from "node:crypto";
-import {mkdir, readFile, readdir, rename, rm, writeFile, lstat, realpath, readlink, open} from "node:fs/promises";
+import {mkdir, readFile, readdir, rename, link, rm, writeFile, lstat, realpath, readlink, open} from "node:fs/promises";
 import {constants} from "node:fs";
 import {AsyncLocalStorage} from "node:async_hooks";
 import path from "node:path";
@@ -85,7 +85,7 @@ export async function removeMetadataFile(filename, options = {}, {root} = {}) {
   await verifyMetadataStore();
 }
 
-export async function atomicJson(filename, value, {root} = {}) {
+export async function atomicJson(filename, value, {root, exclusive = false} = {}) {
   root = metadataOwner(filename, root);
   await metadataDirectory(root, path.dirname(filename));
   const destination = await pathCustody(root, filename, {scopeRoot: root, allowMissing: true});
@@ -96,7 +96,8 @@ export async function atomicJson(filename, value, {root} = {}) {
     await verifyMetadataStore();
     const current = await pathCustody(root, filename, {scopeRoot: root, allowMissing: true});
     if (current.resolved_path !== destination.resolved_path) throw new Error("Oracle publication destination changed");
-    await rename(temporary, current.resolved_path);
+    if (exclusive) await link(temporary, current.resolved_path);
+    else await rename(temporary, current.resolved_path);
     await verifyMetadataStore();
   } finally { await removeMetadataFile(temporary, {force: true}, {root}); }
 }

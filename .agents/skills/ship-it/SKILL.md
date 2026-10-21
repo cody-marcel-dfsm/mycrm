@@ -70,6 +70,15 @@ Vault changes. A technical review governs release readiness.
 ## 3. Validate
 
 Run the entire lifecycle in parallel with the other changed family members.
+The native completed review also runs three independent cohorts concurrently:
+cross-cutting criteria/integration, implementation/consumers, and
+verification/recovery. Each receives the same exact candidate and a bounded
+cohort payload, reads only new/missing/affected scope and relevant dependencies,
+and retains unchanged sealed coverage. The native controller consolidates all
+findings and admits one whole-candidate verdict only after every cohort completes,
+all required coverage is present and current content/evidence still match. No
+serial final model review follows. Preserve every cohort's original result,
+failure and actual overlap timing; partial or conflicting results grant no approval.
 
 1. Submit the concise Problem, Cause and Recommended change through
    `npm run oracle:proposal -- "<proposal>"` before implementation, with at most

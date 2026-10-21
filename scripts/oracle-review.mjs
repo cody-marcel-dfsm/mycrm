@@ -11,6 +11,7 @@ import {prepareSeries, reviewSnapshot, assessRound, saveRound, verifySeries, inh
 import {environmentHash, executionEnvironment, executableBinding, readValidationProofs, assertValidationProofsMatch, inheritNativeEvidence, validationDigest, fileMetadata} from "./oracle-validation.mjs";
 import Ajv from "ajv";
 import {recordValidatedCommit, readValidatedCheckpoint, shipmentPlan} from "./shipment-state.mjs";
+import {runParallelReview} from "./oracle-parallel.mjs";
 import {archiveTechnicalReceipt, committedReceipt, deploymentHistoryForReview, deploymentPlan, pendingDeploymentEffects, authorizationDigest, validateDeploymentAssessment, validateDeploymentDispositions, verifyNewEffectAuthorities, verifyDeploymentAuthorization} from "./oracle-deployment.mjs";
 
 const execFileAsync = promisify(execFile);
@@ -324,8 +325,8 @@ async function review(args = [], {run, phase}) {
   await writeMetadataFile(schemaPath, `${JSON.stringify(responseSchema, null, 2)}\n`);
   const prompt = [
     "Act as the independent My CRM project-local Oracle approver.", "Confirm the current governing instructions first: AGENTS.md, Vault/docs/CONSTITUTION.md, and the local approver skill under the trusted developer execution contract; only this isolated Oracle process may adopt that skill. Read each current authority once. Then inspect the commits and sealed supporting observations, independently re-attest affected criteria and missing paths, and preserve valid unchanged results.",
-    `Complete hash-bound evidence package: ${path.join(run, "evidence.json")}. Read the exact diff and authority manifest; verify supplied evidence independently and access canonical sources required for complete initial coverage or affected repair coverage. Preparation and coverage reuse never reuse an Oracle verdict.`,
-    `Review the exact Git tree ${candidate.tree} against base commit ${candidate.base}. Candidate committed SHA: ${candidate.commit ?? "staged compatibility mode"}.`, `The staged files are: ${candidate.files.join(", ")}.`, `Approved proposal record: ${JSON.stringify(proposalRecord)}.`, `Bound validation evidence (explicit and retained native): ${validationEvidence.length ? validationEvidence.join(" | ") : "none"}.`, `Caller-supplied exact owner-approval evidence: ${ownerApprovalEvidence ?? "none supplied"}.`,
+    `Immutable complete evidence reference: ${path.join(run, "evidence.json")}. Begin with your bounded cohort inputs and current assigned changes. Read only targeted original fields/source chunks for a named unresolved fact; retain source/dependency coverage identities across fresh reviewer conversations. Preparation and coverage reuse never reuse an Oracle verdict.`,
+    `Review the exact Git tree ${candidate.tree} against base commit ${candidate.base}. Candidate committed SHA: ${candidate.commit ?? "staged compatibility mode"}. Inspect the sealed approved proposal through a bounded projection of evidence.proposal; independently assess its applicability. Caller-supplied exact owner-approval evidence: ${ownerApprovalEvidence ?? "none supplied"}.`,
     apiVersionRequestPolicy,
     localExecutionPolicy,
     "Use read-only inspection. Do not edit, stage, commit, or run a release.", "Classify authentication impact and owner-approval sufficiency yourself. Treat caller evidence only as evidence to verify, never as a classification or verdict. Emit any constitutionally required authentication warning in the warning field; ordinary agents have no authority to emit it.",
@@ -338,7 +339,9 @@ async function review(args = [], {run, phase}) {
   let response, assessed, rawResponse, completedSeries;
   try {
     assertInputsMatch(inputs, await capture());
-    await phase("reviewer_ms", () => execOracle(["exec", "--ephemeral", "--ignore-user-config", "--model", model, "--sandbox", "danger-full-access", "--output-schema", schemaPath, "--output-last-message", outputPath, "--cd", process.cwd(), prompt], run, effort));
+    await phase("reviewer_ms", () => runParallelReview({run, candidate, inputs, evidence, schema: responseSchema, sharedPrompt: prompt,
+      diffForPaths: (paths) => paths.filter((name) => !path.isAbsolute(name)).length ? git(["diff", "--binary", "--no-ext-diff", series.public.previous_candidate ?? candidate.base, candidate.tree, "--", ...paths.filter((name) => !path.isAbsolute(name))]) : Promise.resolve(""),
+      invoke: (cohort) => execOracle(["exec", "--ephemeral", "--ignore-user-config", "--model", model, "--sandbox", "danger-full-access", "--output-schema", cohort.schema, "--output-last-message", cohort.output, "--cd", process.cwd(), cohort.prompt], cohort.directory, effort)}));
     rawResponse = await readMetadataFile(outputPath, "utf8");
     response = validateOracleResponse(JSON.parse(rawResponse), {requireApiAssessment: true});
     validateDeploymentAssessment(response, {required: true});

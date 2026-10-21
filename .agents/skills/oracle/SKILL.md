@@ -114,6 +114,15 @@ explicit public API-version request gate.
    construction, consumers, publication and failure/recovery paths. Consolidate
    every established finding together with stable identities, affected paths,
    reproduction, required behavior and acceptance checks.
+   The native launcher divides that pass among three concurrent trusted cohorts:
+   cross-cutting criteria/integration, implementation/consumers, and
+   verification/recovery. Assess your assigned paths and their dependency and
+   production/recovery interactions under the shared candidate/input/plan identity.
+   Read bounded cohort projections first; read originals only for a named missing
+   fact, in chunks of at most 8 KiB. A fresh cohort conversation retains existing
+   file coverage. Return the explicit cross-area assessment and all findings;
+   the native controller requires every cohort and complete current coverage for
+   one whole-candidate decision, without another serial model review.
 3. Verify complete customer-identity isolation, the hard repository boundary,
    provider-neutral contracts, independent authentication impact and the separate
    exact public API-version request requirement. Assess actual protected
