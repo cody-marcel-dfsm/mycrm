@@ -13,6 +13,7 @@ const execute = promisify(execFile);
 const nativeRun = async (args) => (await execute("codex", args, {cwd: repositoryRoot, maxBuffer: 4 * 1024 * 1024})).stdout;
 const mutation = (args) => args[0] === "plugin" && (args[1] === "add" || args[1] === "marketplace" && args[2] === "add");
 function applicableSelection(selection, admission) {
+  if (selection.action === "PREPARE") throw new Error("Maintainer installation requires complete clean canonical source before native mutation");
   const validated = ["DELIVER", "NO_CHANGES"].includes(selection.action) && selection.approval_state === "APPROVED";
   const historical = ["VALIDATE", "NO_CHANGES"].includes(selection.action) && admission?.technical_mode === "HISTORICAL_STAMPED";
   if (admission?.status !== "ADMITTED" || (!validated && !historical) || selection.candidate_commit !== admission.source_commit) throw new Error("Maintainer installation requires applicable exact-candidate technical approval before installation");
