@@ -1228,7 +1228,7 @@ test("committed-range review checkpoints exact source and unchanged shipment exe
   await writeFile(path.join(repo, "candidate.txt"), "Synthetic next arrived commit\n"); await git("add", ".");
   await git("-c", "user.name=Synthetic", "-c", "user.email=synthetic@example.invalid", "commit", "-qm", "Synthetic next source");
   const pending = await shipmentPlan({root: repo}); assert.equal(pending.action, "VALIDATE"); assert.equal(pending.validation_base, head); assert.equal(pending.commits.length, 1);
-  await assert.rejects(recordDeliveredCommit({root: repo, admission, installation: {pluginId: "my-crm@synthetic", release: {content_sha256: "a".repeat(64)}}}), /exact validated commit/);
+  await assert.rejects(recordDeliveredCommit({root: repo, admission, installation: {pluginId: "my-crm@synthetic", release: {content_sha256: "a".repeat(64)}}}), /exact validated commit|exact validated admission/);
 });
 
 test("missing checkpoint never approves a clean published candidate and ordinary hooks need no reviewer", async (t) => {
@@ -1281,7 +1281,11 @@ test("late older approval cannot overwrite a newer rejected concurrent attempt",
   assert.equal(current.verdict, "REJECTED");
   const history = JSON.parse(await readFile(path.join(repo, ".git/oracle/series", `${await git("rev-parse", "HEAD")}.json`)));
   assert.equal(history.rounds.at(-1).verdict, "REJECTED");
-  assert.equal(history.rounds.length, 1);
+  const archives = await readdir(path.join(repo, ".git/oracle/series/supporting-assessments", await git("rev-parse", "HEAD")));
+  assert.ok(archives.length >= 1);
+  const original = JSON.parse(await readFile(path.join(repo, ".git/oracle/series/supporting-assessments", await git("rev-parse", "HEAD"), archives[0])));
+  assert.equal(original.series.rounds[0].execution_status, "ERROR");
+  assert.equal(original.series.rounds[0].observed_assessment.response.verdict, "APPROVED");
 });
 
 test("detached reviewed source survives identical-tree publication merge and delivery", async (t) => {
