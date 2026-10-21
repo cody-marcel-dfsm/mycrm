@@ -44,14 +44,23 @@ export async function checkpointApplicable(root, checkpoint, {allowActiveControl
   const {verifySeries} = await import("./oracle-series.mjs");
   const series = verifySeries(JSON.parse(await readMetadataFile(path.join(directory, "series", `${receipt.base_commit}.json`), "utf8", {root: owner})), receipt.base_commit);
   if (series.sha256 !== receipt.review_series_sha256 || series.series_id !== receipt.review_series_id || series.rounds.at(-1)?.round !== receipt.review_round || series.rounds.at(-1)?.snapshot.tree !== receipt.reviewed_tree || series.rounds.at(-1)?.review_status !== "COMPLETE" || series.rounds.at(-1)?.verdict !== "APPROVED") throw new Error("Checkpoint independent review-series custody changed");
-  const {deploymentHistoryForReview} = await import("./oracle-deployment.mjs");
-  const deployment = await deploymentHistoryForReview(root, {head: receipt.deployment_history_base_commit ?? receipt.base_commit});
-  const current = await captureInputs({root, base: receipt.base_commit, tree: receipt.reviewed_tree,
+  const captureCurrent = () => captureInputs({root, base: receipt.base_commit, tree: receipt.reviewed_tree,
     validationEvidence: receipt.validation_evidence, ownerApprovalEvidence: receipt.owner_approval_evidence, proposal, complete: true,
     observedPaths: receipt.input_binding.observed_sources?.map((item) => item.path) ?? [],
     establishedObservedPaths: receipt.input_binding.observed_sources?.filter((item) => item.availability !== "UNAVAILABLE").map((item) => item.path) ?? [],
     reviewerSettings: receipt.input_binding.reviewer_settings});
-  assertInputsMatch(receipt.input_binding, {...current, candidate_commit: receipt.candidate_commit,
+  // Reject changed current criteria before reconstructing historical receipts.
+  // These copied history values defer their check only to the existing full
+  // history comparison below; this early comparison grants no acceptance.
+  assertInputsMatch(receipt.input_binding, {...await captureCurrent(), candidate_commit: receipt.candidate_commit,
+    deployment_history_sha256: receipt.input_binding.deployment_history_sha256,
+    deployment_baseline_commit: receipt.input_binding.deployment_baseline_commit,
+    deployment_history_state_sha256: receipt.input_binding.deployment_history_state_sha256});
+  const {deploymentHistoryForReview} = await import("./oracle-deployment.mjs");
+  const deployment = await deploymentHistoryForReview(root, {head: receipt.deployment_history_base_commit ?? receipt.base_commit});
+  // Recapture after history work so intervening source/authority/evidence
+  // changes retain the original fail-closed acceptance boundary.
+  assertInputsMatch(receipt.input_binding, {...await captureCurrent(), candidate_commit: receipt.candidate_commit,
     deployment_history_sha256: deployment.sha256, deployment_baseline_commit: deployment.baseline,
     deployment_history_state_sha256: bindingHash({status: deployment.status, unverified: deployment.unverified_commits, limitation: deployment.limitation})});
   const {readValidationProofs} = await import("./oracle-validation.mjs");

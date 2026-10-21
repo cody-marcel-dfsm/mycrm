@@ -1722,3 +1722,60 @@ test("maintainer selection rejects pending technical approval before installer c
     assert.equal(callbacks, 0);
   }
 });
+
+test("checkpoint applicability rejects current drift before history and retains final custody", async (t) => {
+  const {repo, root, env, git, prepare} = await fixture(t); await prepare(); await git("branch", "-m", "main");
+  await git("-c", "user.name=Synthetic", "-c", "user.email=synthetic@example.invalid", "commit", "-qm", "Synthetic current status");
+  await command(repo, ["review"], env);
+  const {readValidatedCheckpoint} = await import("../scripts/shipment-state.mjs");
+  const originalCheckpoint = await readValidatedCheckpoint(repo);
+  const archive = path.join(repo, ".git/oracle/technical-receipts", `${originalCheckpoint.receipt.receipt_sha256}.json`);
+  const archiveBytes = await readFile(archive);
+  const authority = path.join(repo, "Vault/docs/CONSTITUTION.md"), authorityBytes = await readFile(authority);
+  const historyFile = path.join(repo, ".git/oracle/deployment-baseline.json"), historyBytes = await readFile(historyFile);
+  const calls = path.join(repo, ".git/history-calls.jsonl"), mutation = path.join(repo, ".git/history-mutation-applied");
+  const gitBinary = (await executableBinding("git", process.env, repo)).path;
+  await writeFile(path.join(root, "bin/git"), `#!${process.execPath}
+const fs = require('node:fs');
+const args = process.argv.slice(2);
+if (args[0] === 'rev-list') {
+  fs.appendFileSync(${JSON.stringify(calls)}, JSON.stringify(args) + '\\n');
+  if (process.env.SHIPMENT_TEST_MUTATE_HISTORY && !fs.existsSync(${JSON.stringify(mutation)})) {
+    fs.writeFileSync(${JSON.stringify(mutation)}, 'applied');
+    fs.appendFileSync(${JSON.stringify(authority)}, '\\nSynthetic authority arrived during history.\\n');
+  }
+}
+const result = require('node:child_process').spawnSync(${JSON.stringify(gitBinary)}, args, {stdio: 'inherit'});
+if (result.error) throw result.error;
+process.exit(result.status ?? 1);
+`, {mode: 0o700});
+  const statusScript = fileURLToPath(new URL("../scripts/shipment-state.mjs", import.meta.url));
+  const plan = async (extra = {}) => {
+    await writeFile(calls, "");
+    const result = await execute(process.execPath, [statusScript], {cwd: repo, env: {...process.env, ...env, ...extra}});
+    return {selection: JSON.parse(result.stdout), historyCalls: (await readFile(calls, "utf8")).trim()};
+  };
+
+  await writeFile(authority, Buffer.concat([authorityBytes, Buffer.from("\nSynthetic current authority drift.\n")]));
+  const drifted = await plan();
+  assert.equal(drifted.selection.action, "VALIDATE"); assert.equal(drifted.selection.approval_state, "PENDING");
+  assert.match(drifted.selection.reason, /inputs drifted/); assert.equal(drifted.historyCalls, "");
+
+  await writeFile(authority, authorityBytes);
+  const matching = await plan();
+  assert.equal(matching.selection.action, "DELIVER"); assert.match(matching.historyCalls, /rev-list/);
+
+  await writeFile(historyFile, JSON.stringify({...JSON.parse(historyBytes), first_receipt_sha256: "f".repeat(64)}));
+  const brokenHistory = await plan();
+  assert.equal(brokenHistory.selection.action, "VALIDATE"); assert.equal(brokenHistory.selection.approval_state, "PENDING");
+  assert.match(brokenHistory.historyCalls, /rev-list/); assert.match(brokenHistory.selection.reason, /inputs drifted/);
+
+  await writeFile(historyFile, historyBytes);
+  const late = await plan({SHIPMENT_TEST_MUTATE_HISTORY: "1"});
+  assert.equal(late.selection.action, "VALIDATE"); assert.equal(late.selection.approval_state, "PENDING");
+  assert.match(late.historyCalls, /rev-list/); assert.match(late.selection.reason, /inputs drifted/);
+  await writeFile(authority, authorityBytes);
+  assert.equal((await plan()).selection.action, "DELIVER");
+  assert.deepEqual(await readFile(archive), archiveBytes);
+  assert.deepEqual((await readValidatedCheckpoint(repo)).record, originalCheckpoint.record);
+});
