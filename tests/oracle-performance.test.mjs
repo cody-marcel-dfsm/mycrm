@@ -1334,6 +1334,61 @@ function runningReview(repo, env, args = []) {
   return {child, done, output: () => stdout};
 }
 
+async function runningLegacyReview(repo, root, env) {
+  const directory = path.join(root, "legacy"); await mkdir(directory);
+  const script = path.join(directory, "oracle-review.mjs"), ready = path.join(root, "legacy-ready");
+  await writeFile(script, `import {writeFile} from 'node:fs/promises';
+import path from 'node:path';
+import {execFileSync} from 'node:child_process';
+import {withOracleRun,atomicJson} from ${JSON.stringify(new URL("../scripts/oracle-inputs.mjs", import.meta.url).href)};
+const git=(...args)=>execFileSync('git',args,{encoding:'utf8'}).trim();
+const original=git('rev-parse','HEAD');
+try { await withOracleRun(path.join(git('rev-parse','--absolute-git-dir'),'oracle'),async({run})=>{
+ await atomicJson(path.join(run,'evidence.json'),{inputs:{candidate_commit:original}});
+ await writeFile(${JSON.stringify(ready)},'Native legacy parent admitted and preparing.');
+ await new Promise(resolve=>setTimeout(resolve,1800));
+ if(git('rev-parse','HEAD')!==original) throw new Error('Oracle inputs drifted: committed source moved during legacy assessment');
+ return {verdict:'APPROVED'};
+},{kind:'review'}); } catch(e) { console.error(e.message); process.exitCode=1; }
+`);
+  const child = spawn(process.execPath, [script, "review"], {cwd: repo, env: {...process.env, ...env}, stdio: ["ignore", "pipe", "pipe"]});
+  child.stdout.resume(); let stderr = ""; child.stderr.on("data", (value) => { stderr += value; });
+  const done = new Promise((resolve, reject) => { child.once("error", reject); child.once("close", (code) => resolve({code, stderr})); });
+  await waitFor(ready);
+  return {child, done};
+}
+
+test("already-running legacy native review is observed through genuine process and invocation custody", async (t) => {
+  const {repo, root, env, prepare} = await fixture(t); await prepare();
+  const legacy = await runningLegacyReview(repo, root, env);
+  const pointer = await readFile(path.join(repo, ".git/oracle/active-review.json")), calls = path.join(root, "no-duplicate-calls");
+  const {shipmentPlan} = await import("../scripts/shipment-state.mjs");
+  assert.equal((await shipmentPlan({root: repo})).action, "REVIEW_IN_PROGRESS");
+  const observed = await command(repo, ["review"], {...env, ORACLE_CALLS: calls});
+  assert.match(observed.stdout, /ATTACHED/); assert.match(observed.stdout, /LEGACY_COMPLETED/);
+  assert.equal((await legacy.done).code, 0);
+  assert.deepEqual(await readFile(path.join(repo, ".git/oracle/active-review.json")), pointer);
+  await assert.rejects(readFile(calls), {code: "ENOENT"});
+  const admission = JSON.parse(await readFile(path.join(repo, ".git/oracle/controllers/00000000.json")));
+  assert.equal(admission.process.pid, legacy.child.pid); assert.equal(admission.legacy_invocation.id, JSON.parse(pointer).id);
+});
+
+test("legacy native failure after an arrived commit retains its outcome before current parent continuation", async (t) => {
+  const {repo, root, env, prepare, git} = await fixture(t); await prepare(); await git("branch", "-m", "main");
+  await git("-c", "user.name=Synthetic", "-c", "user.email=synthetic@example.invalid", "commit", "-qm", "Initial legacy source");
+  const legacy = await runningLegacyReview(repo, root, env), original = JSON.parse(await readFile(path.join(repo, ".git/oracle/active-review.json")));
+  const follower = command(repo, ["review"], env);
+  await waitFor(path.join(repo, ".git/oracle/controllers/00000000.json"));
+  await writeFile(path.join(repo, "candidate.txt"), "Arrived while pre-existing native reviewer was running\n"); await git("add", ".");
+  await git("-c", "user.name=Synthetic", "-c", "user.email=synthetic@example.invalid", "commit", "-qm", "Arrived legacy source");
+  const result = await follower; assert.match(result.stdout, /LEGACY_COMPLETED/);
+  assert.equal((await legacy.done).code, 1);
+  const native = JSON.parse(await readFile(path.join(repo, ".git/oracle/runs", original.id, "outcome.json")));
+  assert.equal(native.outcome, "ERROR"); assert.match(native.error.message, /committed source moved/);
+  const {readValidatedCheckpoint} = await import("../scripts/shipment-state.mjs");
+  assert.equal((await readValidatedCheckpoint(repo)).record.last_validated_commit, await git("rev-parse", "HEAD"));
+});
+
 test("simultaneous native starters elect one immutable live parent and observer cancellation leaves it running", async (t) => {
   const {repo, root, env, prepare} = await fixture(t); await prepare();
   const calls = path.join(root, "calls.jsonl"), ready = path.join(root, "ready");
@@ -1430,7 +1485,7 @@ test("attached evidence is independently consumed by the same parent before curr
 test("stale PID identity is preserved and foreign controller metadata prevents new admission", async (t) => {
   const {repo, root, env, prepare} = await fixture(t); await prepare();
   const directory = path.join(repo, ".git/oracle/controllers"); await mkdir(directory, {recursive: true});
-  const value = {schema: "my-crm.review-controller/v1", id: "00000000-0000-4000-8000-000000000000", generation: 0,
+  const value = {schema: "my-crm.review-controller/v1", id: ["00000000", "0000", "4000", "8000", "000000000000"].join("-"), generation: 0,
     kind: "review", scope: "completed-source", root: repo,
     process: {pid: process.pid, birth: "reused-pid-original-birth", root: repo, command: `node ${launcher} review`},
     started_at: "2026-10-21T02:47:36.376299Z", review_started_at: "2026-10-21T02:47:36.376299Z", release_started_at: "2026-10-21T07:48:57Z"};

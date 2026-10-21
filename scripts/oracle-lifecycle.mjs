@@ -1,14 +1,15 @@
 // Live controller observations are separate from immutable receipt invocation custody.
 import {execFile} from "node:child_process";
 import {promisify} from "node:util";
-import {readFile, realpath, readdir} from "node:fs/promises";
+import {readFile, realpath, readdir, lstat} from "node:fs/promises";
 import {randomUUID} from "node:crypto";
 import path from "node:path";
 import process from "node:process";
-import {atomicJson, bindingHash, metadataDirectory, readMetadataFile} from "./oracle-inputs.mjs";
+import {atomicJson, bindingHash, contentHash, metadataDirectory, readMetadataFile} from "./oracle-inputs.mjs";
 
 const execute = promisify(execFile);
 const pause = (ms) => new Promise((resolve) => setTimeout(resolve, ms));
+const nativeParent = (command) => /^(?:\S*\/)?node(?:\s+--\S+)*\s+\S*oracle-review\.mjs\s+review(?:\s|$)/.test(Array.isArray(command) ? command.join(" ") : command ?? "");
 const seal = (value) => ({...value, sha256: bindingHash(value)});
 function verify(record) {
   const {sha256, ...value} = record;
@@ -61,8 +62,18 @@ async function inspect(record, state) {
   verify(record);
   if (record.schema !== "my-crm.review-controller/v1" || record.root !== state.root || record.kind !== "review" || record.scope !== "completed-source" || !/^[a-f0-9-]{36}$/.test(record.id ?? "")) throw new Error("Review controller has foreign or malformed root, kind or scope");
   const command = Array.isArray(record.process?.command) ? record.process.command.join(" ") : record.process?.command;
-  if (typeof command !== "string" || !/(?:^|\/)oracle-review\.mjs\s+review(?:\s|$)/.test(command)) throw new Error("Review controller is not a native completed-review parent");
+  if (typeof command !== "string" || !nativeParent(command)) throw new Error("Review controller is not a native completed-review parent");
   const directory = path.join(state.directory, record.id);
+  if (record.legacy_invocation) {
+    const filename = path.join(state.owner, "oracle", "runs", record.legacy_invocation.id, "outcome.json");
+    const native = await optional(filename, state.owner);
+    if (native) {
+      if (native.kind !== "review" || typeof native.started_at !== "string" || typeof native.finished_at !== "string") throw new Error("Legacy native review outcome is malformed");
+      return {...record, directory, state: "TERMINAL", outcome: {outcome: native.outcome,
+        native_outcome: native, native_outcome_file: filename, native_outcome_sha256: contentHash(await readMetadataFile(filename)),
+        result: {action: "LEGACY_REVIEW_COMPLETED", native_outcome: native, invocation: record.legacy_invocation}, error: null}};
+    }
+  }
   const outcome = await optional(path.join(directory, "outcome.json"), state.owner);
   if (outcome) {
     verify(outcome);
@@ -75,6 +86,48 @@ async function inspect(record, state) {
   return {...record, directory, state: live ? "RUNNING" : "STALE", progress};
 }
 
+async function processStartedBefore(identity, timestamp) {
+  if (process.platform === "darwin") {
+    const [seconds, micros] = identity.birth.split(":").map(Number);
+    return seconds * 1000 + micros / 1000 <= timestamp;
+  }
+  const boot = (await readFile("/proc/stat", "utf8")).match(/^btime (\d+)$/m)?.[1];
+  const ticks = Number((await execute("getconf", ["CLK_TCK"])).stdout.trim());
+  return boot && ticks && Number(boot) * 1000 + Number(identity.birth) * 1000 / ticks <= timestamp;
+}
+
+async function legacyController(state) {
+  const filename = path.join(state.owner, "oracle", "active-review.json");
+  const invocation = await optional(filename, state.owner);
+  if (!invocation) return null;
+  if (invocation.kind !== "review" || !/^[a-f0-9-]{36}$/.test(invocation.id ?? "")) throw new Error("Pending native review invocation is malformed");
+  const run = path.join(state.owner, "oracle", "runs", invocation.id);
+  if (await optional(path.join(run, "outcome.json"), state.owner)) return null;
+  const publishedAt = (await lstat(filename)).mtimeMs;
+  const rows = (await execute("ps", ["-axo", "pid=,ppid=,command="], {maxBuffer: 16 * 1024 * 1024})).stdout.split("\n")
+    .map((line) => line.trim().match(/^(\d+)\s+(\d+)\s+(.+)$/)).filter(Boolean)
+    .map((item) => ({pid: Number(item[1]), parent: Number(item[2]), command: item[3]}));
+  const candidates = [];
+  for (const row of rows) {
+    if (row.pid === process.pid || !nativeParent(row.command)) continue;
+    const identity = await controllerProcess(row.pid);
+    if (!identity || identity.root !== state.root || !await processStartedBefore(identity, publishedAt)) continue;
+    const boundChild = rows.some((child) => child.parent === row.pid && child.command.includes(`${run}${path.sep}`));
+    candidates.push({identity, boundChild});
+  }
+  const bound = candidates.filter((item) => item.boundChild), eligible = bound.length ? bound : candidates;
+  if (!eligible.length) return null;
+  if (eligible.length !== 1) throw new Error("Multiple live legacy review parents cannot be bound unambiguously; retain their native work");
+  const after = await optional(filename, state.owner);
+  if (bindingHash(after) !== bindingHash(invocation) || (await lstat(filename)).mtimeMs !== publishedAt) return legacyController(state);
+  const evidence = await optional(path.join(run, "evidence.json"), state.owner);
+  const execution = await optional(path.join(run, "process.json"), state.owner);
+  return {process: eligible[0].identity, legacy_invocation: invocation,
+    candidate_commit: evidence?.inputs?.candidate_commit ?? null,
+    legacy_phase: execution ? "FINALIZING" : evidence ? "ASSESSING" : "PREPARING",
+    legacy_binding: eligible[0].boundChild ? "DIRECT_CHILD_NATIVE_RUN" : "UNIQUE_PARENT_ROOT_BIRTH_AND_NATIVE_ADMISSION"};
+}
+
 export async function activeReviewController(root = process.cwd()) {
   const state = await layout(root);
   // Immutable, atomically created generation observations give simultaneous
@@ -82,7 +135,10 @@ export async function activeReviewController(root = process.cwd()) {
   for (let generation = 0; generation < 100000; generation++) {
     const filename = path.join(state.directory, `${String(generation).padStart(8, "0")}.json`);
     const record = await optional(filename, state.owner);
-    if (!record) return null;
+    if (!record) {
+      const legacy = await legacyController(state);
+      return legacy ? {...legacy, legacy_unregistered: true, state: "RUNNING", root: state.root} : null;
+    }
     const current = await inspect(record, state);
     if (current.state === "RUNNING") return current;
   }
@@ -104,15 +160,19 @@ async function claim(state) {
       priorRelease = current.release_started_at ?? priorRelease;
       continue;
     }
+    const legacy = await legacyController(state);
+    // A contender may have published while process discovery was in flight.
+    // Follow that actual observation instead of adopting the new parent twice.
+    if (await optional(filename, state.owner)) { generation--; continue; }
     const record = seal({schema: "my-crm.review-controller/v1", id: randomUUID(), generation,
-      kind: "review", scope: "completed-source", root: state.root, process: identity,
+      kind: "review", scope: "completed-source", root: state.root, process: identity, ...legacy,
       started_at: new Date().toISOString(), review_started_at: process.env.MYCRM_REVIEW_STARTED_AT ?? priorReview,
       release_started_at: process.env.MYCRM_RELEASE_STARTED_AT ?? priorRelease, predecessor_observation: previous});
     try {
       await atomicJson(filename, record, {root: state.owner, exclusive: true});
       const directory = path.join(state.directory, record.id);
       await metadataDirectory(state.owner, directory);
-      return {record: {...record, directory, state: "RUNNING"}, owned: true};
+      return {record: {...record, directory, state: "RUNNING"}, owned: !legacy};
     } catch (error) { if (error.code !== "EEXIST") throw error; }
     generation--; // Inspect the winner of this exact atomic publication.
   }
@@ -121,6 +181,15 @@ async function claim(state) {
 
 export async function observeReviewController(record, {root = process.cwd(), args = []} = {}) {
   const state = await layout(root);
+  if (record.legacy_unregistered) {
+    for (;;) {
+      const outcome = await optional(path.join(state.owner, "oracle", "runs", record.legacy_invocation.id, "outcome.json"), state.owner);
+      if (outcome) return {action: "LEGACY_REVIEW_COMPLETED", native_outcome: outcome, invocation: record.legacy_invocation};
+      const identity = await controllerProcess(record.process.pid);
+      if (!identity || bindingHash(identity) !== bindingHash(record.process)) throw new Error("Legacy review process ended without its native outcome; retain original observations");
+      await pause(500);
+    }
+  }
   const requestId = args.length ? `${randomUUID()}.json` : null;
   if (requestId) await atomicJson(path.join(record.directory, "requests", requestId),
     seal({controller_id: record.id, args, received_at: new Date().toISOString()}), {root: state.owner, exclusive: true});
@@ -131,6 +200,10 @@ export async function observeReviewController(record, {root = process.cwd(), arg
     const current = await inspect(original, state);
     if (current.state === "TERMINAL") {
       if (current.outcome.error) throw new Error(`Attached review controller failed: ${current.outcome.error.message}`);
+      if (record.legacy_invocation) {
+        process.stdout.write(`ORACLE_REVIEW=LEGACY_COMPLETED invocation=${record.legacy_invocation.id} outcome=${current.outcome.outcome}\n`);
+        return current.outcome.result;
+      }
       if (requestId && !current.outcome.accepted_requests?.includes(requestId)) return {action: "UNCONSUMED_REVIEW_REQUEST"};
       if (current.outcome.result?.verdict === "REJECTED" || current.outcome.result?.review_status === "INCOMPLETE") process.exitCode = 1;
       process.stdout.write(`ORACLE_REVIEW=COMPLETED controller=${record.id} outcome=${current.outcome.outcome} receipt=${current.outcome.result?.receipt_sha256 ?? "NONE"}\n`);
@@ -145,6 +218,11 @@ export async function withReviewController({root = process.cwd(), args = [], act
   const state = await layout(root), admission = await claim(state), record = admission.record;
   if (!admission.owned) {
     const result = await observeReviewController(record, {root: state.root, args});
+    if (result?.action === "LEGACY_REVIEW_COMPLETED") {
+      const head = (await execute("git", ["rev-parse", "HEAD"], {cwd: state.root})).stdout.trim();
+      if (record.candidate_commit && record.candidate_commit !== head || args.length) return withReviewController({root: state.root, args, action});
+      if (result.native_outcome.outcome !== "APPROVED") throw new Error(`Legacy native review finished ${result.native_outcome.outcome}: ${result.native_outcome.error?.message ?? "unfinished or rejected assessment"}`);
+    }
     return result?.action === "UNCONSUMED_REVIEW_REQUEST" ? withReviewController({root: state.root, args, action}) : result;
   }
   const requests = new Set();
