@@ -71,6 +71,17 @@ const emit=()=>{
     if(damage==='output-custody') fs.chmodSync(output,fs.statSync(output).mode ^ 0o020);
     fs.writeFileSync(process.env.ORACLE_PROOF_CHANGED,'applied');
   }
+  if(!proposal && captureThis && process.env.ORACLE_SUPPLIED_READY && fs.existsSync(process.env.ORACLE_SUPPLIED_READY)) {
+    fs.unlinkSync(process.env.ORACLE_SUPPLIED_READY);
+    fs.writeFileSync(process.env.ORACLE_SUPPLIED_EVIDENCE,'changed supplied evidence');
+    const source=process.env.ORACLE_SUPPLIED_SOURCE;
+    if(process.env.ORACLE_SUPPLIED_MOVEMENT==='mode') fs.chmodSync(source,0o755); else fs.writeFileSync(source,'changed authored source');
+    if(process.env.ORACLE_SUPPLIED_COMMIT==='1') {
+      const cp=require('node:child_process');
+      cp.execFileSync('git',['add','candidate.txt']);
+      cp.execFileSync('git',['-c','user.name=Synthetic','-c','user.email=synthetic@example.invalid','commit','-qm','Synthetic concurrent source commit']);
+    }
+  }
   if(!proposal && process.env.ORACLE_REUSE_COVERAGE) { response.reused_coverage=(evidence.review_context.eligible_coverage??[]).map(item=>item.path); response.coverage=response.coverage.filter(item=>!response.reused_coverage.includes(item.path)); }
   if(proof && !process.env.ORACLE_OMIT_VALIDATION) response.validations=[{id:'native-check',evidence:proof.evidence,command:JSON.stringify(proof.record.command),dependencies:evidence.staged_files,dependency_rationale:'Synthetic complete candidate closure.',assessment:'Native passing execution and output checked.'}];
   if(!proposal && process.env.ORACLE_SOURCE_FINDING) { response.verdict='REJECTED'; response.findings=[{id:'SYNTHETIC-EXIT-1',severity:'medium',code:'SYNTHETIC_EXIT_FINDING',message:'Synthetic source finding.',path:'candidate.txt',reproduction:'Synthetic input.',required_behavior:'Synthetic required behavior.',affected_paths:['candidate.txt'],acceptance_checks:['Synthetic acceptance.'],origin:'initial',missed_finding_reason:null}]; }
@@ -529,7 +540,7 @@ test("source movement cannot conceal explicit or inherited native proof corrupti
         await assert.rejects(command(repo, ["review", ...args], sameEnvironment, {timeout: 30_000}), error => {
           assert.equal(Boolean(error.killed), false, "Integrity failure must terminate without the fixture timeout");
           assert.doesNotMatch(error.stdout ?? "", /ORACLE_REVIEW=CONTINUING/);
-          return /native validation|JSON|Unexpected|ENOENT/.test(error.message);
+          return /native validation|evidence integrity|JSON|Unexpected|ENOENT/.test(error.message);
         });
         await assert.rejects(readFile(path.join(repo, ".git/oracle/approval.json")), {code: "ENOENT"});
         const series = JSON.parse(await readFile(path.join(repo, ".git/oracle/series", `${firstReceipt.base_commit}.json`)));
@@ -545,6 +556,37 @@ test("source movement cannot conceal explicit or inherited native proof corrupti
       assert.equal(original.outcome, "PASSED");
       const execution = JSON.parse(await readFile(path.join(path.dirname(original.output_file), "outcome.json")));
       assert.equal(execution.kind, "validation"); assert.equal(execution.outcome, "COMPLETED");
+    });
+  }
+});
+
+test("source movement retains simultaneous supplied-evidence integrity errors", async (t) => {
+  for (const committed of [false, true]) for (const movement of ["content", "mode"]) {
+    await t.test(`${committed ? "committed" : "staged"} ${movement}`, async context => {
+      const {repo, root, env, prepare, git} = await fixture(context); await prepare();
+      if (committed) {
+        await git("branch", "-m", "main");
+        await git("-c", "user.name=Synthetic", "-c", "user.email=synthetic@example.invalid", "commit", "-qm", "Commit evidence fixture");
+      }
+      const supplied = path.join(repo, "Vault/tmp/bound-evidence.txt"), ready = path.join(root, "supplied-ready");
+      await writeFile(supplied, "original supplied evidence"); const originalHash = sha256(await readFile(supplied));
+      await writeFile(ready, "Apply simultaneous immutable-evidence/source movement.");
+      const combined = {...env, ORACLE_SUPPLIED_EVIDENCE: supplied, ORACLE_SUPPLIED_READY: ready,
+        ORACLE_SUPPLIED_SOURCE: path.join(repo, "candidate.txt"), ORACLE_SUPPLIED_MOVEMENT: movement,
+        ORACLE_SUPPLIED_COMMIT: committed ? "1" : "0"};
+      await assert.rejects(command(repo, ["review", "--validation", `@${supplied}`], combined, {timeout: 30_000}), error => {
+        assert.equal(Boolean(error.killed), false);
+        assert.doesNotMatch(error.stdout ?? "", /ORACLE_REVIEW=CONTINUING/);
+        return /supplied evidence integrity/.test(error.message);
+      });
+      const invocation = JSON.parse(await readFile(path.join(repo, ".git/oracle/active-review.json")));
+      const run = path.join(repo, ".git/oracle/runs", invocation.id);
+      const inputs = JSON.parse(await readFile(path.join(run, "inputs.json")).catch(() => readFile(path.join(run, "evidence.json"))));
+      const binding = (inputs.inputs ?? inputs).validation.find(item => item.value === `@${supplied}`);
+      assert.equal(binding.sha256, originalHash);
+      const outcome = JSON.parse(await readFile(path.join(run, "outcome.json")));
+      assert.equal(outcome.outcome, "ERROR"); assert.equal(outcome.error.code, "ORACLE_EVIDENCE_INTEGRITY");
+      await assert.rejects(readFile(path.join(repo, ".git/oracle/approval.json")), {code: "ENOENT"});
     });
   }
 });

@@ -6,7 +6,7 @@ import path from "node:path";
 import process from "node:process";
 import {promisify} from "node:util";
 import {selectedSettings} from "./codex-child-model.mjs";
-import {atomicJson, withOracleRun, captureInputs, assertInputsMatch, preparedEvidence, bindingHash, pathCustody, metadataDirectory, readMetadataFile, writeMetadataFile, removeMetadataFile, currentInvocation, assertCurrentInvocation, assertPublishedInvocation, readBoundAuthority, observedSourceBindings} from "./oracle-inputs.mjs";
+import {atomicJson, withOracleRun, captureInputs, assertInputsMatch, preparedEvidence, bindingHash, pathCustody, metadataDirectory, readMetadataFile, writeMetadataFile, removeMetadataFile, currentInvocation, assertCurrentInvocation, assertPublishedInvocation, readBoundAuthority, observedSourceBindings, assertEvidenceIntegrity} from "./oracle-inputs.mjs";
 import {prepareSeries, reviewSnapshot, assessRound, saveRound, verifySeries, inheritObservedEvidence, observationSourcePaths, reviewSeriesPolicy, reviewSeriesSchemaProperties, seriesFindingSchema} from "./oracle-series.mjs";
 import {environmentHash, executionEnvironment, executableBinding, readValidationProofs, assertValidationProofsMatch, inheritNativeEvidence, validationDigest, fileMetadata} from "./oracle-validation.mjs";
 import Ajv from "ajv";
@@ -405,6 +405,7 @@ async function review(args = [], {run, phase, producer = null, verifyProducer = 
       // output and custody checks. Current executable/source applicability is
       // still evaluated; an intact moved candidate receives a fresh assessment.
       const currentProofs = await readValidationProofs({root: process.cwd(), directory, validation: inputs.validation});
+      await assertEvidenceIntegrity(process.cwd(), [...inputs.validation, inputs.owner]);
       if (movement) throw movement;
       assertValidationProofsMatch(series.public.validation_proofs, currentProofs);
       assertInputsMatch(inputs, current);
@@ -843,6 +844,7 @@ async function continuousReview(args, controller) {
         // Movement after worker finalization also retains the original proof
         // binding. A corrupted automatic witness never becomes a retry hint.
         await readValidationProofs({root: process.cwd(), directory: await oracleDirectory(), validation: result.input_binding.validation});
+        await assertEvidenceIntegrity(process.cwd(), [...result.input_binding.validation, result.input_binding.owner]);
       }
       process.stdout.write(`ORACLE_REVIEW=CONTINUING controller=${controller.record.id} previous=${before} current=${after}\n`);
       await controller.progress({phase: "CATCHING_UP", previous_commit: before, candidate_commit: after, attempt});

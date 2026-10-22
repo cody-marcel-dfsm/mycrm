@@ -340,6 +340,14 @@ export async function evidenceBinding(root, value) {
   return {value, kind: "file", sha256: contentHash(await readFile(custody.resolved_path)), custody};
 }
 
+export async function assertEvidenceIntegrity(root, bindings) {
+  const original = bindings.filter(Boolean);
+  const current = await Promise.all(original.map(item => evidenceBinding(root, item.value)));
+  if (bindingHash(original) !== bindingHash(current)) {
+    throw Object.assign(new Error("Oracle supplied evidence integrity changed during review"), {code: "ORACLE_EVIDENCE_INTEGRITY"});
+  }
+}
+
 export async function captureInputs({root, base, tree = null, validationEvidence = [], ownerApprovalEvidence = null, proposal = null, complete = false, observedPaths = [], establishedObservedPaths = observedPaths, reviewerSettings = undefined}) {
   // Validate source custody before reading evidence which may name the same
   // file. A later link escape must never be followed through its evidence role.
