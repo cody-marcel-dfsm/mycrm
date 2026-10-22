@@ -778,9 +778,9 @@ async function authoredCandidateIdentity() {
   // Only Git-representable source changes can be repaired by an authored
   // commit. Authority, evidence and directory-custody drift retain their own
   // explicit failure, even when a staged compatibility candidate is present.
-  return bindingHash({index: await git(["write-tree"]), sources: sources.map(({path, sha256, metadata}) => ({
-    path, sha256, type: metadata?.type ?? null,
-    executable: metadata ? Boolean(metadata.mode & 0o100) : null,
+  return bindingHash({index: await git(["write-tree"]), sources: sources.map((source) => ({
+    path: source.path, sha256: source.sha256, type: source.metadata?.type ?? null,
+    executable: source.metadata ? Boolean(source.metadata.mode & 0o100) : null,
   }))});
 }
 
