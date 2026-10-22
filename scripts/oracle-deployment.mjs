@@ -54,8 +54,8 @@ async function directory(root) {
 // Invocation-local immutable traversal facts. Original native bytes, absence,
 // modes and transitive custody remain live acceptance inputs at return.
 async function historyTraversal(root) {
-  const layout = await directory(root), canonicalRoot = await realpath(root), native = new Map(), policy = new Map();
-  const policyRoot = fileURLToPath(new URL(".", import.meta.url));
+  const layout = await directory(root), canonicalRoot = await realpath(root), native = new Map(), policy = new Map(), proofClosures = new Map();
+  const policyRoot = fileURLToPath(new URL("../", import.meta.url));
   const snapshot = async (filename, scopeRoot, metadata) => {
     const custody = await pathCustody(root, filename, {scopeRoot, allowMissing: true, allowFinalLink: false});
     const bytes = custody.metadata === null ? null : metadata ? await readMetadataFile(filename, {}, {root: layout.owner}) : await readFile(custody.resolved_path);
@@ -85,6 +85,7 @@ async function historyTraversal(root) {
     return typeof encoding === "string" ? value.bytes.toString(encoding) : value.bytes;
   };
   const bindProofs = async (receipt, proofs) => {
+    proofClosures.set(receipt.receipt_sha256, receipt.input_binding?.validation ?? []);
     for (const proof of proofs) {
       const original = receipt.input_binding.validation.find(item => item.value === proof.evidence);
       const recordPath = path.resolve(root, proof.evidence.replace(/^@/, ""));
@@ -100,6 +101,12 @@ async function historyTraversal(root) {
     for (const [filename, old] of native) {
       const value = await snapshot(filename, layout.owner, true);
       if (bindingHash(identity(old)) !== bindingHash(identity(value))) throw changed("Original cached deployment-history evidence, absence or custody changed");
+    }
+    // Reuse the original validator's full proof scopes as well as the native
+    // store bindings, including project-root custody and legacy path guards.
+    for (const validation of proofClosures.values()) {
+      try { await readValidationProofs({root, directory: layout.value, validation, checkCurrentExecutable: false}); }
+      catch (error) { throw Object.assign(changed(`Original cached history proof custody changed: ${error.message}`), {cause: error}); }
     }
     if (await realpath(root) !== canonicalRoot || (await directory(root)).owner !== layout.owner) throw changed("Deployment-history repository identity changed");
     for (const [filename, old] of policy) {
