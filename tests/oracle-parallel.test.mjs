@@ -276,7 +276,7 @@ test("native dispatch bounds final serialized wrappers and seals projected origi
     await assert.rejects(verifyParallelArtifacts(result.reference, {root}), /evidence changed/);
     await writeFile(original, bytes);
     await chmod(original, 0o640);
-    await assert.rejects(verifyParallelArtifacts(result.reference, {root}), /evidence changed/);
+    await assert.rejects(verifyParallelArtifacts(result.reference, {root}), /Oracle supplied evidence integrity changed during review/);
     await chmod(original, 0o600);
     await verifyParallelArtifacts(result.reference, {root});
     await rm(original);
@@ -287,7 +287,7 @@ test("native dispatch bounds final serialized wrappers and seals projected origi
 test("original navigation corruption during native assessment retains ERROR and prevents approval", {timeout: 5000}, async () => {
   await assert.rejects(runFixture(async area => {
     if (area.directory.endsWith("cross-cutting")) await writeFile(path.resolve(area.directory, "../../evidence.json"), "changed original");
-  }), /evidence changed/);
+  }), /Oracle supplied evidence integrity changed during review/);
 });
 
 test("child crash or changed cohort inputs preserves partial assessment and prevents approval", {timeout: 5000}, async () => {
