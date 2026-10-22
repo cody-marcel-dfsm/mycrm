@@ -1,6 +1,6 @@
 import assert from "node:assert/strict";
 import {execFile} from "node:child_process";
-import {mkdir, mkdtemp, readFile, rm, writeFile, chmod, cp} from "node:fs/promises";
+import {mkdir, mkdtemp, readFile, rm, writeFile, chmod, cp, realpath} from "node:fs/promises";
 import {fileURLToPath} from "node:url";
 import os from "node:os";
 import path from "node:path";
@@ -16,7 +16,7 @@ const reviewerMetadata = {reviewer, reviewer_metadata_sha256: sha256(`${JSON.str
 const effect = {id: "SYNTHETIC-PERMISSION", category: "PERMISSION_AUTHORITY", description: "Synthetic exact permission-authority behavior.", affected_paths: ["candidate.txt"], authority: null};
 
 async function fixture(t) {
-  const root = await mkdtemp(path.join(os.tmpdir(), "my-crm-deployment-"));
+  const root = await realpath(await mkdtemp(path.join(os.tmpdir(), "my-crm-deployment-")));
   t.after(() => rm(root, {recursive: true, force: true}));
   const git = async (...args) => (await execute("git", args, {cwd: root})).stdout.trim();
   await git("init", "-b", "main"); await git("config", "user.name", "Synthetic Maintainer"); await git("config", "user.email", "synthetic@example.invalid");
