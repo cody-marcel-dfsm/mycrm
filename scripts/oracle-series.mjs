@@ -66,7 +66,7 @@ function changedDependencies(before, after, names) { return names.filter((name) 
 function sourceIdentity(snapshot, name) {
   const facts = snapshot?.file_facts?.[name] ?? null;
   return {known: Boolean(snapshot && Object.hasOwn(snapshot.files, name)), content: snapshot?.files[name] ?? null,
-    facts_sha256: bindingHash(facts), custody_sha256: bindingHash(facts?.custody ?? null),
+    facts_sha256: facts ? bindingHash(facts) : null, custody_sha256: facts?.custody ? bindingHash(facts.custody) : null,
     mode: facts?.mode ?? null, type: facts?.type ?? null};
 }
 
