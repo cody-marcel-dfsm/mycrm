@@ -112,7 +112,7 @@ function mergeRecords(responses, field, identity, issues) {
 }
 
 export function aggregateCohorts(plan, outcomes) {
-  const issues = [], responses = [], seen = new Set();
+  const issues = [], missingSources = new Set(), responses = [], seen = new Set();
   for (const outcome of outcomes) {
     const envelope = outcome.envelope, id = outcome.id;
     if (seen.has(id) || !plan.cohorts.some((item) => item.id === id)) issues.push(`Unexpected or duplicate cohort ${id}`);
@@ -128,7 +128,10 @@ export function aggregateCohorts(plan, outcomes) {
     if (response.review_status === "COMPLETE" && !["APPROVED", "REJECTED"].includes(response.verdict)) issues.push(`Cohort ${id} completed without a verdict`);
     const covered = new Set([...(response.coverage ?? []).map((item) => item.path), ...(response.reused_coverage ?? [])]);
     const missing = plan.cohorts.find((item) => item.id === id)?.required_paths.filter((name) => !covered.has(name)) ?? [];
-    if (missing.length) issues.push(`Cohort ${id} omitted required coverage: ${missing.join(", ")}`);
+    if (missing.length) {
+      missing.forEach(name => missingSources.add(name));
+      issues.push(`Cohort ${id} omitted required coverage: ${missing.join(", ")}`);
+    }
     if (response.review_status !== "COMPLETE" || response.unreviewed?.length) issues.push(`Cohort ${id} has unfinished assessment`);
     responses.push(response);
   }
@@ -164,7 +167,7 @@ export function aggregateCohorts(plan, outcomes) {
     warning: responses.map((item) => item.warning).filter(Boolean).join("; ") || null,
     api_version_assessment: changes[0] ?? responses[0]?.api_version_assessment ?? {impact: "NONE", request_kind: "NOT_REQUIRED", requested_change: null, request_quote: null, request_evidence: null},
     findings, resolutions, coverage, validations, protected_deployment_effects: effects, deployment_effect_dispositions: dispositions,
-    scope_dispositions: scope, unreviewed: complete ? [] : unique([...issues, ...responses.flatMap((item) => item.unreviewed ?? [])]),
+    scope_dispositions: scope, unreviewed: complete ? [] : unique([...missingSources, ...issues, ...responses.flatMap((item) => item.unreviewed ?? [])]),
     reused_coverage: unique(responses.flatMap((item) => item.reused_coverage ?? [])), reused_validations: unique(responses.flatMap((item) => item.reused_validations ?? [])),
     synthesis: responses.map((item) => item.synthesis).filter(Boolean).join("\n") || null}};
 }

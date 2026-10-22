@@ -62,6 +62,10 @@ function samePathIdentity(before, after, name) {
 
 function changedDependencies(before, after, names) { return names.filter((name) => !samePathIdentity(before, after, name)); }
 
+function cohortDiagnostic(value) {
+  return /^Cohort [A-Za-z0-9_-]+ (?:omitted required coverage:|has unfinished assessment$|execution failed:|bound inputs changed during assessment$|candidate or plan binding differs$|omitted cross-area integration assessment$|has no formal assessment$|completed without a verdict$)/.test(value);
+}
+
 export async function observationSourcePaths({directory, base, series = null, withBindingState = false}) {
   if (!series) {
     try { series = verifySeries(JSON.parse(await readMetadataFile(path.join(directory, "series", `${base}.json`), "utf8", {root: path.dirname(directory)})), base); }
@@ -79,11 +83,18 @@ export async function observationSourcePaths({directory, base, series = null, wi
   for (const finding of findings.values()) for (const name of [finding.path, ...finding.affected_paths]) if (name) names.add(name);
   const previous = series.rounds.at(-1);
   for (const name of previous?.unreviewed ?? previous?.response?.unreviewed ?? []) {
+    if (cohortDiagnostic(name)) {
+      // Recover concrete known paths from older reducer diagnostics. Current
+      // reducers also retain each missing path independently of their prose.
+      const missing = name.match(/^Cohort [A-Za-z0-9_-]+ omitted required coverage: (.+)$/);
+      for (const item of missing?.[1].split(", ") ?? []) if (known.has(item)) names.add(item);
+      continue;
+    }
     // Unfinished scope can also contain prose. Existing names and explicit file
     // syntax participate in source closure; semantic labels remain unfinished.
     if (known.has(name) || name.includes("/") || /\.[A-Za-z0-9_-]+$/.test(name)) names.add(name);
   }
-  const paths = [...names].filter((name) => !external.has(name)).sort();
+  const paths = [...names].filter((name) => !external.has(name) && !cohortDiagnostic(name)).sort();
   return withBindingState ? {paths, established: paths.filter((name) => known.has(name))} : paths;
 }
 
@@ -335,7 +346,7 @@ export async function prepareSeries({directory, candidate, inputs, files, fileFa
     initialAssessmentComplete = true;
   }
   const pendingChanged = [...new Set([...changed, ...(previous?.review_status === "INCOMPLETE" ? previous.pending_changed_paths ?? previous.changed_since_previous : [])])].sort();
-  const requiredPaths = [...new Set([...candidate.files, ...pendingChanged, ...observedPaths.filter((name) => !unavailableSources.some((item) => item.path === name)), ...unfinishedScope.filter((name) => Object.hasOwn(snapshot.files, name)), ...(!previous ? snapshot.external_paths.filter((name) => snapshot.files[name] !== null) : [])])].sort();
+  const requiredPaths = [...new Set([...candidate.files, ...pendingChanged, ...observedPaths.filter((name) => !unavailableSources.some((item) => item.path === name)), ...unfinishedScope.filter((name) => Object.hasOwn(snapshot.files, name)), ...(!previous ? snapshot.external_paths.filter((name) => snapshot.files[name] !== null) : [])])].filter(name => !cohortDiagnostic(name)).sort();
   const observedAssessments = series.rounds.flatMap((round) => {
     const observed = round.observed_assessment;
     if (!observed) return [];

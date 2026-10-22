@@ -5,6 +5,8 @@ import path from "node:path";
 import test from "node:test";
 import {prepareSeries, reviewSnapshot, assessRound, saveRound, verifySeries, inheritObservedEvidence} from "../scripts/oracle-series.mjs";
 import {contentHash} from "../scripts/oracle-inputs.mjs";
+import {cohortPlan, aggregateCohorts} from "../scripts/oracle-parallel.mjs";
+import {bindingHash} from "../scripts/oracle-inputs.mjs";
 
 const coverage = (name, dependencies = [name]) => ({path: name, dependencies, dependency_rationale: "Synthetic complete dependency closure.", assessment: "Synthetic behavior and failure paths checked.", criteria: ["Synthetic acceptance and failure criteria."], evidence: ["Synthetic source inspection."], finding_ids: []});
 const finding = (id = "F-1", extra = {}) => ({id, severity: "high", code: id, message: "Synthetic defect.", path: "a.mjs", reproduction: "Invoke the synthetic failing input.", required_behavior: "Return the expected synthetic output.", affected_paths: ["a.mjs"], acceptance_checks: ["Exercise the synthetic failure."], origin: "initial", missed_finding_reason: null, ...extra});
@@ -141,6 +143,32 @@ test("raw unfinished scope survives movement and supersedes older path coverage 
   const repaired = response({coverage: current.public.required_paths.map((name) => coverage(name))});
   await record(current, repaired);
   assert.deepEqual((await prepare({files: {...options.files, "config.json": "changed-independent-config"}})).public.unfinished_scope, []);
+});
+
+test("actual cohort missing-coverage diagnostics resume as semantic scope and concrete source obligations", async t => {
+  const {prepare, options, inputs, directory} = await fixture(t), attempted = await prepare();
+  const plan = cohortPlan({candidate: {...options.candidate, commit: "1".repeat(40)}, inputs,
+    context: {...attempted.public, required_paths: ["a.mjs", "b.mjs", "test.mjs"]}});
+  const outcomes = plan.cohorts.map(cohort => ({id: cohort.id, envelope: {
+    cohort_id: cohort.id, candidate_commit: plan.candidate_commit, candidate_tree: plan.candidate_tree,
+    input_binding_sha256: plan.input_binding_sha256, plan_sha256: plan.plan_sha256,
+    reviewer_settings_sha256: bindingHash(plan.reviewer_settings), cross_area_assessment: "Synthetic reducer/series recovery path.",
+    response: response({coverage: cohort.required_paths.filter(name => name === "a.mjs").map(name => coverage(name))})}}));
+  const raw = aggregateCohorts(plan, outcomes).response;
+  const diagnostics = raw.unreviewed.filter(name => name.startsWith("Cohort "));
+  assert.ok(diagnostics.some(name => name.includes("omitted required coverage:")));
+  assert.ok(raw.unreviewed.includes("b.mjs")); assert.ok(raw.unreviewed.includes("test.mjs"));
+  const filename = path.join(directory, "cohort-response.json"), bytes = JSON.stringify(raw); await writeFile(filename, bytes);
+  await saveRound(attempted, null, null, {error: {message: "Synthetic interrupted aggregate."},
+    observed: {response: raw, assessed: assessRound(attempted, raw, inputs.validation),
+      response_evidence: {value: `@${filename}`, sha256: contentHash(bytes)}}});
+  const current = await prepare();
+  assert.ok(current.public.required_paths.includes("b.mjs")); assert.ok(current.public.required_paths.includes("test.mjs"));
+  for (const diagnostic of diagnostics) {
+    assert.ok(current.public.unfinished_scope.includes(diagnostic));
+    assert.ok(!current.public.required_paths.includes(diagnostic));
+    assert.ok(!Object.hasOwn(current.snapshot.files, diagnostic));
+  }
 });
 
 test("raw finding-only and explicit file scope require fresh absence coverage outside original membership", async (t) => {
