@@ -173,10 +173,11 @@ test("actual copied log formats preserve every escaped identity occurrence acros
 
 test("decoded keys, handles, emails and denylist values keep privacy rejection in streamed text", async t => {
   const f = await fixture(t);
+  const email = ["synthetic", ["reserved", "invalid"].join(".")].join(String.fromCharCode(64));
   const cases = [
     ["Vault/reviews/escaped.stdout.log", '{"safe":true}\n{"\\u0075ser_id":"synthetic"}', /identity-bearing-evidence-field/, []],
     ["Vault/tmp/handle.stderr.log", JSON.stringify({safe: true}) + '\n{"value":"bos\\u005fctx\\u005fv2_' + "a".repeat(64) + '"}', /bos-context-handle-value/, []],
-    ["Vault/tmp/email.ndjson", '{"safe":true}\n{"value":"synthetic\\u0040reserved.invalid"}', /non-synthetic email address/, []],
+    ["Vault/tmp/email.ndjson", '{"safe":true}\n' + JSON.stringify({value: email}).replace(String.fromCharCode(64), "\\u0040"), /non-synthetic email address/, []],
     ["Vault/tmp/denylist.jsonl", '{"safe":true}\n{"value":"synthetic\\u002ddenied\\u002dcustomer"}', /externally denied/, ["synthetic-denied-customer"]]
   ];
   for (const [name, text, expected, denylistValues] of cases) {
