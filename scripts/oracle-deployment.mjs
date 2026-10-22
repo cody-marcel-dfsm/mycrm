@@ -1,11 +1,12 @@
 import {execFile} from "node:child_process";
-import {readFile, readdir} from "node:fs/promises";
+import {readFile, readdir, realpath} from "node:fs/promises";
 import {promisify} from "node:util";
 import {fileURLToPath} from "node:url";
 import path from "node:path";
 import process from "node:process";
-import {bindingHash, evidenceBinding, metadataDirectory, readMetadataFile, writeMetadataFile, assertPublishedInvocation} from "./oracle-inputs.mjs";
+import {bindingHash, contentHash, evidenceBinding, metadataDirectory, pathCustody, readMetadataFile, writeMetadataFile, assertPublishedInvocation} from "./oracle-inputs.mjs";
 import {readValidationProofs} from "./oracle-validation.mjs";
+import {policyModules} from "./oracle-policy.mjs";
 
 const execute = promisify(execFile);
 const hashPattern = /^[a-f0-9]{64}$/;
@@ -50,6 +51,60 @@ async function directory(root) {
   return {owner, value};
 }
 
+// Invocation-local immutable traversal facts. Original native bytes, absence,
+// modes and transitive custody remain live acceptance inputs at return.
+async function historyTraversal(root) {
+  const layout = await directory(root), canonicalRoot = await realpath(root), native = new Map(), policy = new Map();
+  const policyRoot = fileURLToPath(new URL(".", import.meta.url));
+  const snapshot = async (filename, scopeRoot, metadata) => {
+    const custody = await pathCustody(root, filename, {scopeRoot, allowMissing: true, allowFinalLink: false});
+    const bytes = custody.metadata === null ? null : metadata ? await readMetadataFile(filename, {}, {root: layout.owner}) : await readFile(custody.resolved_path);
+    if (custody.metadata !== null && custody.metadata.type !== "regular") throw new Error("History dependency must remain a regular file");
+    return {path: filename, sha256: bytes === null ? null : contentHash(bytes), custody, bytes};
+  };
+  const identity = ({bytes: _bytes, ...value}) => value;
+  const changed = (message, source = false) => Object.assign(new Error(message), {code: source ? "ORACLE_INPUT_DRIFT" : "ORACLE_EVIDENCE_INTEGRITY"});
+  const remember = (records, value) => {
+    const old = records.get(value.path);
+    if (old && bindingHash(identity(old)) !== bindingHash(identity(value))) throw changed("Original deployment-history dependency changed during traversal");
+    records.set(value.path, old ?? value);
+  };
+  for (const name of policyModules) {
+    const value = await snapshot(fileURLToPath(new URL(name, import.meta.url)), policyRoot, false);
+    if (value.bytes === null) throw changed("Deployment-history verifier source is missing", true);
+    remember(policy, value);
+  }
+  const read = async (filename, encoding = null) => {
+    const value = await snapshot(filename, layout.owner, true); remember(native, value);
+    if (value.bytes === null) throw Object.assign(new Error(`Native history dependency is missing: ${filename}`), {code: "ENOENT"});
+    return typeof encoding === "string" ? value.bytes.toString(encoding) : value.bytes;
+  };
+  const bindProofs = async (receipt, proofs) => {
+    for (const proof of proofs) {
+      const original = receipt.input_binding.validation.find(item => item.value === proof.evidence);
+      const recordPath = path.resolve(root, proof.evidence.replace(/^@/, ""));
+      const record = await read(recordPath);
+      if (contentHash(record) !== original.sha256) throw changed("Original history validation record changed");
+      const output = await read(path.resolve(root, proof.record.output_file));
+      if (contentHash(output) !== proof.record.output_sha256) throw changed("Original history validation output changed");
+    }
+  };
+  const verify = async () => {
+    // Evidence wins over simultaneous source movement. Never turn damaged
+    // cached native proof into a source-continuation hint.
+    for (const [filename, old] of native) {
+      const value = await snapshot(filename, layout.owner, true);
+      if (bindingHash(identity(old)) !== bindingHash(identity(value))) throw changed("Original cached deployment-history evidence, absence or custody changed");
+    }
+    if (await realpath(root) !== canonicalRoot || (await directory(root)).owner !== layout.owner) throw changed("Deployment-history repository identity changed");
+    for (const [filename, old] of policy) {
+      const value = await snapshot(filename, policyRoot, false);
+      if (bindingHash(identity(old)) !== bindingHash(identity(value))) throw changed("Deployment-history verifier source or policy changed", true);
+    }
+  };
+  return {layout, read, bindProofs, verify, receipts: new Map(), histories: new Map()};
+}
+
 export async function archiveTechnicalReceipt(receipt, store, owner = path.dirname(store)) {
   if (receipt.verdict !== "APPROVED" || receipt.review_status !== "COMPLETE") return;
   const filename = path.join(store, "technical-receipts", `${receipt.receipt_sha256}.json`);
@@ -68,10 +123,10 @@ export async function archiveTechnicalReceipt(receipt, store, owner = path.dirna
   return filename;
 }
 
-async function readBaseline(store, owner) {
-  const baseline = JSON.parse(await readMetadataFile(path.join(store, "deployment-baseline.json"), "utf8", {root: owner}));
+async function readBaseline(store, owner, read = (filename, encoding) => readMetadataFile(filename, encoding, {root: owner})) {
+  const baseline = JSON.parse(await read(path.join(store, "deployment-baseline.json"), "utf8"));
   if (baseline.schema !== "my-crm.deployment-baseline/v1" || !commitPattern.test(baseline.commit ?? "") || !hashPattern.test(baseline.first_receipt_sha256 ?? "")) throw new Error("Deployment adoption baseline is invalid");
-  const original = JSON.parse(await readMetadataFile(path.join(store, "technical-receipts", `${baseline.first_receipt_sha256}.json`), "utf8", {root: owner}));
+  const original = JSON.parse(await read(path.join(store, "technical-receipts", `${baseline.first_receipt_sha256}.json`), "utf8"));
   const {verifyReceipt} = await import("./oracle-review.mjs");
   verifyReceipt(original, original.reviewed_tree);
   if (original.receipt_sha256 !== baseline.first_receipt_sha256 || original.deployment_baseline_commit !== baseline.commit) throw new Error("Deployment adoption baseline differs from its original native technical receipt");
@@ -79,6 +134,19 @@ async function readBaseline(store, owner) {
 }
 
 export async function committedReceipt(root, reference) {
+  const traversal = await historyTraversal(root), result = await cachedCommittedReceipt(root, reference, traversal);
+  await traversal.verify(); return result;
+}
+
+async function cachedCommittedReceipt(root, reference, traversal) {
+  const commit = commitPattern.test(reference) ? reference : await git(root, ["rev-parse", "--verify", "--end-of-options", `${reference}^{commit}`]);
+  if (traversal.receipts.has(commit)) return traversal.receipts.get(commit);
+  const pending = readCommittedReceipt(root, commit, traversal); traversal.receipts.set(commit, pending);
+  try { return await pending; }
+  catch (error) { if (error.code !== "MYCRM_MISSING_HISTORICAL_RECEIPT") traversal.receipts.delete(commit); throw error; }
+}
+
+async function readCommittedReceipt(root, reference, traversal) {
   const {parseTrailers, verifyPublishedCommitTrailers, verifyReceipt} = await import("./oracle-review.mjs");
   const commit = await git(root, ["rev-parse", "--verify", "--end-of-options", `${reference}^{commit}`]);
   const tree = await git(root, ["rev-parse", `${commit}^{tree}`]);
@@ -86,9 +154,9 @@ export async function committedReceipt(root, reference) {
   let message = await git(root, ["show", "-s", "--format=%B", reviewedCommit]);
   let detached = null;
   if (!parseTrailers(message)["Oracle-Verdict"]) {
-    const {owner, value} = await directory(root);
+    const {owner, value} = traversal.layout;
     try {
-      detached = JSON.parse(await readMetadataFile(path.join(value, "committed-receipts", `${commit}.json`), "utf8", {root: owner}));
+      detached = JSON.parse(await traversal.read(path.join(value, "committed-receipts", `${commit}.json`), "utf8"));
       const {checkpointDigest} = await import("./shipment-state.mjs");
       if (detached.schema !== "my-crm.shipment-validated/v1" || detached.checkpoint_sha256 !== checkpointDigest(detached) || detached.last_validated_commit !== commit || detached.tree !== tree || !hashPattern.test(detached.receipt_sha256 ?? "")) throw new Error("Detached committed-source checkpoint is malformed or changed");
     } catch (error) { if (error.code !== "ENOENT") throw error; }
@@ -97,14 +165,14 @@ export async function committedReceipt(root, reference) {
     const parents = (await git(root, ["show", "-s", "--format=%P", commit])).split(" ");
     if (parents.length !== 2 || await git(root, ["rev-parse", `${parents[1]}^{tree}`]) !== tree) throw missingHistory("Publication candidate has no exact-tree technical review stamp");
     await git(root, ["merge-base", "--is-ancestor", parents[0], parents[1]]);
-    const reviewed = await committedReceipt(root, parents[1]);
+    const reviewed = await cachedCommittedReceipt(root, parents[1], traversal);
     return {...reviewed, commit, tree, reviewedCommit: reviewed.reviewedCommit};
   }
   const trailers = detached ? {"Oracle-Receipt-SHA256": detached.receipt_sha256} : verifyPublishedCommitTrailers({message, tree});
-  const {owner, value} = await directory(root);
+  const {owner, value} = traversal.layout;
   const filename = path.join(value, "technical-receipts", `${trailers["Oracle-Receipt-SHA256"]}.json`);
   let original;
-  try { original = await readMetadataFile(filename, "utf8", {root: owner}); }
+  try { original = await traversal.read(filename, "utf8"); }
   catch (error) { if (error.code === "ENOENT") throw missingHistory("Original private historical technical receipt is unavailable", error); throw error; }
   const receipt = verifyReceipt(JSON.parse(original), tree);
   if (receipt.receipt_sha256 !== trailers["Oracle-Receipt-SHA256"]) throw new Error("Archived technical receipt identity differs from the reviewed commit stamp");
@@ -116,7 +184,8 @@ export async function committedReceipt(root, reference) {
     if (receipt.candidate_commit !== commit || parents[0] !== receipt.deployment_history_base_commit) throw new Error("Detached receipt differs from its exact reviewed commit or history parent");
     await git(root, ["merge-base", "--is-ancestor", receipt.base_commit, commit]);
   } else if (parents[0] !== receipt.base_commit) throw new Error("Technical receipt base differs from the reviewed source commit parent");
-  await readValidationProofs({root, directory: value, validation: receipt.input_binding?.validation ?? [], checkCurrentExecutable: false});
+  const proofs = await readValidationProofs({root, directory: value, validation: receipt.input_binding?.validation ?? [], checkCurrentExecutable: false});
+  await traversal.bindProofs(receipt, proofs);
   if (receipt.deployment_history_status === "UNAVAILABLE") throw missingHistory("Technical receipt lacks its sealed deployment-history binding: original readiness was UNAVAILABLE; assess the complete current range");
   if (receipt.deployment_history_status !== "READY" || !commitPattern.test(receipt.deployment_baseline_commit ?? "") || !hashPattern.test(receipt.deployment_history_sha256 ?? "")) throw new Error("Technical receipt lacks its sealed deployment-history binding");
   return {commit, tree, reviewedCommit, receipt, filename};
@@ -127,7 +196,7 @@ const historyDigest = (history, recovered = history.recovered_commits ?? []) => 
   return recovered.length ? bindingHash({receipts, recovered}) : bindingHash(receipts);
 };
 
-async function historyBetween(root, baseline, target, cache = new Map(), recoveryReceipt = null) {
+async function historyBetween(root, baseline, target, cache, recoveryReceipt = null, traversal) {
   const cacheKey = `${baseline}:${target}:${recoveryReceipt?.receipt_sha256 ?? "none"}`;
   if (cache.has(cacheKey)) return cache.get(cacheKey);
   await git(root, ["merge-base", "--is-ancestor", baseline, target]);
@@ -136,7 +205,7 @@ async function historyBetween(root, baseline, target, cache = new Map(), recover
   const history = [], seen = new Set(), recovered = [];
   for (const commit of commits) {
     let entry;
-    try { entry = await committedReceipt(root, commit); }
+    try { entry = await cachedCommittedReceipt(root, commit, traversal); }
     catch (error) {
       const tree = await git(root, ["rev-parse", `${commit}^{tree}`]);
       if (error.code !== "MYCRM_MISSING_HISTORICAL_RECEIPT" || covered.get(commit) !== tree) throw error;
@@ -145,7 +214,7 @@ async function historyBetween(root, baseline, target, cache = new Map(), recover
     if (seen.has(entry.receipt.receipt_sha256)) continue;
     if (entry.receipt.deployment_baseline_commit !== baseline) throw new Error("Deployment history changed its sealed adoption baseline");
     if (entry.receipt.base_commit === commit) throw new Error("Deployment history has a cyclic receipt base");
-    const prior = await historyBetween(root, baseline, (entry.receipt.deployment_history_base_commit ?? entry.receipt.base_commit), cache, entry.receipt);
+    const prior = await historyBetween(root, baseline, (entry.receipt.deployment_history_base_commit ?? entry.receipt.base_commit), cache, entry.receipt, traversal);
     if (entry.receipt.deployment_history_sha256 !== historyDigest(prior)) throw new Error("Technical receipt deployment-history binding is stale or incomplete");
     validateDeploymentDispositions(entry.receipt, prior);
     history.push(entry); seen.add(entry.receipt.receipt_sha256);
@@ -156,12 +225,12 @@ async function historyBetween(root, baseline, target, cache = new Map(), recover
 }
 
 export async function deploymentHistoryForReview(root = process.cwd(), {head: requestedHead = "HEAD"} = {}) {
-  const head = await git(root, ["rev-parse", requestedHead]), {owner, value} = await directory(root);
+  const head = await git(root, ["rev-parse", requestedHead]), traversal = await historyTraversal(root), {owner, value} = traversal.layout;
   let baseline = null, unavailable = null;
-  try { baseline = (await readBaseline(value, owner)).commit; }
+  try { baseline = (await readBaseline(value, owner, traversal.read)).commit; }
   catch (error) {
     let exists = true;
-    try { await readMetadataFile(path.join(value, "deployment-baseline.json"), "utf8", {root: owner}); }
+    try { await traversal.read(path.join(value, "deployment-baseline.json"), "utf8"); }
     catch (missing) { if (missing.code === "ENOENT") exists = false; else throw missing; }
     if (exists) unavailable = `Original deployment-history custody requires recovery: ${error.message}`;
     let published = null;
@@ -174,9 +243,9 @@ export async function deploymentHistoryForReview(root = process.cwd(), {head: re
   const history = [], unknown = [], seen = new Set();
   for (const commit of commits) {
     try {
-      const entry = await committedReceipt(root, commit);
+      const entry = await cachedCommittedReceipt(root, commit, traversal);
       if (entry.receipt.deployment_baseline_commit !== baseline) throw new Error("Original receipt uses another adoption baseline");
-      const prior = await historyBetween(root, baseline, (entry.receipt.deployment_history_base_commit ?? entry.receipt.base_commit), new Map(), entry.receipt);
+      const prior = await historyBetween(root, baseline, (entry.receipt.deployment_history_base_commit ?? entry.receipt.base_commit), traversal.histories, entry.receipt, traversal);
       if (entry.receipt.deployment_history_sha256 !== historyDigest(prior)) throw new Error("Original receipt history binding is incomplete");
       validateDeploymentDispositions(entry.receipt, prior);
       if (!seen.has(entry.receipt.receipt_sha256)) { history.push(entry); seen.add(entry.receipt.receipt_sha256); }
@@ -191,6 +260,8 @@ export async function deploymentHistoryForReview(root = process.cwd(), {head: re
   const recovered = unknown.filter((item) => item.recoverable).map(({commit, tree}) => ({commit, tree}));
   history.recovered_commits = recovered;
   const integratedPaths = unverified.length || unavailable ? (baseline ? await git(root, ["diff", "--name-only", baseline, head]) : await git(root, ["ls-tree", "-r", "--name-only", head])).split("\n").filter(Boolean) : [];
+  await traversal.verify();
+  if (await git(root, ["rev-parse", requestedHead]) !== head) throw Object.assign(new Error("Deployment-history candidate moved during traversal"), {code: "ORACLE_CANDIDATE_MOVED"});
   return {baseline, history, sha256: historyDigest(history, recovered), recovered_commits: recovered, unverified_commits: unverified, integrated_paths: integratedPaths, status: unavailable ? "UNAVAILABLE" : "READY", limitation: unavailable};
 }
 

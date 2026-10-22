@@ -325,6 +325,17 @@ async function review(args = [], {run, phase, producer = null, verifyProducer = 
     await assertEvidenceIntegrity(process.cwd(), [...admittedEvidence, admittedOwner]);
     await nativeCohortObservations({root: process.cwd(), directory, retained: cohortAssessments});
   };
+  const withIntegrityPrecedence = async original => {
+    try { await recheckAdmittedEvidence(); return original; }
+    catch (integrityError) {
+      // Repeated catches preserve the first failure, rather than replacing a
+      // producer/candidate error with an earlier integrity wrapper.
+      integrityError.original_error = original.original_error ?? {name: original.name, message: original.message, code: original.code ?? null};
+      await atomicJson(path.join(run, "integrity-failure.json"), {original_error: integrityError.original_error,
+        integrity_error: {name: integrityError.name, message: integrityError.message, code: integrityError.code ?? null}});
+      return integrityError;
+    }
+  };
   // Every admitted phase shares the original evidence boundary, including
   // preparation and receipt/checkpoint failures outside the assessment block.
   try {
@@ -339,7 +350,7 @@ async function review(args = [], {run, phase, producer = null, verifyProducer = 
     const deployment = await candidateDeploymentHistory(current);
     await recheckAdmittedEvidence();
     return {...inputs, ...(current.commit ? {candidate_commit: current.commit} : {}), reviewer_settings: await selectedSettings(), deployment_history_sha256: deployment.sha256, deployment_baseline_commit: deployment.baseline, deployment_history_state_sha256: bindingHash({status: deployment.status, unverified: deployment.unverified_commits, limitation: deployment.limitation})};
-  } catch (error) { await recheckAdmittedEvidence(); throw error; } };
+  } catch (error) { throw await withIntegrityPrecedence(error); } };
   const inputs = await phase("snapshot_ms", capture);
   const settings = await phase("model_selection_ms", async () => inputs.reviewer_settings);
   const {model, reasoning_effort: effort} = settings;
@@ -415,8 +426,11 @@ async function review(args = [], {run, phase, producer = null, verifyProducer = 
       // Candidate/producer movement cannot skip the original record, nested
       // output and custody checks. Current executable/source applicability is
       // still evaluated; an intact moved candidate receives a fresh assessment.
-      const currentProofs = await readValidationProofs({root: process.cwd(), directory, validation: inputs.validation});
-      await assertEvidenceIntegrity(process.cwd(), [...inputs.validation, inputs.owner]);
+      let currentProofs;
+      try {
+        currentProofs = await readValidationProofs({root: process.cwd(), directory, validation: inputs.validation});
+        await assertEvidenceIntegrity(process.cwd(), [...inputs.validation, inputs.owner]);
+      } catch (error) { throw await withIntegrityPrecedence(movement ?? error); }
       if (movement) throw movement;
       assertValidationProofsMatch(series.public.validation_proofs, currentProofs);
       assertInputsMatch(inputs, current);
@@ -430,8 +444,7 @@ async function review(args = [], {run, phase, producer = null, verifyProducer = 
   } catch (error) {
     // Preparation, dispatch and reducer errors also remain inside the admitted
     // evidence boundary, including errors before a reviewer returns a response.
-    let terminalError = error;
-    try { await recheckAdmittedEvidence(); } catch (integrityError) { terminalError = integrityError; }
+    const terminalError = await withIntegrityPrecedence(error);
     let observationError = null, execution = null, executionEvidence = null;
     if (!assessed) {
       try {
@@ -462,7 +475,7 @@ async function review(args = [], {run, phase, producer = null, verifyProducer = 
       }
     }
     await saveRound(series, null, null, {cohortReports, error: {name: terminalError.name, message: terminalError.message, observation_error: observationError,
-      ...(terminalError !== error ? {original_error: {name: error.name, message: error.message, code: error.code ?? null}} : {})}, observed: assessed ? {response, assessed, response_evidence: {value: `@${outputPath}`, sha256: sha256(rawResponse)}, execution, execution_evidence: executionEvidence} : null});
+      ...(terminalError.original_error ? {original_error: terminalError.original_error} : terminalError !== error ? {original_error: {name: error.name, message: error.message, code: error.code ?? null}} : {})}, observed: assessed ? {response, assessed, response_evidence: {value: `@${outputPath}`, sha256: sha256(rawResponse)}, execution, execution_evidence: executionEvidence} : null});
     throw terminalError;
   }
   if (response.warning) process.stderr.write(`${response.warning}\n`);
@@ -496,15 +509,7 @@ async function review(args = [], {run, phase, producer = null, verifyProducer = 
   if (receipt.verdict !== "APPROVED") process.exitCode = 1;
   return receipt;
   } catch (error) {
-    try { await recheckAdmittedEvidence(); }
-    catch (integrityError) {
-      await atomicJson(path.join(run, "integrity-failure.json"), {
-        original_error: {name: error.name, message: error.message, code: error.code ?? null},
-        integrity_error: {name: integrityError.name, message: integrityError.message, code: integrityError.code ?? null},
-      });
-      throw integrityError;
-    }
-    throw error;
+    throw await withIntegrityPrecedence(error);
   }
 }
 

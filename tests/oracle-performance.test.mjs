@@ -7,7 +7,7 @@ import {fileURLToPath} from "node:url";
 import {promisify} from "node:util";
 import test from "node:test";
 import {captureInputs, assertInputsMatch, withOracleRun, preparedEvidence, observedSourceBindings, bindingHash, pathCustody, evidenceBinding} from "../scripts/oracle-inputs.mjs";
-import {receiptSha256, sha256} from "../scripts/oracle-review.mjs";
+import {receiptSha256, sha256, runReviewAttempt} from "../scripts/oracle-review.mjs";
 import {seriesDigest, reviewSnapshot} from "../scripts/oracle-series.mjs";
 import {readValidationProofs, inheritNativeEvidence, executableBinding, fileMetadata} from "../scripts/oracle-validation.mjs";
 import {admitDeployment} from "../scripts/oracle-deployment.mjs";
@@ -641,6 +641,44 @@ catch(error){if(error.stderr)process.stderr.write(error.stderr);process.exitCode
     }
     await assert.rejects(readFile(path.join(repo, ".git/oracle/approval.json")), {code: "ENOENT"});
     await assert.rejects(readFile(path.join(repo, ".git/oracle/shipment-validated.json")), {code: "ENOENT"});
+  });
+});
+
+test("first and second producer rechecks preserve original movement alongside integrity failure", async t => {
+  for (const check of [1, 2]) for (const kind of ["supplied", "native", "inherited-native", "source-only"]) await t.test(`${check} ${kind}`, async context => {
+    const {repo, root, env, prepare} = await fixture(context); await prepare();
+    const sameEnvironment = {...env, CODEX_THREAD_ID: "", CODEX_SELECTED_MODEL: "synthetic-test-model", CODEX_SELECTED_REASONING_EFFORT: "high", ORACLE_OMIT_VALIDATION: "1"};
+    let reference, target;
+    if (kind.includes("native")) {
+      const captured = await command(repo, ["validate", "--input", "candidate.txt", "--", process.execPath, "-e", "console.log('early native proof')"], sameEnvironment);
+      reference = captured.stdout.match(/ORACLE_VALIDATION_EVIDENCE=(.+)/)[1].trim(); target = JSON.parse(await readFile(reference.slice(1))).output_file;
+      if (kind === "inherited-native") await command(repo, ["review", "--validation", reference], sameEnvironment);
+    } else {
+      target = path.join(repo, "Vault/tmp/early-evidence.txt"); await writeFile(target, "original early immutable evidence"); reference = `@${target}`;
+    }
+    const previousCwd = process.cwd(), previousEnv = {...process.env}, message = `Original producer movement at check ${check}`, args = kind === "inherited-native" ? [] : ["--validation", reference];
+    let observed = 0;
+    try {
+      process.chdir(repo); Object.assign(process.env, sameEnvironment);
+      await assert.rejects(runReviewAttempt(args, {verifyProducer: async () => {
+        if (++observed !== check) return;
+        await chmod(path.join(repo, "candidate.txt"), 0o755);
+        if (kind !== "source-only") await writeFile(target, "changed immutable evidence");
+        throw Object.assign(new Error(message), {code: "ORACLE_INPUT_DRIFT"});
+      }}), error => kind === "source-only" ? error.code === "ORACLE_INPUT_DRIFT" && error.message === message : /native validation output|supplied evidence integrity/.test(error.message));
+      const active = JSON.parse(await readFile(path.join(repo, ".git/oracle/active-review.json"))), run = path.join(repo, ".git/oracle/runs", active.id);
+      const outcome = JSON.parse(await readFile(path.join(run, "outcome.json"))); assert.equal(outcome.outcome, "ERROR"); assert.equal(outcome.reviewer_invoked, false);
+      if (kind === "source-only") await assert.rejects(readFile(path.join(run, "integrity-failure.json")), {code: "ENOENT"});
+      else {
+        const failure = JSON.parse(await readFile(path.join(run, "integrity-failure.json")));
+        assert.equal(failure.original_error.code, "ORACLE_INPUT_DRIFT"); assert.equal(failure.original_error.message, message);
+        assert.match(failure.integrity_error.message, /native validation output|supplied evidence integrity/);
+      }
+      await assert.rejects(readFile(path.join(repo, ".git/oracle/approval.json")), {code: "ENOENT"});
+      await assert.rejects(readFile(path.join(repo, ".git/oracle/shipment-validated.json")), {code: "ENOENT"});
+    } finally {
+      process.chdir(previousCwd); for (const name of Object.keys(process.env)) if (!(name in previousEnv)) delete process.env[name]; Object.assign(process.env, previousEnv);
+    }
   });
 });
 

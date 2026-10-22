@@ -1,6 +1,7 @@
 import assert from "node:assert/strict";
 import {execFile} from "node:child_process";
-import {mkdir, mkdtemp, readFile, rm, writeFile} from "node:fs/promises";
+import {mkdir, mkdtemp, readFile, rm, writeFile, chmod, cp} from "node:fs/promises";
+import {fileURLToPath} from "node:url";
 import os from "node:os";
 import path from "node:path";
 import {promisify} from "node:util";
@@ -23,11 +24,11 @@ async function fixture(t) {
   await git("add", "."); await git("commit", "-m", "Synthetic pre-policy published base");
   await git("update-ref", "refs/remotes/origin/main", await git("rev-parse", "HEAD"));
   const store = path.join(root, ".git/oracle");
-  const commit = async (content, {effects = [], dispositions = [], owner = null} = {}) => {
+  const commit = async (content, {effects = [], dispositions = [], owner = null, validation = []} = {}) => {
     await writeFile(path.join(root, "candidate.txt"), content);
     await git("add", "-A");
     const history = await deploymentHistoryForReview(root);
-    const receipt = {schema: "my-crm.oracle-approval/v2", repository: "my-crm", verdict: "APPROVED", review_status: "COMPLETE", authentication_impact: Boolean(effects.length), owner_approval_status: effects.length ? "MISSING" : "NOT_REQUIRED", reviewed_tree: await git("write-tree"), base_commit: await git("rev-parse", "HEAD"), protected_deployment_effects: effects, deployment_effect_dispositions: dispositions, deployment_baseline_commit: history.baseline, deployment_history_sha256: history.sha256, deployment_history_status: history.status, recovered_deployment_commits: history.recovered_commits, input_binding: {owner, validation: []}, ...reviewerMetadata};
+    const receipt = {schema: "my-crm.oracle-approval/v2", repository: "my-crm", verdict: "APPROVED", review_status: "COMPLETE", authentication_impact: Boolean(effects.length), owner_approval_status: effects.length ? "MISSING" : "NOT_REQUIRED", reviewed_tree: await git("write-tree"), base_commit: await git("rev-parse", "HEAD"), protected_deployment_effects: effects, deployment_effect_dispositions: dispositions, deployment_baseline_commit: history.baseline, deployment_history_sha256: history.sha256, deployment_history_status: history.status, recovered_deployment_commits: history.recovered_commits, input_binding: {owner, validation}, ...reviewerMetadata};
     receipt.receipt_sha256 = receiptSha256(receipt);
     await archiveTechnicalReceipt(receipt, store, path.join(root, ".git"));
     const message = path.join(root, ".git/synthetic-message"); await writeFile(message, stampCommitMessage("Synthetic reviewed source", receipt));
@@ -43,6 +44,48 @@ test("ordinary repairs deploy without human approval and preserve exact technica
   const receipt = JSON.parse(await readFile(release.archive)); receipt.summary = "changed archive";
   await writeFile(release.archive, JSON.stringify(receipt));
   await assert.rejects(admitDeployment({root: f.root}), /digest/);
+});
+
+test("history traversal reuses each verified commit and rejects changed cached dependency closure", async t => {
+  const f = await fixture(t);
+  await cp(new URL("../scripts", import.meta.url), path.join(f.root, "scripts"), {recursive: true});
+  await cp(new URL("../package.json", import.meta.url), path.join(f.root, "package.json"));
+  await cp(new URL("../node_modules", import.meta.url), path.join(f.root, "node_modules"), {recursive: true, dereference: true});
+  await writeFile(path.join(f.root, ".gitignore"), "Vault/\nnode_modules/\n");
+  await writeFile(path.join(f.root, "candidate.txt"), "first reviewed source\n"); await f.git("add", ".");
+  const capture = await execute(process.execPath, [fileURLToPath(new URL("../scripts/oracle-review.mjs", import.meta.url)), "validate", "--input", "candidate.txt", "--", process.execPath, "-e", "console.log('synthetic history proof')"], {cwd: f.root});
+  const proofRef = capture.stdout.match(/ORACLE_VALIDATION_EVIDENCE=(.+)/)[1].trim(), proof = JSON.parse(await readFile(proofRef.slice(1)));
+  const first = await f.commit("first reviewed source\n", {validation: [await evidenceBinding(f.root, proofRef)]});
+  const unsealed = async label => {await writeFile(path.join(f.root, "candidate.txt"), label);await f.git("add", ".");await f.git("commit", "-m", label);return f.git("rev-parse", "HEAD");};
+  const unknown = await unsealed("synthetic recovered source one"), second = await f.commit("second reviewed source\n");
+  const laterUnknown = await unsealed("synthetic recovered source two"), third = await f.commit("third reviewed source\n");
+  assert.deepEqual(second.receipt.recovered_deployment_commits.map(item => item.commit), [unknown]);
+  assert.deepEqual(third.receipt.recovered_deployment_commits.map(item => item.commit), [unknown, laterUnknown]);
+  const bin = path.join(f.store, "history-bin"), log = path.join(f.store, "history-git.log"), control = path.join(f.store, "history-damage.json"); await mkdir(bin);
+  const actualGit = (await execute("which", ["git"])).stdout.trim();
+  await writeFile(path.join(bin, "git"), `#!${process.execPath}
+const fs=require('node:fs'),cp=require('node:child_process');const args=process.argv.slice(2);
+fs.appendFileSync(${JSON.stringify(log)},JSON.stringify(args)+'\\n');
+if(args.join(' ')===${JSON.stringify(`rev-parse --verify --end-of-options ${second.commit}^{commit}`)}&&fs.existsSync(${JSON.stringify(control)})){
+ const value=JSON.parse(fs.readFileSync(${JSON.stringify(control)}));fs.unlinkSync(${JSON.stringify(control)});
+ if(value.action==='missing')fs.unlinkSync(value.path);else if(value.action==='custody')fs.chmodSync(value.path,0o640);else if(value.action==='directory')fs.chmodSync(value.path,0o750);else {fs.mkdirSync(require('node:path').dirname(value.path),{recursive:true});fs.writeFileSync(value.path,value.bytes);}
+}
+try{process.stdout.write(cp.execFileSync(${JSON.stringify(actualGit)},args));}catch(error){if(error.stderr)process.stderr.write(error.stderr);process.exitCode=error.status??1;}
+`); await chmod(path.join(bin, "git"), 0o700);
+  const entry = new URL(`file://${path.join(f.root, "scripts/oracle-deployment.mjs")}`).href;
+  const invoke = () => execute(process.execPath, ["--input-type=module", "-e", `import {deploymentHistoryForReview} from ${JSON.stringify(entry)};try{const value=await deploymentHistoryForReview(process.cwd());console.log(JSON.stringify({sha256:value.sha256,status:value.status,history:value.history.length,unverified:value.unverified_commits.length,recovered:value.recovered_commits}));}catch(error){console.error(error.code+': '+error.message);process.exitCode=1;}`], {cwd: f.root, env: {...process.env, PATH: `${bin}${path.delimiter}${process.env.PATH}`}});
+  const valid = JSON.parse((await invoke()).stdout); assert.equal(valid.status, "READY"); assert.equal(valid.history, 3); assert.equal(valid.unverified, 0);
+  const calls = (await readFile(log, "utf8")).trim().split("\n").map(line => JSON.parse(line));
+  for (const commit of [first.commit, unknown, second.commit, laterUnknown, third.commit]) assert.equal(calls.filter(args => args.join(" ") === `rev-parse --verify --end-of-options ${commit}^{commit}`).length, 1, "Each immutable commit is verified once within the actual nested traversal");
+  const module = path.join(f.root, "scripts/oracle-deployment.mjs"), policy = path.join(f.root, "scripts/oracle-policy.mjs"), absence = path.join(f.store, "committed-receipts", `${unknown}.json`);
+  for (const [kind, filename, action] of [["receipt", first.archive, "content"], ["missing", first.archive, "missing"], ["custody", first.archive, "custody"], ["directory-custody", path.dirname(first.archive), "directory"], ["record", proofRef.slice(1), "content"], ["nested-output", proof.output_file, "content"], ["source", module, "content"], ["policy", policy, "content"], ["absence", absence, "content"]]) await t.test(kind, async () => {
+    const directoryMode = kind === "directory-custody", existed = await readFile(filename).catch(error => {if (["ENOENT", "EISDIR"].includes(error.code)) return null;throw error;});
+    const bytes = kind === "source" || kind === "policy" ? existed.toString()+"\n// synthetic arrived verifier source\n" : "changed synthetic immutable history dependency";
+    await writeFile(control, JSON.stringify({path: filename, action, bytes}));
+    await assert.rejects(invoke(), error => /ORACLE_EVIDENCE_INTEGRITY|ORACLE_INPUT_DRIFT|custody|regular file|symbolic link/.test(error.stderr));
+    if (existed) {await writeFile(filename, existed);await chmod(filename, kind === "source" || kind === "policy" ? 0o644 : 0o600);} else if (directoryMode) await chmod(filename, 0o700); else await rm(filename);
+  });
+  assert.deepEqual(JSON.parse((await invoke()).stdout), valid, "A fresh intact invocation verifies and recovers the same exact frontier after restoration");
 });
 
 test("missing deployment authority leaves technical receipt immutable and blocks only mutation", async (t) => {
