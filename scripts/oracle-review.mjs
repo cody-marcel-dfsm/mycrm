@@ -6,7 +6,7 @@ import path from "node:path";
 import process from "node:process";
 import {promisify} from "node:util";
 import {selectedSettings} from "./codex-child-model.mjs";
-import {atomicJson, withOracleRun, captureInputs, assertInputsMatch, preparedEvidence, bindingHash, pathCustody, metadataDirectory, readMetadataFile, writeMetadataFile, removeMetadataFile, currentInvocation, assertCurrentInvocation, assertPublishedInvocation, readBoundAuthority, observedSourceBindings, assertEvidenceIntegrity} from "./oracle-inputs.mjs";
+import {atomicJson, withOracleRun, captureInputs, assertInputsMatch, preparedEvidence, bindingHash, pathCustody, metadataDirectory, readMetadataFile, writeMetadataFile, removeMetadataFile, currentInvocation, assertCurrentInvocation, assertPublishedInvocation, readBoundAuthority, observedSourceBindings, assertEvidenceIntegrity, evidenceBinding} from "./oracle-inputs.mjs";
 import {prepareSeries, reviewSnapshot, assessRound, saveRound, verifySeries, inheritObservedEvidence, observationSourcePaths, reviewSeriesPolicy, reviewSeriesSchemaProperties, seriesFindingSchema} from "./oracle-series.mjs";
 import {environmentHash, executionEnvironment, executableBinding, readValidationProofs, assertValidationProofsMatch, inheritNativeEvidence, validationDigest, fileMetadata} from "./oracle-validation.mjs";
 import Ajv from "ajv";
@@ -318,7 +318,13 @@ async function review(args = [], {run, phase, producer = null, verifyProducer = 
     const {paths: observedPaths, established: establishedObservedPaths} = await observationSourcePaths({directory, base: candidate.base, withBindingState: true});
     return {validationEvidence: [...requestedValidationEvidence, ...inherited.evidence], requestedValidationEvidence, inherited, ownerApprovalEvidence, proposalRecord, candidate, directory, observedPaths, establishedObservedPaths};
   });
-  const capture = async () => {
+  const admittedEvidence = await Promise.all(validationEvidence.map(value => evidenceBinding(process.cwd(), value)));
+  const admittedOwner = await evidenceBinding(process.cwd(), ownerApprovalEvidence);
+  const recheckAdmittedEvidence = async () => {
+    await readValidationProofs({root: process.cwd(), directory, validation: admittedEvidence});
+    await assertEvidenceIntegrity(process.cwd(), [...admittedEvidence, admittedOwner]);
+  };
+  const capture = async () => { try {
     await verifyProducer();
     const current = await assertExactStagedCandidate();
     if (current.tree !== candidate.tree || current.base !== candidate.base || current.commit !== candidate.commit) {
@@ -327,8 +333,9 @@ async function review(args = [], {run, phase, producer = null, verifyProducer = 
     }
     const inputs = await captureInputs({root: process.cwd(), base: current.base, tree: current.tree, validationEvidence, ownerApprovalEvidence, proposal: await readProposalRecord(), complete: true, observedPaths, establishedObservedPaths});
     const deployment = await candidateDeploymentHistory(current);
+    await recheckAdmittedEvidence();
     return {...inputs, ...(current.commit ? {candidate_commit: current.commit} : {}), reviewer_settings: await selectedSettings(), deployment_history_sha256: deployment.sha256, deployment_baseline_commit: deployment.baseline, deployment_history_state_sha256: bindingHash({status: deployment.status, unverified: deployment.unverified_commits, limitation: deployment.limitation})};
-  };
+  } catch (error) { await recheckAdmittedEvidence(); throw error; } };
   const inputs = await phase("snapshot_ms", capture);
   const settings = await phase("model_selection_ms", async () => inputs.reviewer_settings);
   const {model, reasoning_effort: effort} = settings;
@@ -417,6 +424,10 @@ async function review(args = [], {run, phase, producer = null, verifyProducer = 
       await verifyParallelArtifacts(parallelEvidence, {root: path.dirname(directory)});
     }});
   } catch (error) {
+    // Preparation, dispatch and reducer errors also remain inside the admitted
+    // evidence boundary, including errors before a reviewer returns a response.
+    let terminalError = error;
+    try { await recheckAdmittedEvidence(); } catch (integrityError) { terminalError = integrityError; }
     let observationError = null, execution = null, executionEvidence = null;
     if (!assessed) {
       try {
@@ -436,8 +447,9 @@ async function review(args = [], {run, phase, producer = null, verifyProducer = 
         execution = JSON.parse(bytes); executionEvidence = {value: `@${filename}`, sha256: sha256(bytes)};
       } catch (failure) { observationError ??= {name: failure.name, message: `Original reviewer process custody is unavailable: ${failure.message}`}; }
     }
-    await saveRound(series, null, null, {error: {name: error.name, message: error.message, observation_error: observationError}, observed: assessed ? {response, assessed, response_evidence: {value: `@${outputPath}`, sha256: sha256(rawResponse)}, execution, execution_evidence: executionEvidence} : null});
-    throw error;
+    await saveRound(series, null, null, {error: {name: terminalError.name, message: terminalError.message, observation_error: observationError,
+      ...(terminalError !== error ? {original_error: {name: error.name, message: error.message, code: error.code ?? null}} : {})}, observed: assessed ? {response, assessed, response_evidence: {value: `@${outputPath}`, sha256: sha256(rawResponse)}, execution, execution_evidence: executionEvidence} : null});
+    throw terminalError;
   }
   if (response.warning) process.stderr.write(`${response.warning}\n`);
   process.stdout.write(`${response.summary}\nORACLE_REVIEW_STATUS=${response.review_status} series=${series.public.series_id} round=${series.public.round}\n`);
