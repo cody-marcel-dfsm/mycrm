@@ -471,7 +471,7 @@ async function review(args = [], {run, phase, producer = null, verifyProducer = 
       for (const item of manifest.files.filter(item => /\/cohorts\/(?:cross-cutting|implementation-consumers|verification-recovery)\/response\.json$/.test(item.path))) {
         const envelope = JSON.parse(await readMetadataFile(item.path, "utf8"));
         const schema = JSON.parse(await readMetadataFile(path.join(path.dirname(item.path), "response.schema.json"), "utf8"));
-        if (envelope.response?.findings?.length && new Ajv({strict: false}).validate(schema, envelope)) cohortReports.push(await evidenceBinding(process.cwd(), `@${item.path}`));
+        if ((envelope.response?.findings?.length || envelope.response?.coverage?.length) && new Ajv({strict: false}).validate(schema, envelope)) cohortReports.push(await evidenceBinding(process.cwd(), `@${item.path}`));
       }
     }
     await saveRound(series, null, null, {cohortReports, error: {name: terminalError.name, message: terminalError.message, observation_error: observationError,

@@ -61,3 +61,27 @@ test("authority packet admission preserves safe routes and rejects changed custo
   await assert.rejects(readBoundAuthority(project,authority,{openFile,beforeRead:async()=>{await rm(alias);await symlink(foreign,alias);}}),/source scope/);
   assert.equal(opens,1);assert.equal(reads,0,"No foreign target bytes are read after descriptor admission changes");
 });
+
+test("paged navigation preserves complete actual rationale, dependency identities and every invalidation reason", async t => {
+  const root = await mkdtemp(path.join(os.tmpdir(), "mycrm-native-navigation-")); t.after(() => rm(root, {recursive: true, force: true}));
+  await withOracleRun(path.join(root, "oracle"), async ({run}) => {
+    const observation = {path: "src/flow.mjs", assessment: "Original reviewed failure behavior.", dependency_rationale: "Every actual consumed input and its authority.",
+      criteria: ["Current-source custody", "Failure recovery"], evidence: ["Original native report"],
+      origin: {round: 4, original_status: "ERROR", original_sha256: "original-report"},
+      dependency_comparisons: [{path: "src/flow.mjs", original: {content: "old", custody_sha256: "a"}, current: {content: "current", custody_sha256: "b"}, equal: false}],
+      coverage_eligibility: "NONE"};
+    const invalidated = [{kind: "coverage", id: observation.path, reason: "Source and custody changed", changed_dependencies: [observation.path]},
+      {kind: "validation", id: "prior-test", reason: "Original output missing"}, {kind: "observed-assessment", id: "raw", reason: "Original custody changed"}];
+    const packet = await prepareSourcePacket({directory: run, candidate: {tree: "current", base: "base"}, inputs: {authorities: []}, diff: "",
+      cohort: {id: "implementation-consumers", required_paths: [observation.path]},
+      evidence: {review_context: {navigation_coverage: [observation], invalidated}}});
+    const manifest = JSON.parse(await readFile(packet.reference.path, "utf8"));
+    const readPages = async pages => JSON.parse((await Promise.all(pages.map(page => readFile(page.path, "utf8")))).join(""));
+    const navigation = manifest.items[0].retained_review_navigation;
+    assert.deepEqual((await readPages(navigation.pages)).latest_observation, observation);
+    assert.deepEqual(await readPages(manifest.all_invalidation_reasons.pages), invalidated);
+    assert.equal(navigation.grants_eligible_coverage, false); assert.equal(navigation.grants_approval, false);
+    assert.ok([...navigation.pages, ...manifest.all_invalidation_reasons.pages].every(page => page.bytes <= 8192));
+    assert.equal((await readPages(navigation.pages)).current_disposition, null, "Absent native facts stay unknown");
+  }, {ownerRoot: root});
+});

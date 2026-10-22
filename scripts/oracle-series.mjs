@@ -63,6 +63,24 @@ function samePathIdentity(before, after, name) {
 
 function changedDependencies(before, after, names) { return names.filter((name) => !samePathIdentity(before, after, name)); }
 
+function sourceIdentity(snapshot, name) {
+  const facts = snapshot?.file_facts?.[name] ?? null;
+  return {known: Boolean(snapshot && Object.hasOwn(snapshot.files, name)), content: snapshot?.files[name] ?? null,
+    facts_sha256: bindingHash(facts), custody_sha256: bindingHash(facts?.custody ?? null),
+    mode: facts?.mode ?? null, type: facts?.type ?? null};
+}
+
+function navigationObservation(item, original, current, origin) {
+  const names = [...new Set([item.path, ...item.dependencies ?? []])];
+  return {...item, origin, coverage_eligibility: "NONE", independent_applicability_required: true,
+    original_snapshot_available: Boolean(original),
+    dependency_comparisons: names.map(name => ({path: name, original: sourceIdentity(original, name), current: sourceIdentity(current, name),
+      equal: Boolean(original && samePathIdentity(original, current, name))})),
+    context_comparison: {original_sha256: bindingHash(original?.context ?? null), current_sha256: bindingHash(current.context),
+      changed_fields: [...new Set([...Object.keys(original?.context ?? {}), ...Object.keys(current.context)])]
+        .filter(name => bindingHash(original?.context[name] ?? null) !== bindingHash(current.context[name] ?? null))}};
+}
+
 function cohortDiagnostic(value) {
   return /^Cohort [A-Za-z0-9_-]+ (?:omitted required coverage:|has unfinished assessment$|execution failed:|bound inputs changed during assessment$|candidate or plan binding differs$|omitted cross-area integration assessment$|has no formal assessment$|completed without a verdict$)/.test(value);
 }
@@ -189,11 +207,16 @@ function dependenciesOf(item, snapshot, requiredPath = null) {
 }
 
 function bindItem(item, snapshot, requiredPath = null) {
-  const dependencies = dependenciesOf(item, snapshot, requiredPath);
+  // The response schema names the independently reviewed source in `path`.
+  // Bind that explicit self edge natively; every reviewer-declared semantic
+  // dependency and its rationale still passes the original strict validator.
+  const declared = dependenciesOf(item, snapshot);
+  const dependencies = requiredPath ? [...new Set([requiredPath, ...declared])] : declared;
+  dependenciesOf({...item, dependencies}, snapshot, requiredPath);
   if (requiredPath && (!Array.isArray(item.criteria) || !item.criteria.length || !Array.isArray(item.evidence) || !item.evidence.length ||
       !Array.isArray(item.finding_ids) || [...item.criteria, ...item.evidence, ...item.finding_ids].some((value) => typeof value !== "string" || !value.trim()) ||
       new Set(item.finding_ids).size !== item.finding_ids.length)) throw new Error("Oracle fresh coverage requires explicit criteria, result evidence and finding identities");
-  return {...item, input_sha256: witness(snapshot, dependencies)};
+  return {...item, dependencies, input_sha256: witness(snapshot, dependencies)};
 }
 
 export function reviewSnapshot({candidate, inputs, files, fileFacts = null, environment}) {
@@ -380,6 +403,20 @@ export async function prepareSeries({directory, candidate, inputs, files, fileFa
     changed_context: [...new Set([...Object.keys(round.snapshot.context), ...Object.keys(context)])].filter((name) => bindingHash(round.snapshot.context[name] ?? null) !== bindingHash(context[name] ?? null)),
     applicability: "Sealed supporting assessment only. Confirm current governing instructions first, assess affected criteria and missing dependencies, then emit fresh coverage. This observation supplies no approval or native execution eligibility."
   }));
+  // Complete producer-shaped navigation is separate from eligible coverage.
+  // Native ERROR reports retain only supporting observations; comparison never
+  // supplies an assessment, historical source presence or current approval.
+  const navigationCoverage = retainedObservations(series, "coverage").map(({item, round}) => navigationObservation(item, round.snapshot, snapshot,
+    {kind: "SEALED_SERIES_OBSERVATION", round: round.round, round_sha256: bindingHash(round), history_file: filename,
+      original_tree: round.snapshot.tree, original_status: round.execution_status}));
+  for (const [index, observed] of observedAssessments.entries()) {
+    const original = series.rounds.find(round => round.round === observed.round && round.snapshot.tree === observed.observed_tree)?.snapshot ?? null;
+    for (const [number, item] of (observed.reported_coverage ?? observed.coverage ?? []).entries()) navigationCoverage.push(navigationObservation(item, original, snapshot,
+      {kind: "RAW_ERROR_OBSERVATION", round: observed.round, observation_id: observed.id, original_tree: observed.observed_tree,
+        original_status: observed.execution_status, reported_status: observed.reported_review_status, reported_verdict: observed.reported_verdict,
+        response_evidence: observed.response_evidence, original_reference: {pointer: `/review_context/observed_assessments/${index}/${observed.reported_coverage ? "reported_coverage" : "coverage"}/${number}`},
+        original_sha256: bindingHash(item)}));
+  }
   const retainedCoverage = new Map(retainedObservations(series, "coverage").map(({item}) => [item.path, item]));
   const pathDispositions = [...requiredPaths, ...unavailableSources.map((item) => item.path)].map((name) => {
     const eligible = eligibleCoverage.find((item) => item.path === name), invalidation = invalidated.find((item) => item.kind === "coverage" && item.id === name);
@@ -408,7 +445,7 @@ export async function prepareSeries({directory, candidate, inputs, files, fileFa
     changed_since_previous: changed, proposal_scope_changed: Boolean(previous && previous.snapshot.proposal_sha256 !== inputs.proposal_sha256),
     previous_proposal: previous?.proposal_record?.proposal ?? null, current_proposal: proposalRecord?.proposal ?? null,
     pending_changed_paths: pendingChanged, initial_assessment_complete: initialAssessmentComplete,
-    path_dispositions: pathDispositions, supporting_coverage: supportingCoverage, observed_assessments: observedAssessments, observed_cohorts: cohortAssessments, unavailable_sources: unavailableSources,
+    path_dispositions: pathDispositions, supporting_coverage: supportingCoverage, navigation_coverage: navigationCoverage, observed_assessments: observedAssessments, observed_cohorts: cohortAssessments, unavailable_sources: unavailableSources,
     last_complete_verdict: series.rounds.findLast((round) => round.review_status === "COMPLETE")?.verdict ?? null,
     latest_repair_plan: previous?.repair_plan ?? null,
     prior_findings: previous?.findings ?? [], eligible_coverage: eligibleCoverage, eligible_validations: eligibleValidation, invalidated,
@@ -604,7 +641,7 @@ export const reviewSeriesSchemaProperties = {
   review_status: {type: "string", enum: ["COMPLETE", "INCOMPLETE"]},
   unreviewed: strings, reused_coverage: strings, reused_validations: strings,
   synthesis: {type: ["string", "null"]},
-  coverage: {type: "array", items: {type: "object", additionalProperties: false, required: ["path", "dependencies", "dependency_rationale", "assessment", "criteria", "evidence", "finding_ids"], properties: {path: text, ...dependencyFields, assessment: text, criteria: {...strings, minItems: 1}, evidence: {...strings, minItems: 1}, finding_ids: strings}}},
+  coverage: {type: "array", items: {type: "object", additionalProperties: false, required: ["path", "dependencies", "dependency_rationale", "assessment", "criteria", "evidence", "finding_ids"], properties: {path: {...text, description: "Explicit independently reviewed prepared source path; the native witness always binds this source and its exact custody."}, ...dependencyFields, assessment: text, criteria: {...strings, minItems: 1}, evidence: {...strings, minItems: 1}, finding_ids: strings}}},
   validations: {type: "array", items: {type: "object", additionalProperties: false, required: ["id", "evidence", "command", "dependencies", "dependency_rationale", "assessment"], properties: {id: text, evidence: text, command: text, ...dependencyFields, assessment: text}}},
   resolutions: {type: "array", items: {type: "object", additionalProperties: false, required: ["id", "status", "evidence"], properties: {id: text, status: {type: "string", enum: ["OPEN", "RESOLVED"]}, evidence: text}}},
 };

@@ -45,6 +45,36 @@ test("complete first scan consolidates findings and repair review carries only v
   assert.throws(() => assessRound(repaired, {...approved, coverage: [], reused_coverage: ["a.mjs", "b.mjs"]}, []), /reused coverage is invalid/);
 });
 
+test("explicit reviewed source is canonically bound through save and reuse without weakening dependency admission", async t => {
+  const {prepare, record, options} = await fixture(t);
+  const context = await prepare(), raw = response({coverage: [coverage("a.mjs", ["config.json"]), coverage("b.mjs")]});
+  const original = JSON.stringify(raw), assessed = assessRound(context, raw, []);
+  assert.deepEqual(assessed.coverage[0].dependencies, ["a.mjs", "config.json"]);
+  assert.equal(JSON.stringify(raw), original, "Independent raw output remains immutable");
+  const saved = await saveRound(context, raw, assessed);
+  assert.doesNotThrow(() => verifySeries(saved, options.candidate.base));
+  assert.deepEqual(saved.rounds[0].response.coverage[0].dependencies, ["config.json"]);
+  const reusable = await prepare(); assert.ok(reusable.public.eligible_coverage.some(item => item.path === "a.mjs"));
+  for (const changed of [{files: {...options.files, "a.mjs": "changed-self"}},
+    {fileFacts: {"a.mjs": {mode: "100755", type: "blob", custody: {synthetic: "changed"}}}},
+    {files: {...options.files, "config.json": "changed-dependency"}}]) {
+    const next = await prepare(changed);
+    assert.ok(!next.public.eligible_coverage.some(item => item.path === "a.mjs"));
+  }
+  for (const bad of [{dependencies: []}, {dependencies: ["config.json", "config.json"]}, {dependencies: ["../escape"]},
+    {dependencies: ["unknown.mjs"]}, {dependencies: ["/outside.mjs"]}, {dependency_rationale: " "},
+    {path: "unknown.mjs"}, {criteria: []}, {evidence: []}, {finding_ids: ["unknown"]}]) {
+    const invalid = structuredClone(raw); Object.assign(invalid.coverage[0], bad);
+    assert.throws(() => assessRound(context, invalid, []), /dependency|candidate|requires|unknown/);
+  }
+  const navigation = reusable.public.navigation_coverage.find(item => item.path === "a.mjs");
+  assert.equal(navigation.assessment, raw.coverage[0].assessment);
+  assert.equal(navigation.dependency_rationale, raw.coverage[0].dependency_rationale);
+  assert.deepEqual(navigation.criteria, raw.coverage[0].criteria);
+  assert.ok(navigation.dependency_comparisons.every(item => item.equal));
+  assert.equal(navigation.coverage_eligibility, "NONE");
+});
+
 test("raw moved-input assessments retain custody and findings without promoting coverage or approval", async (t) => {
   const {prepare, options, inputs, record, directory} = await fixture(t);
   const initial = await prepare(), raw = response({verdict: "REJECTED", findings: [finding()]});

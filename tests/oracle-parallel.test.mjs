@@ -369,6 +369,28 @@ test("receipt custody includes every native source packet page and manifest", as
   });
 });
 
+test("navigation custody is checked after producer return and at receipt consumption", async () => {
+  await assert.rejects(runFixture(async area => {
+    if (!area.directory.endsWith("implementation-consumers")) return;
+    const payload = JSON.parse(await readFile(path.join(area.directory, "evidence.json"), "utf8"));
+    const packet = JSON.parse(await readFile(payload.source_packet.path, "utf8"));
+    await chmod(packet.items[0].retained_review_navigation.pages[0].path, 0o640);
+  }), /integrity changed/);
+  await runFixture(null, async ({root, run, result}) => {
+    const payload = JSON.parse(await readFile(path.join(run, "cohorts/implementation-consumers/evidence.json"), "utf8"));
+    const packet = JSON.parse(await readFile(payload.source_packet.path, "utf8"));
+    const filename = packet.items[0].retained_review_navigation.pages[0].path, original = await readFile(filename);
+    for (const kind of ["content", "custody", "missing"]) {
+      if (kind === "content") await writeFile(filename, "altered navigation");
+      if (kind === "custody") await chmod(filename, 0o640);
+      if (kind === "missing") await rm(filename);
+      await assert.rejects(verifyParallelArtifacts(result.reference, {root}), /changed|missing|ENOENT/);
+      await writeFile(filename, original); await chmod(filename, 0o600);
+    }
+    await verifyParallelArtifacts(result.reference, {root});
+  });
+});
+
 test("exclusive atomic cohort publication preserves the first immutable result on collision", async () => {
   const root = await mkdtemp(path.join(os.tmpdir(), "mycrm-cohort-collision-"));
   try {

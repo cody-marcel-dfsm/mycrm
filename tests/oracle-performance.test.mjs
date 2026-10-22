@@ -87,6 +87,7 @@ const emit=()=>{
   if(proof && !process.env.ORACLE_OMIT_VALIDATION) response.validations=[{id:'native-check',evidence:proof.evidence,command:JSON.stringify(proof.record.command),dependencies:evidence.staged_files,dependency_rationale:'Synthetic complete candidate closure.',assessment:'Native passing execution and output checked.'}];
   if(!proposal && process.env.ORACLE_SOURCE_FINDING) { response.verdict='REJECTED'; response.findings=[{id:'SYNTHETIC-EXIT-1',severity:'medium',code:'SYNTHETIC_EXIT_FINDING',message:'Synthetic source finding.',path:'candidate.txt',reproduction:'Synthetic input.',required_behavior:'Synthetic required behavior.',affected_paths:['candidate.txt'],acceptance_checks:['Synthetic acceptance.'],origin:'initial',missed_finding_reason:null}]; }
   if(!proposal && process.env.ORACLE_ABSENT_DEPENDENCY && response.coverage.length) response.coverage[0].dependencies.push('absent-source.mjs');
+  if(!proposal && process.env.ORACLE_EXPLICIT_SELF) for(const item of response.coverage) item.dependencies=['AGENTS.md'];
   if(!proposal && process.env.ORACLE_CONTRADICTORY_FINDING && response.findings.length) response.findings[0].code=evidence.cohort.id;
   if(!proposal && process.env.ORACLE_OBSERVED_PATH) { response.review_status='INCOMPLETE'; response.verdict=null; response.findings[0].path=process.env.ORACLE_OBSERVED_PATH; response.findings[0].affected_paths=[process.env.ORACLE_OBSERVED_PATH]; response.unreviewed=[process.env.ORACLE_OBSERVED_PATH]; }
   if(!proposal && process.env.ORACLE_RESOLVE_OBSERVED) { const findings=[...evidence.review_context.prior_findings,...evidence.review_context.observed_assessments.flatMap(item=>item.findings)]; response.resolutions=[...new Set(findings.map(item=>item.id))].map(id=>({id,status:response.findings.some(item=>item.id===id)?'OPEN':'RESOLVED',evidence:'Independently assessed synthetic current source and verified disposition.'})); }
@@ -743,6 +744,29 @@ test("aggregate ERROR retains native cohort findings for independent current dis
   assert.equal(latest.response.resolutions.find(item => item.id === "SYNTHETIC-EXIT-1").status, "RESOLVED");
   assert.equal(latest.observed_cohorts.length, 3); assert.equal(series.rounds[0].execution_status, "ERROR");
   assert.deepEqual(await readFile(path.join(run, "outcome.json")), nativeOutcome);
+});
+
+test("actual explicit-source cohort output reaches exact receipt and native verification", async t => {
+  const {repo, env, prepare, git} = await fixture(t); await prepare();
+  const reviewed = await command(repo, ["review"], {...env, ORACLE_EXPLICIT_SELF: "1", ORACLE_OMIT_VALIDATION: "1"});
+  assert.match(reviewed.stdout, /ORACLE_VERDICT=APPROVED/);
+  const receipt = JSON.parse(await readFile(path.join(repo, ".git/oracle/approval.json")));
+  const series = JSON.parse(await readFile(path.join(repo, ".git/oracle/series", `${receipt.base_commit}.json`)));
+  const raw = receipt.coverage.find(item => item.path === "candidate.txt");
+  assert.deepEqual(raw.dependencies, ["AGENTS.md"], "Receipt retains independent original response");
+  const bound = series.rounds.at(-1).coverage.find(item => item.path === "candidate.txt");
+  assert.deepEqual(bound.dependencies, ["candidate.txt", "AGENTS.md"]);
+  assert.match((await command(repo, ["verify"], env)).stdout, /APPROVED/);
+  const invocation = JSON.parse(await readFile(path.join(repo, ".git/oracle/active-review.json")));
+  const run = path.join(repo, ".git/oracle/runs", invocation.id), packet = JSON.parse(await readFile(path.join(run, "cohorts/implementation-consumers/source-packet/manifest.json")));
+  const navigation = packet.items[0].retained_review_navigation.pages[0].path, bytes = await readFile(navigation);
+  await chmod(navigation, 0o640);
+  await assert.rejects(command(repo, ["verify"], env), /integrity changed/);
+  await chmod(navigation, 0o600); await writeFile(navigation, "changed native navigation");
+  await assert.rejects(command(repo, ["verify"], env), /evidence changed/);
+  await writeFile(navigation, bytes);
+  await writeFile(path.join(repo, "candidate.txt"), "changed exact source\n"); await git("add", "candidate.txt");
+  await assert.rejects(command(repo, ["verify"], env), /stale|differ|changed/);
 });
 
 test("contradictory native cohort finding identities retain ERROR", async t => {

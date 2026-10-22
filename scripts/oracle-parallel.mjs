@@ -273,7 +273,7 @@ export async function nativeCohortObservations({root, directory, validation = []
       reported_review_status: response.review_status, reported_verdict: response.verdict, observed_tree: plan.candidate_tree,
       response_evidence: binding, original_response_sha256: bindingHash(response), native_manifest_sha256: manifestBinding.sha256,
       artifact_custody_sha256: custody, native_bindings: nativeBindings, execution: process, custody_intact: true,
-      coverage: [], findings: response.findings, unreviewed: response.unreviewed,
+      coverage: [], reported_coverage: response.coverage, findings: response.findings, unreviewed: response.unreviewed,
       applicability: "Verified individual native cohort findings only. Original aggregate ERROR and child status retained; no coverage, passing validation or approval inherited."});
   }
   const identities = new Map();
@@ -303,6 +303,8 @@ export async function runParallelReview({run, candidate, inputs, evidence, schem
     const {directory, payload, cohort} = area;
     const diff = diffForPaths ? await diffForPaths(payload.cohort.required_paths) : "";
     area.sourcePacket = await prepareSourcePacket({directory, candidate, inputs, evidence, cohort, diff, diffBase, sourceForPath});
+    area.sourcePacket.files = await Promise.all(area.sourcePacket.files.map(async item => ({...item,
+      binding: await evidenceBinding(evidenceRoot, `@${item.path}`)})));
     payload.source_packet = area.sourcePacket.reference;
     await writeMetadataFile(path.join(directory, "delta.diff"), diff, {flag: "wx"});
     await atomicJson(path.join(directory, "changes.json"), {bytes: Buffer.byteLength(diff), excerpt: utf8Pages(diff)[0],
@@ -321,7 +323,7 @@ export async function runParallelReview({run, candidate, inputs, evidence, schem
     const started = new Date().toISOString(); let error = null, envelope = null, inputsValid = true;
     try {
       await invoke({directory, schema: path.join(directory, "response.schema.json"), output: path.join(directory, "response.json"),
-        prompt: `${sharedPrompt}\nAssigned cohort: ${cohort.id}. ${cohort.cross_area}\nBounded cohort inputs: ${path.join(directory, "evidence.json")}. Begin source navigation with the owner-prepared source packet ${sourcePacket.reference.path}: actual assigned diff and exact complete source/definition bodies are paged in UTF-8, with original Git/tree/line/byte locators. Use those pages before repeated shell source navigation; trace explicit unknown/on-demand dependencies independently. Read authorities once per current identity and retain applicable checkpoints. Packet presence grants no coverage, proof or approval. Assess ONLY required new/missing/affected paths and relevant dependencies. The cross-cutting cohort owns global proposal, criteria, inherited-effect and API assessment. Other cohorts independently report effects discovered in their assigned implementation/tests. Every cohort runs concurrently; return only your cohort decision with exact bindings and cross-area entrypoint/construction/consumer/publication/recovery assessment. The native controller admits the complete-candidate decision; no serial model follows. Open full original history only for a named unresolved fact.`});
+        prompt: `${sharedPrompt}\nAssigned cohort: ${cohort.id}. ${cohort.cross_area}\nBounded cohort inputs: ${path.join(directory, "evidence.json")}. Begin with the source packet ${sourcePacket.reference.path}: each path's retained_review_navigation pages preserve actual prior assessment, rationale, criteria, result evidence and exact per-dependency content/facts/custody/context comparisons. all_invalidation_reasons pages preserve every native reason, including validation and observed evidence. Read that navigation before repeating source or history reads. Actual assigned diff and complete source definitions are paged in UTF-8 with original Git/tree/line/byte locators; trace only concrete changed, missing or uncertain dependencies independently. Read authorities once per current identity and retain applicable checkpoints. Packet presence grants no coverage, proof or approval. Assess ONLY required new/missing/affected paths and relevant dependencies. The cross-cutting cohort owns global proposal, criteria, inherited-effect and API assessment. Other cohorts independently report effects discovered in their assigned implementation/tests. Every cohort runs concurrently; return only your cohort decision with exact bindings and cross-area entrypoint/construction/consumer/publication/recovery assessment. The native controller admits the complete-candidate decision; no serial model follows. Open full original history only for a named unresolved fact.`});
       envelope = JSON.parse(await readMetadataFile(path.join(directory, "response.json"), "utf8"));
     } catch (cause) { error = cause.message; try { envelope = JSON.parse(await readMetadataFile(path.join(directory, "response.json"), "utf8")); } catch {} }
     // Failed provider execution can still return useful observations. Their
@@ -332,6 +334,7 @@ export async function runParallelReview({run, candidate, inputs, evidence, schem
         if (contentHash(original) !== contentHash(await readMetadataFile(path.join(directory, name)))) throw new Error("Cohort inputs changed during assessment");
       }
       for (const item of sourcePacket.files) if (contentHash(await readMetadataFile(item.path)) !== item.sha256) throw new Error("Cohort source packet original changed during assessment");
+      await assertEvidenceIntegrity(evidenceRoot, sourcePacket.files.map(item => item.binding));
     } catch (cause) { inputsValid = false; error = [error, cause.message].filter(Boolean).join("; "); }
     let process = null;
     try { process = JSON.parse(await readMetadataFile(path.join(directory, "process.json"), "utf8")); } catch {}
