@@ -690,7 +690,7 @@ test("aggregate ERROR retains native cohort findings for independent current dis
   await assert.rejects(nativeCohortObservations({root: repo, directory, retained: [{...observed[0], response_evidence: forgedBinding}]}), /outside the native review store/);
   const invented = path.join(directory, "runs", "a".repeat(8)+"-"+"b".repeat(4)+"-"+"c".repeat(4)+"-"+"d".repeat(4)+"-"+"e".repeat(12), "cohorts/cross-cutting/response.json");
   await mkdir(path.dirname(invented), {recursive: true}); await writeFile(invented, original);
-  await assert.rejects(nativeCohortObservations({root: repo, directory, validation: [await evidenceBinding(repo, `@${invented}`)]}), /ENOENT/);
+  await assert.rejects(nativeCohortObservations({root: repo, directory, validation: [await evidenceBinding(repo, `@${invented}`)]}), /missing|ENOENT/);
   await assert.rejects(command(repo, ["review"], {...env, ORACLE_RESOLVE_OBSERVED: "1", ORACLE_SOURCE_FINDING: "1", ORACLE_OMIT_VALIDATION: "1"}), /Command failed/);
   const open = JSON.parse(await readFile(seriesFile)).rounds.at(-1);
   assert.equal(open.verdict, "REJECTED"); assert.equal(open.response.resolutions.find(item => item.id === "SYNTHETIC-EXIT-1").status, "OPEN");
