@@ -145,14 +145,16 @@ export class ProviderNeutralCrmClient {
 
   async #flushMaintenance(current) {
     for (const handoff of new Set(this.#pendingHandoffs.values())) {
+      let reason = "scope_changed";
       try {
-        if (handoff.verifyScope && await handoff.verifyScope() !== true) throw this.#maintenanceError(handoff, "scope_changed", current);
+        if (handoff.verifyScope && await handoff.verifyScope() !== true) throw new Error();
+        reason = "callback_failed";
         await this.onMutationComplete(structuredClone({operation: handoff.operation,
           result: handoff.result, sources: handoff.sources, confirmations: handoff.confirmations}));
-        if (handoff.verifyScope && await handoff.verifyScope() !== true) throw this.#maintenanceError(handoff, "scope_changed", current);
-      } catch (error) {
-        if (error instanceof CrmCacheMaintenanceError) throw error;
-        throw this.#maintenanceError(handoff, "callback_failed", current);
+        reason = "scope_changed";
+        if (handoff.verifyScope && await handoff.verifyScope() !== true) throw new Error();
+      } catch {
+        throw this.#maintenanceError(handoff, reason, current);
       }
       for (const key of handoff.keys) {
         this.#handledConfirmations.add(key);

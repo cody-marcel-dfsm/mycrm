@@ -220,3 +220,13 @@ test("scope changes during a callback preserve pending maintenance for original-
   assert.equal(calls, 2);
   assert.equal(bos.calls.filter(([kind]) => kind === "execute").length, 1);
 });
+
+test("callback-owned error types cannot replace the confirmed mutation result", async () => {
+  const bos = fixtureBos();
+  const client = new ProviderNeutralCrmClient({bos, onMutationComplete: async () => {
+    throw new CrmCacheMaintenanceError({operation: "synthetic-other", result: {}, pendingConfirmations: 0, reason: "synthetic-other"});
+  }});
+  await assert.rejects(client.update(examples.update.request), error => error instanceof CrmCacheMaintenanceError
+    && error.operation === "update" && error.reason === "callback_failed"
+    && JSON.stringify(error.result) === JSON.stringify(examples.update.response));
+});
