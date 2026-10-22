@@ -1,6 +1,6 @@
 import assert from "node:assert/strict";
 import test from "node:test";
-import {mkdtemp, readFile, rm, writeFile} from "node:fs/promises";
+import {chmod, mkdtemp, readFile, rm, writeFile} from "node:fs/promises";
 import os from "node:os";
 import path from "node:path";
 import {cohortPlan, partitionPayload, aggregateCohorts, runParallelReview, verifyParallelArtifacts, payloadLimit} from "../scripts/oracle-parallel.mjs";
@@ -87,6 +87,44 @@ test("retained ERROR findings use exact on-demand indexes rather than repeated u
   assert.equal(payload.review_context.finding_history[0].last_status, "OPEN");
   assert.match(payload.reading_contract, /before current applicability\/disposition/);
   assert.equal(e.review_context.prior_findings[0].required_behavior, finding.required_behavior);
+});
+
+function largeRetainedEvidence() {
+  const e = evidence();
+  e.inputs = {...inputs, authorities: Array.from({length: 76}, (_, index) => ({path: `Vault/docs/authority-${index}.md`, sha256: String(index).padStart(64, "0")}))};
+  const finding = {id: "RETAINED", code: "RETAINED_DEFECT", severity: "high", path: "src/service.mjs", origin: "missed",
+    required_behavior: 'Preserve the exact \\"quoted\\" behavior. '.repeat(1000), reproduction: "Original producer and consumer reproduction. ".repeat(1000)};
+  e.review_context.observed_assessments = Array.from({length: 100}, (_, round) => ({round, execution_status: "ERROR",
+    reported_review_status: "COMPLETE", reported_verdict: "REJECTED", custody_intact: true, coverage: [], findings: [{...finding,
+      required_behavior: round === 99 ? "A distinct retained version remains independently actionable" : finding.required_behavior}],
+    response_evidence: {value: `@original-${round}.json`, sha256: String(round).padStart(64, "0"), custody: {entries: "Original exact custody".repeat(1000)}}}));
+  return e;
+}
+
+test("large retained history projects every finding version into exact immutable navigation with zero raw eligibility", () => {
+  const e = largeRetainedEvidence(), original = JSON.stringify(e);
+  const plan = cohortPlan({candidate, inputs: e.inputs, context: e.review_context});
+  const payload = partitionPayload(plan, plan.cohorts[0], e);
+  assert.ok(Buffer.byteLength(`${JSON.stringify(payload, null, 2)}\n`) <= payloadLimit);
+  assert.deepEqual(payload.cohort.required_paths, ["AGENTS.md"]);
+  assert.deepEqual(payload.inputs.authorities.map(item => [item.path, item.sha256]), e.inputs.authorities.map(item => [item.path, item.sha256]));
+  assert.deepEqual(payload.review_context.eligible_coverage, []);
+  assert.deepEqual(payload.review_context.eligible_validations, []);
+  const manifest = payload.retained_collections.observed_assessments;
+  assert.equal(manifest.original_sha256, bindingHash(e.review_context.observed_assessments));
+  assert.equal(manifest.original_reference.pointer, "/review_context/observed_assessments");
+  assert.equal(manifest.count, 100); assert.equal(manifest.grants_eligible_coverage, false); assert.equal(manifest.grants_approval, false);
+  assert.equal(payload.review_context.observed_finding_index.length, 1);
+  const identity = payload.review_context.observed_finding_index[0];
+  assert.equal(identity.id, "RETAINED"); assert.equal(identity.occurrence_count, 100); assert.equal(identity.original_versions.length, 2);
+  for (const version of identity.original_versions) {
+    const resolved = version.original_reference.pointer.split("/").slice(1).reduce((value, key) => value[key], e);
+    assert.equal(bindingHash(resolved), version.original_sha256);
+  }
+  assert.equal(JSON.stringify(e), original, "Original statuses, source criteria, custody and evidence remain unchanged");
+  const impossible = structuredClone(e); impossible.review_context.required_paths = Array.from({length: 5000}, (_, i) => `AGENTS.md/${i}`);
+  const tooLarge = cohortPlan({candidate, inputs: impossible.inputs, context: impossible.review_context});
+  assert.throws(() => partitionPayload(tooLarge, tooLarge.cohorts[1], impossible), /exceeds its bound/);
 });
 
 test("aggregate rejects missing, duplicate, mixed-candidate and uncovered cohorts", () => {
@@ -188,12 +226,13 @@ test("effective inherited effects retain independent deployment permission statu
   }
 });
 
-async function runFixture(invoke, after) {
+async function runFixture(invoke, after, retained = evidence()) {
   const root = await mkdtemp(path.join(os.tmpdir(), "mycrm-parallel-"));
   try { return await withOracleRun(path.join(root, "oracle"), async ({run}) => {
     let entered = 0, active = 0, peak = 0, release;
     const barrier = new Promise((resolve) => { release = resolve; });
-    const result = await runParallelReview({run, candidate, inputs, evidence: evidence(), schema: {type: "object"}, sharedPrompt: "Trusted governing-first fixture",
+    await atomicJson(path.join(run, "evidence.json"), retained, {exclusive: true});
+    const result = await runParallelReview({run, candidate, inputs: retained.inputs, evidence: retained, schema: {type: "object"}, sharedPrompt: "Trusted governing-first fixture",
       diffForPaths: async (paths) => paths.map((name) => `changed ${name}\n`).join(""),
       sourceForPath: async (name, revision) => ({state: "PRESENT", text: `// ${name}\nexport function synthetic(){ return ${revision === candidate.tree}; }\n`, git_blob: "synthetic-body", locator: {revision, path: name}}),
       invoke: async (area) => {
@@ -220,6 +259,35 @@ test("native dispatch starts all three independent assessments before any finish
   const {result, peak, outcomes} = await runFixture();
   assert.equal(peak, 3);assert.equal(outcomes.actual_overlap, true);assert.equal(outcomes.outcomes.length, 3);
   assert.equal(result.verdict, "APPROVED");
+});
+
+test("native dispatch bounds final serialized wrappers and seals projected originals through receipt admission", {timeout: 10000}, async () => {
+  await runFixture(null, async ({root, run, result}) => {
+    await verifyParallelArtifacts(result.reference, {root});
+    for (const id of ["cross-cutting", "implementation-consumers", "verification-recovery"]) {
+      const raw = await readFile(path.join(run, "cohorts", id, "evidence.json"));
+      assert.ok(raw.byteLength <= payloadLimit, `${id}: complete actual serialized payload`);
+      const parsed = JSON.parse(raw);
+      assert.ok(parsed.source_packet.path); assert.equal(parsed.changes_reference, "changes.json");
+      assert.equal(parsed.full_evidence_sha256.length, 64);
+    }
+    const original = path.join(run, "evidence.json"), bytes = await readFile(original);
+    await writeFile(original, "tampered original");
+    await assert.rejects(verifyParallelArtifacts(result.reference, {root}), /evidence changed/);
+    await writeFile(original, bytes);
+    await chmod(original, 0o640);
+    await assert.rejects(verifyParallelArtifacts(result.reference, {root}), /evidence changed/);
+    await chmod(original, 0o600);
+    await verifyParallelArtifacts(result.reference, {root});
+    await rm(original);
+    await assert.rejects(verifyParallelArtifacts(result.reference, {root}), /ENOENT|missing/);
+  }, largeRetainedEvidence());
+});
+
+test("original navigation corruption during native assessment retains ERROR and prevents approval", {timeout: 5000}, async () => {
+  await assert.rejects(runFixture(async area => {
+    if (area.directory.endsWith("cross-cutting")) await writeFile(path.resolve(area.directory, "../../evidence.json"), "changed original");
+  }), /evidence changed/);
 });
 
 test("child crash or changed cohort inputs preserves partial assessment and prevents approval", {timeout: 5000}, async () => {

@@ -7,6 +7,39 @@ import {prepareSourcePacket, utf8Pages} from "./oracle-source-packet.mjs";
 export const cohortIds = ["cross-cutting", "implementation-consumers", "verification-recovery"];
 export const payloadLimit = 64 * 1024;
 const unique = (values) => [...new Set(values)];
+const serializedPayloadBytes = value => Buffer.byteLength(`${JSON.stringify(value, null, 2)}\n`);
+const originalReference = pointer => ({file: "../../evidence.json", pointer});
+
+function boundedPayload(value, evidence, primary) {
+  const context = evidence.review_context;
+  const collection = (items, pointer) => ({count: items.length, original_sha256: bindingHash(items), original_reference: originalReference(pointer)});
+  if (serializedPayloadBytes(value) > payloadLimit) {
+    value.retained_collections = {...value.retained_collections,
+      supporting_coverage: collection(context.supporting_coverage ?? [], "/review_context/supporting_coverage"),
+      finding_history: collection(context.finding_history ?? [], "/review_context/finding_history")};
+    value.review_context.supporting_coverage = [];
+    value.review_context.finding_history = [];
+    value.retained_details_on_demand = true;
+  }
+  if (serializedPayloadBytes(value) > payloadLimit && primary) {
+    const observed = context.observed_assessments ?? [], identities = new Map();
+    for (const [assessmentNumber, assessment] of observed.entries()) for (const [findingNumber, finding] of assessment.findings.entries()) {
+      const identity = {id: finding.id, code: finding.code, path: finding.path, origin: finding.origin, severity: finding.severity};
+      const key = bindingHash(identity), item = identities.get(key) ?? {...identity, occurrence_count: 0, original_versions: []};
+      const hash = bindingHash(finding);
+      if (!item.original_versions.some(version => version.original_sha256 === hash)) item.original_versions.push({original_sha256: hash,
+        original_reference: originalReference(`/review_context/observed_assessments/${assessmentNumber}/findings/${findingNumber}`)});
+      item.occurrence_count++;
+      identities.set(key, item);
+    }
+    value.retained_collections.observed_assessments = {...collection(observed, "/review_context/observed_assessments"),
+      grants_eligible_coverage: false, grants_approval: false};
+    value.review_context.observed_finding_index = [...identities.values()];
+    value.review_context.observed_assessments = [];
+  }
+  if (serializedPayloadBytes(value) > payloadLimit) throw new Error(`Cohort payload exceeds its bound after retained collection projection: ${serializedPayloadBytes(value)} bytes`);
+  return value;
+}
 const governance = (name) => /(?:^|\/)(?:AGENTS\.md|CONSTITUTION\.md|architecture\.md)$|(?:^|\/)\.agents\/skills\/oracle\//.test(name);
 const verification = (name) => /(?:^|\/)(?:tests?|\.github|\.githooks)\/|(?:release|deploy|install|shipment|recovery)/i.test(name);
 
@@ -65,18 +98,10 @@ export function partitionPayload(plan, cohort, evidence) {
       original_reference: {file: "../../evidence.json", pointer: `/deployment_history/history/${index}`}})) : [],
     full_evidence_reference: "../../evidence.json",
     full_history_reference: context.history_file,
-    reading_contract: "Read governing instructions first once per content identity, then this cohort's changes and applicable retained observations. Finding/history entries are identity indexes with hash-bound original pointers: inspect the original finding's reproduction, required behavior, affected paths and acceptance checks through bounded field projections before current applicability/disposition. Use source chunks at most 8 KiB per read; open original fields only for a named unresolved fact. A fresh reviewer conversation never resets sealed file coverage. No copied history grants proof or approval."};
+    reading_contract: "Read governing instructions first once per content identity, then this cohort's changes and applicable retained observations. Finding/history entries and retained_collections are identity indexes with hash-bound original pointers: inspect original statuses, criteria, custody, and each finding version's reproduction, required behavior, affected paths and acceptance checks through bounded field projections before current applicability/disposition. Raw ERROR observations grant zero eligible coverage or approval. Use source chunks at most 8 KiB per read; open original fields only for a named unresolved fact. A fresh reviewer conversation never resets sealed file coverage. No copied history grants proof or approval."};
   value.cohort.reviewer_settings_sha256 = bindingHash(plan.reviewer_settings);
   value.reviewer_settings = plan.reviewer_settings;
-  // Bound payload mechanically. Originals remain immutable, available by exact
-  // references; omitted data never becomes an implicit assessment.
-  if (Buffer.byteLength(JSON.stringify(value)) > payloadLimit) {
-    value.review_context.supporting_coverage = [];
-    value.review_context.finding_history = [];
-    value.retained_details_on_demand = true;
-  }
-  if (Buffer.byteLength(JSON.stringify(value)) > payloadLimit) throw new Error(`Cohort payload exceeds its bound; field bytes ${JSON.stringify(Object.fromEntries(Object.entries(value).map(([key, item]) => [key, Buffer.byteLength(JSON.stringify(item))])))}`);
-  return value;
+  return boundedPayload(value, evidence, primary);
 }
 
 function mergeRecords(responses, field, identity, issues) {
@@ -181,6 +206,7 @@ export async function verifyParallelArtifacts(reference, {root} = {}) {
   if (manifest.schema !== "my-crm.parallel-artifacts/v1" || !Array.isArray(manifest.files)) throw new Error("Parallel review artifact manifest is malformed");
   for (const item of manifest.files) {
     if (!item.path.startsWith(`${directory}${path.sep}`) || contentHash(await readMetadataFile(item.path, {}, {root})) !== item.sha256) throw new Error("Parallel review original cohort evidence changed");
+    if (item.binding) await assertEvidenceIntegrity(path.dirname(directory), [item.binding]);
   }
   return manifest;
 }
@@ -251,6 +277,11 @@ export async function nativeCohortObservations({root, directory, validation = []
 }
 
 export async function runParallelReview({run, candidate, inputs, evidence, schema, invoke, sharedPrompt, diffForPaths, diffBase = candidate.base, sourceForPath}) {
+  // Every projected pointer resolves into this frozen original, including on
+  // provider failures and after the model has returned its current decision.
+  const originalFile = path.join(run, "evidence.json"), evidenceRoot = path.dirname(run);
+  const originalBinding = await evidenceBinding(evidenceRoot, `@${originalFile}`);
+  if (bindingHash(JSON.parse(await readMetadataFile(originalFile, "utf8"))) !== bindingHash(evidence)) throw new Error("Parallel review original evidence differs from its projection inputs");
   const plan = cohortPlan({candidate, inputs, context: evidence.review_context});
   await atomicJson(path.join(run, "cohort-plan.json"), plan, {exclusive: true});
   const wrapperSchema = {type: "object", additionalProperties: false,
@@ -269,7 +300,8 @@ export async function runParallelReview({run, candidate, inputs, evidence, schem
       excerpt_complete: Buffer.byteLength(diff) <= 8192, scoped_diff_reference: "delta.diff", scoped_diff_sha256: bindingHash(diff)}, {exclusive: true});
     payload.changes_reference = "changes.json";
     payload.changes_excerpt_complete = Buffer.byteLength(diff) <= 8192;
-    await atomicJson(path.join(directory, "evidence.json"), payload, {exclusive: true});
+    payload.full_evidence_sha256 = originalBinding.sha256;
+    await atomicJson(path.join(directory, "evidence.json"), boundedPayload(payload, evidence, cohort.id === "cross-cutting"), {exclusive: true});
     await atomicJson(path.join(directory, "response.schema.json"), wrapperSchema, {exclusive: true});
   }
   const settled = await Promise.allSettled(prepared.map(async ({cohort, directory, sourcePacket}) => {
@@ -286,6 +318,7 @@ export async function runParallelReview({run, candidate, inputs, evidence, schem
     // Failed provider execution can still return useful observations. Their
     // original cohort inputs must be checked even on that error path.
     try {
+      await assertEvidenceIntegrity(evidenceRoot, [originalBinding]);
       for (const [name, original] of [["evidence.json", payloadBytes], ["response.schema.json", schemaBytes], ["changes.json", changesBytes], ["delta.diff", diffBytes]]) {
         if (contentHash(original) !== contentHash(await readMetadataFile(path.join(directory, name)))) throw new Error("Cohort inputs changed during assessment");
       }
@@ -309,7 +342,7 @@ export async function runParallelReview({run, candidate, inputs, evidence, schem
     signal: outcomes.find((item) => item.process?.signal)?.process.signal ?? null,
     interrupted: outcomes.some((item) => item.process?.interrupted), cohort_count: outcomes.length,
     cohort_exit_codes: outcomes.map((item) => ({id: item.id, ...item.process}))}, {exclusive: true});
-  const files = prepared.flatMap(area => area.sourcePacket.files);
+  const files = [{path: originalFile, sha256: originalBinding.sha256, binding: originalBinding}, ...prepared.flatMap(area => area.sourcePacket.files)];
   for (const name of ["cohort-plan.json", "cohort-outcomes.json", "response.json", "process.json",
     ...cohortIds.flatMap((id) => ["evidence.json", "changes.json", "delta.diff", "response.schema.json", "response.json", "outcome.json", "process.json", "reviewer.stdout.log", "reviewer.stderr.log"].map((leaf) => `cohorts/${id}/${leaf}`))]) {
     const filename = path.join(run, name);
