@@ -48,6 +48,11 @@ test("ordinary repairs deploy without human approval and preserve exact technica
 
 test("history traversal reuses each verified commit and rejects changed cached dependency closure", async t => {
   const f = await fixture(t);
+  await mkdir(path.join(f.root, "Vault/docs"), {recursive: true});
+  await mkdir(path.join(f.root, ".agents/skills/oracle"), {recursive: true});
+  await writeFile(path.join(f.root, "AGENTS.md"), "Synthetic history fixture policy.\n");
+  await writeFile(path.join(f.root, "Vault/docs/CONSTITUTION.md"), "Synthetic history fixture constitution.\n");
+  await writeFile(path.join(f.root, ".agents/skills/oracle/SKILL.md"), "Synthetic isolated approver policy.\n");
   await cp(new URL("../scripts", import.meta.url), path.join(f.root, "scripts"), {recursive: true});
   await cp(new URL("../package.json", import.meta.url), path.join(f.root, "package.json"));
   await cp(new URL("../node_modules", import.meta.url), path.join(f.root, "node_modules"), {recursive: true, dereference: true});

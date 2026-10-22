@@ -286,16 +286,16 @@ export async function pendingDeploymentEffects(plan, root = process.cwd()) {
 }
 
 export async function deploymentPlan({root = process.cwd(), reference = "HEAD", requireClean = true} = {}) {
-  const current = await committedReceipt(root, reference);
-  const {owner, value} = await directory(root);
+  const traversal = await historyTraversal(root), current = await cachedCommittedReceipt(root, reference, traversal);
+  const {owner, value} = traversal.layout;
   await assertPublishedInvocation(current.receipt.invocation, value, owner);
   if (current.receipt.candidate_commit) {
     const {checkpointApplicable} = await import("./shipment-state.mjs");
     await checkpointApplicable(root, {receipt: current.receipt});
   }
-  if ((await readBaseline(value, owner)).commit !== current.receipt.deployment_baseline_commit) throw new Error("Deployment candidate differs from the immutable adoption baseline");
+  if ((await readBaseline(value, owner, traversal.read)).commit !== current.receipt.deployment_baseline_commit) throw new Error("Deployment candidate differs from the immutable adoption baseline");
   if (requireClean && (await git(root, ["status", "--porcelain=v1", "--untracked-files=all"]) || await git(root, ["rev-parse", "HEAD^{tree}"]) !== current.tree)) throw new Error("Deployment requires the complete clean canonical source matching the reviewed target tree");
-  const history = await historyBetween(root, current.receipt.deployment_baseline_commit, current.commit, new Map(), current.receipt);
+  const history = await historyBetween(root, current.receipt.deployment_baseline_commit, current.commit, traversal.histories, current.receipt, traversal);
   const inherited = history.filter((entry) => entry.receipt.receipt_sha256 !== current.receipt.receipt_sha256);
   validateDeploymentDispositions(current.receipt, inherited);
   const disposition = new Map(current.receipt.deployment_effect_dispositions.map((item) => [effectKey(item.receipt_sha256, item.effect_id), item]));
@@ -305,6 +305,7 @@ export async function deploymentPlan({root = process.cwd(), reference = "HEAD", 
     if (entry.receipt.receipt_sha256 === current.receipt.receipt_sha256 || disposition.get(key)?.disposition === "EFFECTIVE") effects.push({key, effect, receipt: entry.receipt});
   }
   const binding = {target_tree: current.tree, technical_receipt_sha256: current.receipt.receipt_sha256, baseline_commit: current.receipt.deployment_baseline_commit, effects: effects.map(({key, effect}) => ({key, effect}))};
+  await traversal.verify();
   return {...current, effects, binding, plan_sha256: bindingHash(binding)};
 }
 
