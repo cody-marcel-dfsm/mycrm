@@ -76,7 +76,12 @@ async function historyTraversal(root) {
   }
   const read = async (filename, encoding = null) => {
     const value = await snapshot(filename, layout.owner, true); remember(native, value);
-    if (value.bytes === null) throw Object.assign(new Error(`Native history dependency is missing: ${filename}`), {code: "ENOENT"});
+    if (value.bytes === null) {
+      // Preserve the original native IO failure. A file appearing after its
+      // captured absence is drift, and never becomes an uncaptured read.
+      await readMetadataFile(filename, {}, {root: layout.owner});
+      throw changed("Native history dependency appeared after its captured absence");
+    }
     return typeof encoding === "string" ? value.bytes.toString(encoding) : value.bytes;
   };
   const bindProofs = async (receipt, proofs) => {

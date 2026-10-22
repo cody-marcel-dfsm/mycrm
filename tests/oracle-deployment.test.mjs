@@ -67,6 +67,7 @@ test("history traversal reuses each verified commit and rejects changed cached d
   assert.deepEqual(second.receipt.recovered_deployment_commits.map(item => item.commit), [unknown]);
   assert.deepEqual(third.receipt.recovered_deployment_commits.map(item => item.commit), [unknown, laterUnknown]);
   const bin = path.join(f.store, "history-bin"), log = path.join(f.store, "history-git.log"), control = path.join(f.store, "history-damage.json"); await mkdir(bin);
+  await writeFile(path.join(bin, "package.json"), '{"type":"commonjs"}\n');
   const actualGit = (await execute("which", ["git"])).stdout.trim();
   await writeFile(path.join(bin, "git"), `#!${process.execPath}
 const fs=require('node:fs'),cp=require('node:child_process');const args=process.argv.slice(2);
