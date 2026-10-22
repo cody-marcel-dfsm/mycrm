@@ -15,7 +15,7 @@ import {installReviewed} from "../scripts/codex-maintainer-install.mjs";
 
 const execute = promisify(execFile);
 const launcher = fileURLToPath(new URL("../scripts/oracle-review.mjs", import.meta.url));
-async function command(cwd, args, env = {}) { return execute(process.execPath, [launcher, ...args], {cwd, env: {...process.env, CODEX_THREAD_ID: "", CODEX_SELECTED_MODEL: "synthetic-test-model", CODEX_SELECTED_REASONING_EFFORT: "high", ...env}}); }
+async function command(cwd, args, env = {}, options = {}) { return execute(process.execPath, [launcher, ...args], {...options, cwd, env: {...process.env, CODEX_THREAD_ID: "", CODEX_SELECTED_MODEL: "synthetic-test-model", CODEX_SELECTED_REASONING_EFFORT: "high", ...env}}); }
 async function fixture(t) {
   const root = await realpath(await mkdtemp(path.join(os.tmpdir(), "my-crm-oracle-test-")));
   t.after(() => rm(root, {recursive: true, force: true}));
@@ -230,17 +230,20 @@ test("native transitive witness custody rejects source crossings and middle move
 
 test("native raw outside-manifest finding requires current absence coverage and rejects late ignored source drift", async (t) => {
   const {repo, env, git, prepare} = await fixture(t); await prepare();
+  const base = await git("rev-parse", "HEAD");
+  await git("branch", "-m", "main");
+  await git("-c", "user.name=Synthetic", "-c", "user.email=synthetic@example.invalid", "commit", "-qm", "Commit observed-source candidate before validation");
   await writeFile(path.join(repo, ".git/info/exclude"), "ignored-helper.mjs\n");
   const helper = path.join(repo, "ignored-helper.mjs");
   await writeFile(helper, "original unmanifested bytes");
   await assert.rejects(command(repo, ["review"], {...env, ORACLE_SOURCE_FINDING: "1", ORACLE_OBSERVED_PATH: "ignored-helper.mjs", ORACLE_EXIT_AFTER_OUTPUT: "1"}), /exited with status 9/);
-  const seriesPath = path.join(repo, ".git/oracle/series", `${await git("rev-parse", "HEAD")}.json`);
+  const seriesPath = path.join(repo, ".git/oracle/series", `${base}.json`);
   const original = JSON.parse(await readFile(seriesPath, "utf8")).rounds[0];
   assert.equal(Object.hasOwn(original.snapshot.files, "ignored-helper.mjs"), false);
   assert.equal(original.coverage.length, 0); assert.equal(original.findings.length, 0);
   assert.equal(original.observed_assessment.findings[0].id, "SYNTHETIC-EXIT-1");
   await rm(helper);
-  await assert.rejects(command(repo, ["review"], {...env, ORACLE_RESOLVE_OBSERVED: "1", ORACLE_MUTATE: helper}), /inputs drifted/);
+  await assert.rejects(command(repo, ["review"], {...env, ORACLE_RESOLVE_OBSERVED: "1", ORACLE_MUTATE: helper}, {timeout: 30_000}), /inputs drifted/);
   const error = JSON.parse(await readFile(seriesPath, "utf8")).rounds.at(-1);
   assert.equal(error.execution_status, "ERROR"); assert.equal(error.verdict, null);
   assert.equal(error.snapshot.files["ignored-helper.mjs"], null);

@@ -6,7 +6,7 @@ import path from "node:path";
 import process from "node:process";
 import {promisify} from "node:util";
 import {selectedSettings} from "./codex-child-model.mjs";
-import {atomicJson, withOracleRun, captureInputs, assertInputsMatch, preparedEvidence, bindingHash, pathCustody, metadataDirectory, readMetadataFile, writeMetadataFile, removeMetadataFile, currentInvocation, assertCurrentInvocation, assertPublishedInvocation, readBoundAuthority} from "./oracle-inputs.mjs";
+import {atomicJson, withOracleRun, captureInputs, assertInputsMatch, preparedEvidence, bindingHash, pathCustody, metadataDirectory, readMetadataFile, writeMetadataFile, removeMetadataFile, currentInvocation, assertCurrentInvocation, assertPublishedInvocation, readBoundAuthority, observedSourceBindings} from "./oracle-inputs.mjs";
 import {prepareSeries, reviewSnapshot, assessRound, saveRound, verifySeries, inheritObservedEvidence, observationSourcePaths, reviewSeriesPolicy, reviewSeriesSchemaProperties, seriesFindingSchema} from "./oracle-series.mjs";
 import {environmentHash, executionEnvironment, executableBinding, readValidationProofs, assertValidationProofsMatch, inheritNativeEvidence, validationDigest, fileMetadata} from "./oracle-validation.mjs";
 import Ajv from "ajv";
@@ -772,6 +772,18 @@ async function freshReviewAttempt(args) {
   return completed.result;
 }
 
+async function authoredCandidateIdentity() {
+  const names = (await git(["ls-files", "-z", "--cached", "--others", "--exclude-standard"])).split("\0").filter(Boolean);
+  const sources = await observedSourceBindings(process.cwd(), names);
+  // Only Git-representable source changes can be repaired by an authored
+  // commit. Authority, evidence and directory-custody drift retain their own
+  // explicit failure, even when a staged compatibility candidate is present.
+  return bindingHash({index: await git(["write-tree"]), sources: sources.map(({path, sha256, metadata}) => ({
+    path, sha256, type: metadata?.type ?? null,
+    executable: metadata ? Boolean(metadata.mode & 0o100) : null,
+  }))});
+}
+
 async function continuousReview(args, controller) {
   let requested;
   try { requested = reviewArguments(args); }
@@ -803,6 +815,7 @@ async function continuousReview(args, controller) {
       return {action: "NO_UNVALIDATED_COMMITS", candidate_commit: selection.last_validated_commit};
     }
     const before = await git(["rev-parse", "HEAD"]);
+    const beforeSource = await authoredCandidateIdentity();
     const currentArgs = [...evidence].flatMap((item) => ["--validation", item]);
     if (owner !== null) currentArgs.push("--owner-approval", owner);
     await controller.progress({phase: "ASSESSING", candidate_commit: before, attempt: ++attempt});
@@ -814,7 +827,8 @@ async function continuousReview(args, controller) {
     } catch (error) { failure = error; }
     const after = await git(["rev-parse", "HEAD"]);
     const moved = before !== after;
-    const sourceArrived = failure && ["ORACLE_INPUT_DRIFT", "ORACLE_CANDIDATE_MOVED"].includes(failure.code);
+    const sourceDrift = failure && ["ORACLE_INPUT_DRIFT", "ORACLE_CANDIDATE_MOVED"].includes(failure.code);
+    const sourceArrived = sourceDrift && (moved || beforeSource !== await authoredCandidateIdentity());
     if (sourceArrived || moved && !failure) {
       process.stdout.write(`ORACLE_REVIEW=CONTINUING controller=${controller.record.id} previous=${before} current=${after}\n`);
       await controller.progress({phase: "CATCHING_UP", previous_commit: before, candidate_commit: after, attempt});
