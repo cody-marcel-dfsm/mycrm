@@ -508,7 +508,9 @@ test("source movement cannot conceal explicit or inherited native proof corrupti
       const args = admission === "explicit" ? ["--validation", reference] : [];
       if (damage === "none") {
         const owner = runningReview(repo, sameEnvironment, args); await waitFor(changed);
-        const generation = JSON.parse(await readFile(path.join(repo, ".git/oracle/controllers/00000000.json")));
+        const controllers = path.join(repo, ".git/oracle/controllers");
+        const latestGeneration = (await readdir(controllers)).filter(name => /^\d{8}\.json$/.test(name)).sort().at(-1);
+        const generation = JSON.parse(await readFile(path.join(controllers, latestGeneration)));
         let progress;
         for (let count = 0; count < 1000; count++) {
           progress = JSON.parse(await readFile(path.join(repo, ".git/oracle/controllers", generation.id, "progress.json")));
