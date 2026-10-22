@@ -591,6 +591,47 @@ test("source movement retains simultaneous supplied-evidence integrity errors", 
   }
 });
 
+test("pre-dispatch candidate drift cannot skip admitted evidence integrity", async t => {
+  for (const kind of ["native", "supplied"]) await t.test(kind, async context => {
+    const {repo, root, env, prepare} = await fixture(context); await prepare();
+    const actualGit = (await execute("which", ["git"])).stdout.trim();
+    const trigger = path.join(root, "pre-dispatch-trigger"), control = path.join(root, "damage-control.json");
+    const shim = path.join(root, "bin/git");
+    await writeFile(shim, `#!${process.execPath}
+const fs=require('node:fs'),cp=require('node:child_process'),path=require('node:path');
+const trigger=${JSON.stringify(trigger)},control=${JSON.stringify(control)},actual=${JSON.stringify(actualGit)};
+const args=process.argv.slice(2),pointer=path.join(process.cwd(),'.git/oracle/active-review.json');
+if(args.join(' ')==='diff --name-only' && fs.existsSync(trigger) && fs.existsSync(pointer)) {
+ const invocation=JSON.parse(fs.readFileSync(pointer));
+ if(fs.existsSync(path.join(process.cwd(),'.git/oracle/runs',invocation.id,'evidence.json'))) {
+  fs.unlinkSync(trigger);const damage=JSON.parse(fs.readFileSync(control));
+  fs.writeFileSync(path.join(process.cwd(),'candidate.txt'),'source changed before dispatch');
+  fs.writeFileSync(damage.target,'immutable evidence changed before dispatch');
+ }
+}
+try {process.stdout.write(cp.execFileSync(actual,args,{cwd:process.cwd()}));}
+catch(error){if(error.stderr)process.stderr.write(error.stderr);process.exitCode=error.status??1;}
+`); await chmod(shim, 0o700);
+    let reference, target;
+    if (kind === "native") {
+      const captured = await command(repo, ["validate", "--input", "candidate.txt", "--", process.execPath, "-e", "console.log('pre-dispatch proof')"], env);
+      reference = captured.stdout.match(/ORACLE_VALIDATION_EVIDENCE=(.+)/)[1].trim();
+      target = JSON.parse(await readFile(reference.slice(1))).output_file;
+    } else {
+      target = path.join(repo, "Vault/tmp/admitted-evidence.txt"); await writeFile(target, "original immutable evidence"); reference = `@${target}`;
+    }
+    await writeFile(control, JSON.stringify({target})); await writeFile(trigger, "Trigger only after native preparation.");
+    await assert.rejects(command(repo, ["review", "--validation", reference], env, {timeout: 30_000}), error => {
+      assert.equal(Boolean(error.killed), false); assert.doesNotMatch(error.stdout ?? "", /ORACLE_REVIEW=CONTINUING/);
+      return /native validation output|supplied evidence integrity/.test(error.message);
+    });
+    const invocation = JSON.parse(await readFile(path.join(repo, ".git/oracle/active-review.json")));
+    const run = path.join(repo, ".git/oracle/runs", invocation.id), outcome = JSON.parse(await readFile(path.join(run, "outcome.json")));
+    assert.equal(outcome.outcome, "ERROR"); assert.equal(outcome.reviewer_invoked, false);
+    await assert.rejects(readFile(path.join(repo, ".git/oracle/approval.json")), {code: "ENOENT"});
+  });
+});
+
 test("deterministic preparation reuses identical content and rejects corrupt cached payload", async (t) => {
   const {root} = await fixture(t); let calls = 0;
   const prepare = async () => ({diff: `generated-${++calls}`});
