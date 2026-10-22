@@ -634,6 +634,11 @@ catch(error){if(error.stderr)process.stderr.write(error.stderr);process.exitCode
     const invocation = JSON.parse(await readFile(path.join(repo, ".git/oracle/active-review.json")));
     const run = path.join(repo, ".git/oracle/runs", invocation.id), outcome = JSON.parse(await readFile(path.join(run, "outcome.json")));
     assert.equal(outcome.outcome, "ERROR"); assert.equal(outcome.reviewer_invoked, stage === "checkpoint");
+    if (stage === "checkpoint") {
+      const failure = JSON.parse(await readFile(path.join(run, "integrity-failure.json")));
+      assert.equal(failure.original_error.code, "ORACLE_CANDIDATE_MOVED");
+      assert.match(failure.integrity_error.message, /native validation output|supplied evidence integrity/);
+    }
     await assert.rejects(readFile(path.join(repo, ".git/oracle/approval.json")), {code: "ENOENT"});
     await assert.rejects(readFile(path.join(repo, ".git/oracle/shipment-validated.json")), {code: "ENOENT"});
   });

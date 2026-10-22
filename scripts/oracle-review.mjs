@@ -496,7 +496,14 @@ async function review(args = [], {run, phase, producer = null, verifyProducer = 
   if (receipt.verdict !== "APPROVED") process.exitCode = 1;
   return receipt;
   } catch (error) {
-    await recheckAdmittedEvidence();
+    try { await recheckAdmittedEvidence(); }
+    catch (integrityError) {
+      await atomicJson(path.join(run, "integrity-failure.json"), {
+        original_error: {name: error.name, message: error.message, code: error.code ?? null},
+        integrity_error: {name: integrityError.name, message: integrityError.message, code: integrityError.code ?? null},
+      });
+      throw integrityError;
+    }
     throw error;
   }
 }
