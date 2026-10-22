@@ -1,5 +1,27 @@
 # My CRM
 
+## JavaScript helper cache handoffs
+
+Create one `ProviderNeutralCrmClient` per task and compose `onMutationComplete`
+with the installed BOS cache-maintenance owner when shared caching is used.
+The helper supplies no cache implementation. The callback receives the preserved
+aggregate `result`, the newly confirmed `confirmations` (`source`, `record`, and
+opaque public `receipt`), and only their affected `sources`. Use `confirmations`
+for maintenance; the aggregate can also contain pending or failed targets.
+Successful receipts are deduplicated in task-local memory, including partial
+results and repeated state observations. A new distinct receipt remains new work.
+
+A callback failure raises `CrmCacheMaintenanceError` with the preserved mutation
+`result` and pending confirmation count. Call `retryCacheMaintenance()` to retry
+only retained cache work. The helper attempts pending maintenance before a later
+CRM search or mutation and never repeats a business mutation for cache recovery.
+Callbacks must finish the advertised cache work through BOS and must not reenter
+this CRM helper. When the injected BOS adapter supplies `captureExecutionScope`,
+the helper verifies that opaque scope before and after handoff and on retry;
+pending work remains bound to its original scope. Completed deduplication state
+resets when a later task context changes. Credential attachment, current authority,
+exact discovered-contact validation and actual-effect approval remain with BOS.
+
 ## One BOS identity and delegated context selection — 2026-10-19
 
 One BOS identity login gives the agent access to the organizations, applications,

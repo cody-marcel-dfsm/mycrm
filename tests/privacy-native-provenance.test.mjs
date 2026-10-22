@@ -123,3 +123,25 @@ test("public typed lookalikes and customer/denylist values retain all privacy ga
   await f.write("Vault/tmp/completion.json", {schema: "my-crm.shipment-completion/v1", oracle: {series_id: f.seriesId}, customer_id: randomUUID(), marker: "synthetic-denied-customer"});
   await assert.rejects(checkPrivacy({root: f.root, denylistValues: ["synthetic-denied-customer"]}), /uuid-value[\s\S]*externally denied/);
 });
+
+test("authority-drift diagnostic invocation requires its exact private field and verified native outcome", async t => {
+  const f = await fixture(t), outcome = path.join(path.dirname(f.original), "outcome.json");
+  const record = {kind: "mycrm-current-checkpoint-authority-drift-diagnosis-v1",
+    original_native_review: {invocation: f.run, native_outcome: {path: outcome, sha256: contentHash(await readFile(outcome))}}};
+  const filename = await f.write("Vault/tmp/diagnostic.json", record), original = await readFile(filename);
+  await checkPrivacy({root: f.root, denylistValues: []});
+  assert.deepEqual(await readFile(filename), original);
+  for (const invalid of [
+    {...record, kind: "unverified-diagnostic"},
+    {...record, original_native_review: {...record.original_native_review, invocation: randomUUID()}},
+    {...record, original_native_review: {...record.original_native_review, native_outcome: {path: outcome, sha256: "0".repeat(64)}}},
+    {...record, customer_id: f.run},
+    {...record, invocation: f.run}
+  ]) {
+    await f.write("Vault/tmp/diagnostic.json", invalid);
+    await assert.rejects(checkPrivacy({root: f.root, denylistValues: []}), /uuid-value/);
+  }
+  await f.write("Vault/tmp/diagnostic.json", record);
+  await f.write("public-diagnostic.json", record);
+  await assert.rejects(checkPrivacy({root: f.root, denylistValues: []}), /uuid-value/);
+});

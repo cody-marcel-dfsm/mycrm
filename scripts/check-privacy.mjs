@@ -111,10 +111,15 @@ async function uuidAuditContent(content, relative, provenance) {
       const seriesField = leaf === "series_id" || leaf === "id" && token.location.at(-2) === "series";
       const runField = leaf === "id" && ["review", "proposal", "deployment-authorization"].includes(parent?.kind)
         || leaf === "existing_other_scope_proposal" || token.location.at(-2) === "original_error_outcomes_preserved";
+      const diagnostic = record.kind === "mycrm-current-checkpoint-authority-drift-diagnosis-v1"
+        && JSON.stringify(token.location) === '["original_native_review","invocation"]'
+        && record.original_native_review?.native_outcome?.path === path.join(provenance.runPrefix, token.value, "outcome.json")
+        && await provenance.runFile(record.original_native_review.native_outcome.path, record.original_native_review.native_outcome.sha256);
       const proven = await Promise.all(matches.map(async (match) => {
         if (exactSeries && token.value === match[0]) return true;
         if (exactCustody && token.value.slice(0, match.index).endsWith(provenance.runPrefix) && token.value[match.index + match[0].length] === path.sep) return true;
         if (record?.schema === "my-crm.proposal-evidence-custody/v1") return false;
+        if (diagnostic && token.value === match[0]) return true;
         if (seriesField && token.value === match[0] && provenance.series.has(match[0])) return true;
         const nativePath = token.value.slice(0, match.index).endsWith(provenance.runPrefix)
           && [undefined, path.sep].includes(token.value[match.index + match[0].length]);
