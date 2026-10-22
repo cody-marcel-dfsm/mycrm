@@ -11,6 +11,7 @@ import {receiptSha256, sha256} from "../scripts/oracle-review.mjs";
 import {seriesDigest, reviewSnapshot} from "../scripts/oracle-series.mjs";
 import {readValidationProofs, inheritNativeEvidence, executableBinding, fileMetadata} from "../scripts/oracle-validation.mjs";
 import {admitDeployment} from "../scripts/oracle-deployment.mjs";
+import {nativeCohortObservations} from "../scripts/oracle-parallel.mjs";
 import {installReviewed} from "../scripts/codex-maintainer-install.mjs";
 
 const execute = promisify(execFile);
@@ -85,8 +86,10 @@ const emit=()=>{
   if(!proposal && process.env.ORACLE_REUSE_COVERAGE) { response.reused_coverage=(evidence.review_context.eligible_coverage??[]).map(item=>item.path); response.coverage=response.coverage.filter(item=>!response.reused_coverage.includes(item.path)); }
   if(proof && !process.env.ORACLE_OMIT_VALIDATION) response.validations=[{id:'native-check',evidence:proof.evidence,command:JSON.stringify(proof.record.command),dependencies:evidence.staged_files,dependency_rationale:'Synthetic complete candidate closure.',assessment:'Native passing execution and output checked.'}];
   if(!proposal && process.env.ORACLE_SOURCE_FINDING) { response.verdict='REJECTED'; response.findings=[{id:'SYNTHETIC-EXIT-1',severity:'medium',code:'SYNTHETIC_EXIT_FINDING',message:'Synthetic source finding.',path:'candidate.txt',reproduction:'Synthetic input.',required_behavior:'Synthetic required behavior.',affected_paths:['candidate.txt'],acceptance_checks:['Synthetic acceptance.'],origin:'initial',missed_finding_reason:null}]; }
+  if(!proposal && process.env.ORACLE_ABSENT_DEPENDENCY && response.coverage.length) response.coverage[0].dependencies.push('absent-source.mjs');
+  if(!proposal && process.env.ORACLE_CONTRADICTORY_FINDING && response.findings.length) response.findings[0].code=evidence.cohort.id;
   if(!proposal && process.env.ORACLE_OBSERVED_PATH) { response.review_status='INCOMPLETE'; response.verdict=null; response.findings[0].path=process.env.ORACLE_OBSERVED_PATH; response.findings[0].affected_paths=[process.env.ORACLE_OBSERVED_PATH]; response.unreviewed=[process.env.ORACLE_OBSERVED_PATH]; }
-  if(!proposal && process.env.ORACLE_RESOLVE_OBSERVED) { const findings=[...evidence.review_context.prior_findings,...evidence.review_context.observed_assessments.flatMap(item=>item.findings)]; response.resolutions=[...new Set(findings.map(item=>item.id))].map(id=>({id,status:'RESOLVED',evidence:'Independently assessed synthetic current source and verified repair.'})); }
+  if(!proposal && process.env.ORACLE_RESOLVE_OBSERVED) { const findings=[...evidence.review_context.prior_findings,...evidence.review_context.observed_assessments.flatMap(item=>item.findings)]; response.resolutions=[...new Set(findings.map(item=>item.id))].map(id=>({id,status:response.findings.some(item=>item.id===id)?'OPEN':'RESOLVED',evidence:'Independently assessed synthetic current source and verified disposition.'})); }
   if(!proposal && process.env.ORACLE_DISPOSITION_SCOPE) response.scope_dispositions=evidence.review_context.unavailable_sources.map(item=>({path:item.path,disposition:'UNAVAILABLE',evidence:'Independent current scope disposition; no external source read or invented original facts.'}));
   if(!proposal && captureThis && process.env.ORACLE_RETARGET_MIDDLE) { fs.unlinkSync(process.env.ORACLE_RETARGET_MIDDLE); fs.symlinkSync(process.env.ORACLE_MIDDLE_TARGET,process.env.ORACLE_RETARGET_MIDDLE); }
   if(!proposal && process.env.ORACLE_TAMPER_PROOF_OUTPUT && proof) fs.writeFileSync(proof.record.output_file,'changed nested output during review');
@@ -656,6 +659,54 @@ test("deterministic preparation reuses identical content and rejects corrupt cac
   const recoveredA = await preparedEvidence(root, {input: "a"}, prepare);
   const recoveredB = await preparedEvidence(root, {input: "b"}, prepare);
   assert.equal(Number(!recoveredA.reused) + Number(!recoveredB.reused), 1);
+});
+
+test("aggregate ERROR retains native cohort findings for independent current dispositions", async t => {
+  const {repo, root, env, prepare, git} = await fixture(t); await prepare();
+  await assert.rejects(command(repo, ["review"], {...env, ORACLE_SOURCE_FINDING: "1", ORACLE_ABSENT_DEPENDENCY: "1"}), /dependency is absent/);
+  const directory = path.join(repo, ".git/oracle"), invocation = JSON.parse(await readFile(path.join(directory, "active-review.json")));
+  const run = path.join(directory, "runs", invocation.id), nativeOutcome = await readFile(path.join(run, "outcome.json"));
+  assert.equal(JSON.parse(nativeOutcome).outcome, "ERROR");
+  const seriesFile = path.join(directory, "series", `${await git("rev-parse", "HEAD")}.json`);
+  const failed = JSON.parse(await readFile(seriesFile)).rounds.at(-1);
+  assert.equal(failed.execution_status, "ERROR"); assert.equal(failed.verdict, null); assert.equal(failed.coverage.length, 0);
+  assert.equal(failed.native_cohort_reports.length, 3);
+  const observed = await nativeCohortObservations({root: repo, directory, validation: failed.native_cohort_reports});
+  assert.equal(observed.length, 3); assert.ok(observed.every(item => item.coverage.length === 0 && item.execution_status === "ERROR"));
+  assert.ok(observed.every(item => item.findings[0].id === "SYNTHETIC-EXIT-1"));
+  const report = failed.native_cohort_reports[0].value.slice(1), original = await readFile(report);
+  for (const damage of ["content", "custody", "missing-child", "changed-child"]) {
+    const processFile = path.join(path.dirname(report), "process.json"), processBytes = await readFile(processFile);
+    if (damage === "content") await writeFile(report, "changed native report");
+    if (damage === "custody") await chmod(report, 0o600);
+    if (damage === "missing-child") await rm(processFile);
+    if (damage === "changed-child") await writeFile(processFile, "changed native child provenance");
+    await assert.rejects(nativeCohortObservations({root: repo, directory, retained: observed}), /changed|ENOENT/);
+    await writeFile(report, original); await chmod(report, 0o644); await writeFile(processFile, processBytes);
+  }
+  const forged = path.join(repo, "Vault/tmp/forged-cohort.json"); await writeFile(forged, original);
+  const forgedBinding = await evidenceBinding(repo, `@${forged}`);
+  assert.deepEqual(await nativeCohortObservations({root: repo, directory, validation: [forgedBinding]}), []);
+  await assert.rejects(nativeCohortObservations({root: repo, directory, retained: [{...observed[0], response_evidence: forgedBinding}]}), /outside the native review store/);
+  const invented = path.join(directory, "runs", "a".repeat(8)+"-"+"b".repeat(4)+"-"+"c".repeat(4)+"-"+"d".repeat(4)+"-"+"e".repeat(12), "cohorts/cross-cutting/response.json");
+  await mkdir(path.dirname(invented), {recursive: true}); await writeFile(invented, original);
+  await assert.rejects(nativeCohortObservations({root: repo, directory, validation: [await evidenceBinding(repo, `@${invented}`)]}), /ENOENT/);
+  await assert.rejects(command(repo, ["review"], {...env, ORACLE_RESOLVE_OBSERVED: "1", ORACLE_SOURCE_FINDING: "1", ORACLE_OMIT_VALIDATION: "1"}), /Command failed/);
+  const open = JSON.parse(await readFile(seriesFile)).rounds.at(-1);
+  assert.equal(open.verdict, "REJECTED"); assert.equal(open.response.resolutions.find(item => item.id === "SYNTHETIC-EXIT-1").status, "OPEN");
+  const completed = await command(repo, ["review"], {...env, ORACLE_RESOLVE_OBSERVED: "1", ORACLE_OMIT_VALIDATION: "1"});
+  assert.match(completed.stdout, /ORACLE_VERDICT=APPROVED/);
+  const series = JSON.parse(await readFile(seriesFile)), latest = series.rounds.at(-1);
+  assert.equal(latest.response.resolutions.find(item => item.id === "SYNTHETIC-EXIT-1").status, "RESOLVED");
+  assert.equal(latest.observed_cohorts.length, 3); assert.equal(series.rounds[0].execution_status, "ERROR");
+  assert.deepEqual(await readFile(path.join(run, "outcome.json")), nativeOutcome);
+});
+
+test("contradictory native cohort finding identities retain ERROR", async t => {
+  const {repo, env, prepare} = await fixture(t); await prepare();
+  await assert.rejects(command(repo, ["review"], {...env, ORACLE_SOURCE_FINDING: "1", ORACLE_CONTRADICTORY_FINDING: "1"}), /Conflicting findings identity/);
+  await assert.rejects(command(repo, ["review"], {...env, ORACLE_RESOLVE_OBSERVED: "1"}), /identity contradicts/);
+  await assert.rejects(readFile(path.join(repo, ".git/oracle/approval.json")), {code: "ENOENT"});
 });
 
 test("live gates bind all inputs, emit owner verifier JSON, and retain phase diagnostics", async (t) => {

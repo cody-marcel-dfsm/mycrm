@@ -11,7 +11,7 @@ import {prepareSeries, reviewSnapshot, assessRound, saveRound, verifySeries, inh
 import {environmentHash, executionEnvironment, executableBinding, readValidationProofs, assertValidationProofsMatch, inheritNativeEvidence, validationDigest, fileMetadata} from "./oracle-validation.mjs";
 import Ajv from "ajv";
 import {recordValidatedCommit, readValidatedCheckpoint, shipmentPlan} from "./shipment-state.mjs";
-import {runParallelReview, verifyParallelArtifacts} from "./oracle-parallel.mjs";
+import {runParallelReview, verifyParallelArtifacts, nativeCohortObservations} from "./oracle-parallel.mjs";
 import {withReviewController} from "./oracle-lifecycle.mjs";
 import {archiveTechnicalReceipt, committedReceipt, deploymentHistoryForReview, deploymentPlan, pendingDeploymentEffects, authorizationDigest, validateDeploymentAssessment, validateDeploymentDispositions, verifyNewEffectAuthorities, verifyDeploymentAuthorization} from "./oracle-deployment.mjs";
 
@@ -305,7 +305,7 @@ async function candidateDeploymentHistory(candidate) {
 }
 
 async function review(args = [], {run, phase, producer = null, verifyProducer = async () => {}}) {
-  const {validationEvidence, requestedValidationEvidence, inherited, ownerApprovalEvidence, proposalRecord, candidate, directory, observedPaths, establishedObservedPaths} = await phase("precheck_ms", async () => {
+  const {validationEvidence, requestedValidationEvidence, inherited, ownerApprovalEvidence, proposalRecord, candidate, directory, observedPaths, establishedObservedPaths, cohortAssessments} = await phase("precheck_ms", async () => {
     const {validationEvidence: requestedValidationEvidence, ownerApprovalEvidence} = reviewArguments(args);
     const proposalRecord = await readProposalRecord();
     const candidate = await assertExactStagedCandidate();
@@ -315,14 +315,15 @@ async function review(args = [], {run, phase, producer = null, verifyProducer = 
     const native = await inheritNativeEvidence({root: process.cwd(), directory, base: candidate.base, requestedEvidence: requestedValidationEvidence});
     const observed = await inheritObservedEvidence({directory, base: candidate.base, root: process.cwd(), requestedEvidence: [...requestedValidationEvidence, ...native.evidence]});
     const inherited = {evidence: [...native.evidence, ...observed.evidence], invalidated: [...native.invalidated, ...observed.invalidated]};
-    const {paths: observedPaths, established: establishedObservedPaths} = await observationSourcePaths({directory, base: candidate.base, withBindingState: true});
-    return {validationEvidence: [...requestedValidationEvidence, ...inherited.evidence], requestedValidationEvidence, inherited, ownerApprovalEvidence, proposalRecord, candidate, directory, observedPaths, establishedObservedPaths};
+    const {paths: observedPaths, established: establishedObservedPaths} = await observationSourcePaths({directory, base: candidate.base, withBindingState: true, additionalFindings: observed.cohorts.flatMap(item => item.findings)});
+    return {validationEvidence: [...requestedValidationEvidence, ...inherited.evidence], requestedValidationEvidence, inherited, ownerApprovalEvidence, proposalRecord, candidate, directory, observedPaths, establishedObservedPaths, cohortAssessments: observed.cohorts};
   });
   const admittedEvidence = await Promise.all(validationEvidence.map(value => evidenceBinding(process.cwd(), value)));
   const admittedOwner = await evidenceBinding(process.cwd(), ownerApprovalEvidence);
   const recheckAdmittedEvidence = async () => {
     await readValidationProofs({root: process.cwd(), directory, validation: admittedEvidence});
     await assertEvidenceIntegrity(process.cwd(), [...admittedEvidence, admittedOwner]);
+    await nativeCohortObservations({root: process.cwd(), directory, retained: cohortAssessments});
   };
   // Every admitted phase shares the original evidence boundary, including
   // preparation and receipt/checkpoint failures outside the assessment block.
@@ -346,7 +347,7 @@ async function review(args = [], {run, phase, producer = null, verifyProducer = 
   const series = await phase("series_ms", async () => {
     const facts = await candidateFiles(candidate);
     const validationProofs = await readValidationProofs({root: process.cwd(), directory, validation: inputs.validation});
-    return prepareSeries({directory, candidate, inputs, ...facts, environment: environmentHash(), validationProofs, proposalRecord, inheritedInvalidations: inherited.invalidated});
+    return prepareSeries({directory, candidate, inputs, ...facts, environment: environmentHash(), validationProofs, proposalRecord, inheritedInvalidations: inherited.invalidated, cohortAssessments});
   });
   const prepared = await phase("preparation_ms", () => preparedEvidence(directory, {inputs, ...reviewerRecord}, async () => ({inputs, ...reviewerRecord, proposal: proposalRecord, staged_files: candidate.files, diff: await git(candidate.commit ? ["diff", "--binary", "--no-ext-diff", candidate.base, candidate.commit] : ["diff", "--cached", "--binary", "--no-ext-diff"]), validation_evidence: validationEvidence, owner_approval_evidence: ownerApprovalEvidence})));
   const deployment = await candidateDeploymentHistory(candidate);
@@ -450,7 +451,17 @@ async function review(args = [], {run, phase, producer = null, verifyProducer = 
         execution = JSON.parse(bytes); executionEvidence = {value: `@${filename}`, sha256: sha256(bytes)};
       } catch (failure) { observationError ??= {name: failure.name, message: `Original reviewer process custody is unavailable: ${failure.message}`}; }
     }
-    await saveRound(series, null, null, {error: {name: terminalError.name, message: terminalError.message, observation_error: observationError,
+    parallelEvidence ??= error.parallel_review_evidence;
+    let cohortReports = [];
+    if (parallelEvidence) {
+      const manifest = await verifyParallelArtifacts(parallelEvidence, {root: path.dirname(directory)});
+      for (const item of manifest.files.filter(item => /\/cohorts\/(?:cross-cutting|implementation-consumers|verification-recovery)\/response\.json$/.test(item.path))) {
+        const envelope = JSON.parse(await readMetadataFile(item.path, "utf8"));
+        const schema = JSON.parse(await readMetadataFile(path.join(path.dirname(item.path), "response.schema.json"), "utf8"));
+        if (envelope.response?.findings?.length && new Ajv({strict: false}).validate(schema, envelope)) cohortReports.push(await evidenceBinding(process.cwd(), `@${item.path}`));
+      }
+    }
+    await saveRound(series, null, null, {cohortReports, error: {name: terminalError.name, message: terminalError.message, observation_error: observationError,
       ...(terminalError !== error ? {original_error: {name: error.name, message: error.message, code: error.code ?? null}} : {})}, observed: assessed ? {response, assessed, response_evidence: {value: `@${outputPath}`, sha256: sha256(rawResponse)}, execution, execution_evidence: executionEvidence} : null});
     throw terminalError;
   }
@@ -873,6 +884,7 @@ async function continuousReview(args, controller) {
     const recheckAttemptEvidence = async () => {
       await readValidationProofs({root: process.cwd(), directory, validation: admitted});
       await assertEvidenceIntegrity(process.cwd(), [...admitted, admittedOwner]);
+      await nativeCohortObservations({root: process.cwd(), directory, retained: observed.cohorts});
     };
     await recheckAttemptEvidence();
     const currentArgs = [...evidence].flatMap((item) => ["--validation", item]);

@@ -1,8 +1,9 @@
 import {randomUUID} from "node:crypto";
 import {readFile, readdir, realpath} from "node:fs/promises";
 import path from "node:path";
-import {atomicJson, bindingHash, contentHash, observedSourceBindings, pathCustody, readMetadataFile, writeMetadataFile, assertCurrentInvocation, metadataDirectory} from "./oracle-inputs.mjs";
+import {atomicJson, bindingHash, contentHash, observedSourceBindings, pathCustody, readMetadataFile, writeMetadataFile, assertCurrentInvocation, metadataDirectory, evidenceBinding} from "./oracle-inputs.mjs";
 import {legacyPolicy} from "./oracle-policy.mjs";
+import {nativeCohortObservations} from "./oracle-parallel.mjs";
 
 // Private maintainer state. It carries evidence; approval still requires a fresh
 // independent decision for the complete, exact candidate.
@@ -66,7 +67,7 @@ function cohortDiagnostic(value) {
   return /^Cohort [A-Za-z0-9_-]+ (?:omitted required coverage:|has unfinished assessment$|execution failed:|bound inputs changed during assessment$|candidate or plan binding differs$|omitted cross-area integration assessment$|has no formal assessment$|completed without a verdict$)/.test(value);
 }
 
-export async function observationSourcePaths({directory, base, series = null, withBindingState = false}) {
+export async function observationSourcePaths({directory, base, series = null, withBindingState = false, additionalFindings = []}) {
   if (!series) {
     try { series = verifySeries(JSON.parse(await readMetadataFile(path.join(directory, "series", `${base}.json`), "utf8", {root: path.dirname(directory)})), base); }
     catch (error) { if (error.code !== "ENOENT") throw error; series = {schema: "my-crm.oracle-series/v1", base_commit: base, series_id: "supporting-only", rounds: []}; }
@@ -77,9 +78,10 @@ export async function observationSourcePaths({directory, base, series = null, wi
     for (const name of round.snapshot.external_paths ?? []) external.add(name);
     for (const name of Object.keys(round.snapshot.files)) known.add(name);
     for (const name of round.snapshot.observed_source_paths ?? []) names.add(name);
-    for (const finding of [...round.observed_assessment?.findings ?? [], ...round.findings]) findings.set(finding.id, finding);
+    for (const finding of [...round.observed_assessment?.findings ?? [], ...round.observed_cohorts?.flatMap(item => item.findings) ?? [], ...round.findings]) findings.set(finding.id, finding);
     for (const resolution of round.response?.resolutions ?? []) if (resolution.status === "RESOLVED") findings.delete(resolution.id);
   }
+  for (const finding of additionalFindings) findings.set(finding.id, finding);
   for (const finding of findings.values()) for (const name of [finding.path, ...finding.affected_paths]) if (name) names.add(name);
   const previous = series.rounds.at(-1);
   for (const name of previous?.unreviewed ?? previous?.response?.unreviewed ?? []) {
@@ -116,7 +118,12 @@ export async function inheritObservedEvidence({directory, base, requestedEvidenc
       invalidated.push({kind: "observed-assessment", id: `round-${round.round}`, evidence_kind: kind, reason: error.code === "ENOENT" ? `original raw ${kind} is missing` : error.message});
     }
   }
-  return {evidence, invalidated};
+  const retained = [...new Map(series.rounds.flatMap(round => round.observed_cohorts ?? []).map(item => [item.id, item])).values()];
+  const reports = series.rounds.flatMap(round => round.native_cohort_reports ?? []);
+  const requestedBindings = await Promise.all(requestedEvidence.filter(value => /^runs\/[a-f0-9-]{36}\/cohorts\/(?:cross-cutting|implementation-consumers|verification-recovery)\/response\.json$/.test(path.relative(directory, path.resolve(root, value.replace(/^@/, ""))))).map(value => evidenceBinding(root, value)));
+  const cohorts = await nativeCohortObservations({root, directory, validation: [...requestedBindings, ...reports], retained, base, seriesId: series.series_id === "supporting-only" ? null : series.series_id});
+  for (const cohort of cohorts) for (const binding of cohort.native_bindings) if (!present.has(binding.value)) { evidence.push(binding.value); present.add(binding.value); }
+  return {evidence, invalidated, cohorts};
 }
 
 function executionContext(snapshot) { const {owner: _authorization, ...context} = snapshot.context; return context; }
@@ -208,7 +215,7 @@ export function reviewSnapshot({candidate, inputs, files, fileFacts = null, envi
   return snapshot;
 }
 
-export async function prepareSeries({directory, candidate, inputs, files, fileFacts = null, environment, validationProofs = [], proposalRecord = null, inheritedInvalidations = [], root = process.cwd()}) {
+export async function prepareSeries({directory, candidate, inputs, files, fileFacts = null, environment, validationProofs = [], proposalRecord = null, inheritedInvalidations = [], cohortAssessments = null, root = process.cwd()}) {
   const filename = path.join(directory, "series", `${candidate.base}.json`);
   let series;
   try { series = verifySeries(JSON.parse(await readMetadataFile(filename, "utf8", {root: path.dirname(directory)})), candidate.base); }
@@ -239,6 +246,8 @@ export async function prepareSeries({directory, candidate, inputs, files, fileFa
   }
 
   const previous = series.rounds.at(-1) ?? null;
+  cohortAssessments ??= await nativeCohortObservations({root, directory, validation: [...inputs.validation, ...series.rounds.flatMap(round => round.native_cohort_reports ?? [])],
+    retained: [...new Map(series.rounds.flatMap(round => round.observed_cohorts ?? []).map(item => [item.id, item])).values()], base: candidate.base, seriesId: series.series_id});
   // Proposal records may change during an in-scope repair. Preserve series
   // continuity and show scope changes explicitly for independent reassessment.
   const snapshot = reviewSnapshot({candidate, inputs, files, fileFacts, environment});
@@ -347,7 +356,7 @@ export async function prepareSeries({directory, candidate, inputs, files, fileFa
   }
   const pendingChanged = [...new Set([...changed, ...(previous?.review_status === "INCOMPLETE" ? previous.pending_changed_paths ?? previous.changed_since_previous : [])])].sort();
   const requiredPaths = [...new Set([...candidate.files, ...pendingChanged, ...observedPaths.filter((name) => !unavailableSources.some((item) => item.path === name)), ...unfinishedScope.filter((name) => Object.hasOwn(snapshot.files, name)), ...(!previous ? snapshot.external_paths.filter((name) => snapshot.files[name] !== null) : [])])].filter(name => !cohortDiagnostic(name)).sort();
-  const observedAssessments = series.rounds.flatMap((round) => {
+  const observedAssessments = [...cohortAssessments, ...series.rounds.flatMap((round) => {
     const observed = round.observed_assessment;
     if (!observed) return [];
     const evidence = inputs.validation.find((entry) => entry.kind === "file" && entry.value === observed.response_evidence.value && entry.sha256 === observed.response_evidence.sha256);
@@ -363,7 +372,7 @@ export async function prepareSeries({directory, candidate, inputs, files, fileFa
       coverage: observed.coverage.map((item) => ({...item, changed_dependencies: changedDependencies(round.snapshot, snapshot, item.dependencies)})),
       findings: observed.findings, unreviewed: observed.response.unreviewed,
       applicability: "Supporting observations only. Independently re-attest current path/dependency/criteria/evidence applicability; no automatic coverage, native witness or approval promotion."}];
-  });
+  })];
   const supportingCoverage = retainedObservations(series, "coverage").filter(({item}) => !eligibleCoverage.some((entry) => entry.path === item.path)).map(({item, round}) => ({
     id: `coverage-${round.round}-${item.path}`, origin: {history_file: filename, round: round.round, round_sha256: bindingHash(round), original_tree: round.snapshot.tree},
     ...item, coverage_eligibility: "NONE", independent_applicability_required: true,
@@ -382,6 +391,7 @@ export async function prepareSeries({directory, candidate, inputs, files, fileFa
       supporting_observations: observedAssessments.filter((item) => item.coverage.some((entry) => entry.path === name) || item.findings.some((entry) => entry.path === name || entry.affected_paths.includes(name)) || item.unreviewed.includes(name)).map((item) => item.id)};
   });
   const history = new Map();
+  for (const observed of cohortAssessments) for (const finding of observed.findings) history.set(finding.id, {...finding, last_status: "OBSERVED", last_round: observed.round, resolution_evidence: null});
   for (const round of series.rounds) {
     for (const finding of round.observed_assessment?.findings ?? []) history.set(finding.id, {...finding, last_status: "OBSERVED", last_round: round.round, resolution_evidence: null});
     for (const finding of round.findings) history.set(finding.id, {...finding, last_status: "OPEN", last_round: round.round, resolution_evidence: null});
@@ -398,7 +408,7 @@ export async function prepareSeries({directory, candidate, inputs, files, fileFa
     changed_since_previous: changed, proposal_scope_changed: Boolean(previous && previous.snapshot.proposal_sha256 !== inputs.proposal_sha256),
     previous_proposal: previous?.proposal_record?.proposal ?? null, current_proposal: proposalRecord?.proposal ?? null,
     pending_changed_paths: pendingChanged, initial_assessment_complete: initialAssessmentComplete,
-    path_dispositions: pathDispositions, supporting_coverage: supportingCoverage, observed_assessments: observedAssessments, unavailable_sources: unavailableSources,
+    path_dispositions: pathDispositions, supporting_coverage: supportingCoverage, observed_assessments: observedAssessments, observed_cohorts: cohortAssessments, unavailable_sources: unavailableSources,
     last_complete_verdict: series.rounds.findLast((round) => round.review_status === "COMPLETE")?.verdict ?? null,
     latest_repair_plan: previous?.repair_plan ?? null,
     prior_findings: previous?.findings ?? [], eligible_coverage: eligibleCoverage, eligible_validations: eligibleValidation, invalidated,
@@ -503,7 +513,7 @@ export function assessRound(context, response, validation) {
   return {coverage, validations, findings: [...findings, ...retained]};
 }
 
-export async function saveRound(context, response, assessed, {error = null, observed = null, beforePublish = null} = {}) {
+export async function saveRound(context, response, assessed, {error = null, observed = null, beforePublish = null, cohortReports = []} = {}) {
   let repairPlan = context.public.latest_repair_plan;
   if (response?.review_status === "COMPLETE") {
     const failedRepairs = response.verdict === "REJECTED" && context.public.last_complete_verdict === "REJECTED" ? context.public.unsuccessful_repair_rounds + 1 : 0;
@@ -530,6 +540,7 @@ export async function saveRound(context, response, assessed, {error = null, obse
     unreviewed: response?.unreviewed ?? [...new Set([...context.public.unfinished_scope, ...observed?.response.unreviewed ?? []])],
     pending_changed_paths: context.public.pending_changed_paths,
     proposal_record: context.proposalRecord,
+    observed_cohorts: context.public.observed_cohorts ?? [], native_cohort_reports: cohortReports,
     reviewer_policy_equivalence: context.public.reviewer_policy_equivalence,
     repair_plan: repairPlan,
     ...(observed ? {observed_assessment: {...observed.assessed, response: observed.response, response_sha256: bindingHash(observed.response), response_evidence: observed.response_evidence,

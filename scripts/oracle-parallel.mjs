@@ -1,6 +1,7 @@
 // Owner-local bounded independent review. Cohorts never publish approvals.
 import path from "node:path";
-import {atomicJson, bindingHash, contentHash, readMetadataFile, writeMetadataFile} from "./oracle-inputs.mjs";
+import Ajv from "ajv";
+import {atomicJson, bindingHash, contentHash, readMetadataFile, writeMetadataFile, evidenceBinding, assertEvidenceIntegrity} from "./oracle-inputs.mjs";
 import {prepareSourcePacket, utf8Pages} from "./oracle-source-packet.mjs";
 
 export const cohortIds = ["cross-cutting", "implementation-consumers", "verification-recovery"];
@@ -184,6 +185,71 @@ export async function verifyParallelArtifacts(reference, {root} = {}) {
   return manifest;
 }
 
+// A native ERROR may precede aggregate admission. Preserve its individual
+// finding obligations without promoting source coverage or any reported verdict.
+export async function nativeCohortObservations({root, directory, validation = [], retained = [], base = null, seriesId = null}) {
+  const owner = path.dirname(directory), runs = path.join(directory, "runs");
+  const pattern = /^([a-f0-9-]{36})\/cohorts\/(cross-cutting|implementation-consumers|verification-recovery)\/response\.json$/;
+  const originals = new Map(retained.map(item => [item.response_evidence.value, item]));
+  const references = new Map(retained.map(item => [item.response_evidence.value, item.response_evidence]));
+  for (const item of validation) if (item.kind === "file") {
+    const filename = path.resolve(root, item.value.replace(/^@/, ""));
+    if (pattern.test(path.relative(runs, filename))) references.set(item.value, item);
+  }
+  const observations = [];
+  for (const reference of references.values()) {
+    const filename = path.resolve(root, reference.value.replace(/^@/, "")), match = path.relative(runs, filename).match(pattern);
+    if (!match) throw new Error("Retained cohort report is outside the native review store");
+    const [, invocation, cohort] = match, run = path.join(runs, invocation), area = path.dirname(filename);
+    const read = async name => JSON.parse(await readMetadataFile(name, "utf8", {root: owner}));
+    const binding = await evidenceBinding(root, reference.value);
+    if (binding.sha256 !== reference.sha256 || reference.custody && bindingHash(binding.custody) !== bindingHash(reference.custody)) throw new Error("Native cohort original report content or custody changed");
+    const manifestPath = path.join(run, "cohort-artifacts.json"), manifestBinding = await evidenceBinding(root, `@${manifestPath}`);
+    const manifest = await verifyParallelArtifacts({path: manifestPath, sha256: manifestBinding.sha256}, {root: owner});
+    const original = await read(path.join(run, "evidence.json")), native = await read(path.join(run, "outcome.json"));
+    const plan = await read(path.join(run, "cohort-plan.json")), {plan_sha256, ...planBody} = plan;
+    const payload = await read(path.join(area, "evidence.json")), process = await read(path.join(area, "process.json"));
+    const outcome = await read(path.join(area, "outcome.json")), envelope = await read(filename), schema = await read(path.join(area, "response.schema.json"));
+    const reviewerPath = path.join(run, "reviewer.json"), reviewer = await read(reviewerPath);
+    const packet = await read(payload.source_packet.path);
+    const required = [filename, path.join(run, "cohort-plan.json"), path.join(area, "evidence.json"), path.join(area, "process.json"), path.join(area, "outcome.json"), path.join(area, "response.schema.json"), payload.source_packet.path];
+    if (required.some(name => !manifest.files.some(item => item.path === name))) throw new Error("Native cohort original provenance is absent from its artifact manifest");
+    if (native.kind !== "review" || native.outcome !== "ERROR" || !native.reviewer_invoked || !native.started_at || !native.finished_at ||
+        original.inputs.base_commit === undefined || base && original.inputs.base_commit !== base || seriesId && original.review_context.series_id !== seriesId || original.inputs.reviewed_tree !== plan.candidate_tree ||
+        plan.schema !== "my-crm.parallel-review/v1" || plan_sha256 !== bindingHash(planBody) || manifest.plan_sha256 !== plan_sha256 ||
+        plan.input_binding_sha256 !== bindingHash(original.inputs) || reviewer.role !== "independent-project-oracle" ||
+        bindingHash(reviewer) !== bindingHash(original.reviewer) || contentHash(await readMetadataFile(reviewerPath, {}, {root: owner})) !== original.reviewer_metadata_sha256 ||
+        reviewer.response_schema_sha256 !== contentHash(`${JSON.stringify(schema.properties.response, null, 2)}\n`) ||
+        !original.producer_origin?.fresh_module_graph || !Number.isSafeInteger(process.pid) || !process.started_at || !process.finished_at ||
+        outcome.inputs_valid !== true || bindingHash(outcome.process) !== bindingHash(process) || bindingHash(outcome.envelope) !== bindingHash(envelope) ||
+        envelope.cohort_id !== cohort || envelope.candidate_commit !== plan.candidate_commit || envelope.candidate_tree !== plan.candidate_tree ||
+        envelope.input_binding_sha256 !== plan.input_binding_sha256 || envelope.plan_sha256 !== plan_sha256 || envelope.reviewer_settings_sha256 !== bindingHash(plan.reviewer_settings) ||
+        bindingHash(payload.cohort) !== bindingHash({...plan.cohorts.find(item => item.id === cohort), candidate_commit: plan.candidate_commit,
+          candidate_tree: plan.candidate_tree, input_binding_sha256: plan.input_binding_sha256, plan_sha256, reviewer_settings_sha256: bindingHash(plan.reviewer_settings)}) ||
+        packet.cohort_id !== cohort || packet.candidate_tree !== plan.candidate_tree || packet.candidate_commit !== plan.candidate_commit || packet.input_binding_sha256 !== plan.input_binding_sha256 ||
+        !new Ajv({strict: false}).validate(schema, envelope)) throw new Error("Native cohort report lacks verified child, candidate, schema or source provenance");
+    const artifacts = await Promise.all(manifest.files.map(item => evidenceBinding(root, `@${item.path}`)));
+    const custody = bindingHash(artifacts), old = originals.get(reference.value);
+    if (old && (old.artifact_custody_sha256 !== custody || old.native_manifest_sha256 !== manifestBinding.sha256)) throw new Error("Native cohort original artifact content or custody changed");
+    const nativeBindings = await Promise.all([...new Set([manifestPath, path.join(run, "evidence.json"), path.join(run, "outcome.json"), reviewerPath, ...required])].map(name => evidenceBinding(root, `@${name}`)));
+    if (old) await assertEvidenceIntegrity(root, old.native_bindings);
+    const response = envelope.response;
+    observations.push({id: `cohort-${invocation}-${cohort}`, round: original.review_context.round, execution_status: "ERROR", source_verdict: null,
+      reported_review_status: response.review_status, reported_verdict: response.verdict, observed_tree: plan.candidate_tree,
+      response_evidence: binding, original_response_sha256: bindingHash(response), native_manifest_sha256: manifestBinding.sha256,
+      artifact_custody_sha256: custody, native_bindings: nativeBindings, execution: process, custody_intact: true,
+      coverage: [], findings: response.findings, unreviewed: response.unreviewed,
+      applicability: "Verified individual native cohort findings only. Original aggregate ERROR and child status retained; no coverage, passing validation or approval inherited."});
+  }
+  const identities = new Map();
+  for (const observation of observations) for (const finding of observation.findings) {
+    const prior = identities.get(finding.id);
+    if (prior && (prior.code !== finding.code || prior.path !== finding.path)) throw new Error("Native cohort finding identity contradicts an intact original report");
+    identities.set(finding.id, finding);
+  }
+  return observations;
+}
+
 export async function runParallelReview({run, candidate, inputs, evidence, schema, invoke, sharedPrompt, diffForPaths, diffBase = candidate.base, sourceForPath}) {
   const plan = cohortPlan({candidate, inputs, context: evidence.review_context});
   await atomicJson(path.join(run, "cohort-plan.json"), plan, {exclusive: true});
@@ -253,6 +319,6 @@ export async function runParallelReview({run, candidate, inputs, evidence, schem
   const manifestPath = path.join(run, "cohort-artifacts.json");
   await atomicJson(manifestPath, {schema: "my-crm.parallel-artifacts/v1", plan_sha256: plan.plan_sha256, files}, {exclusive: true});
   const reference = {path: manifestPath, sha256: contentHash(await readMetadataFile(manifestPath))};
-  if (aggregate.fatal_issues.length) throw new Error(`Concurrent independent review incomplete: ${aggregate.issues.join("; ")}`);
+  if (aggregate.fatal_issues.length) throw Object.assign(new Error(`Concurrent independent review incomplete: ${aggregate.issues.join("; ")}`), {parallel_review_evidence: reference});
   return {response: aggregate.response, reference};
 }
