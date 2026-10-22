@@ -596,6 +596,7 @@ test("bootstrap preparation and checkpoint drift cannot skip admitted evidence i
     const {repo, root, env, prepare, git} = await fixture(context); await prepare();
     await git("branch", "-m", "main");
     await git("-c", "user.name=Synthetic", "-c", "user.email=synthetic@example.invalid", "commit", "-qm", "Commit integrity fixture before validation");
+    const sameEnvironment = {...env, ORACLE_OMIT_VALIDATION: "1"};
     const actualGit = (await execute("which", ["git"])).stdout.trim();
     const trigger = path.join(root, "pre-dispatch-trigger"), control = path.join(root, "damage-control.json");
     const shim = path.join(root, "bin/git");
@@ -616,14 +617,14 @@ catch(error){if(error.stderr)process.stderr.write(error.stderr);process.exitCode
 `); await chmod(shim, 0o700);
     let reference, target;
     if (kind === "native") {
-      const captured = await command(repo, ["validate", "--input", "candidate.txt", "--", process.execPath, "-e", "console.log('pre-dispatch proof')"], env);
+      const captured = await command(repo, ["validate", "--input", "candidate.txt", "--", process.execPath, "-e", "console.log('pre-dispatch proof')"], sameEnvironment);
       reference = captured.stdout.match(/ORACLE_VALIDATION_EVIDENCE=(.+)/)[1].trim();
       target = JSON.parse(await readFile(reference.slice(1))).output_file;
     } else {
       target = path.join(repo, "Vault/tmp/admitted-evidence.txt"); await writeFile(target, "original immutable evidence"); reference = `@${target}`;
     }
     await writeFile(control, JSON.stringify({target})); await writeFile(trigger, "Trigger only after native preparation.");
-    await assert.rejects(command(repo, ["review", "--validation", reference], env, {timeout: 30_000}), error => {
+    await assert.rejects(command(repo, ["review", "--validation", reference], sameEnvironment, {timeout: 30_000}), error => {
       assert.equal(Boolean(error.killed), false); assert.doesNotMatch(error.stdout ?? "", /ORACLE_REVIEW=CONTINUING/);
       return /native validation output|supplied evidence integrity/.test(error.message);
     });
@@ -1569,18 +1570,19 @@ test("legacy source continuation rechecks its retained native and supplied evide
   for (const kind of ["native", "supplied", "intact-native"]) await t.test(kind, async context => {
     const {repo, root, env, prepare, git} = await fixture(context); await prepare(); await git("branch", "-m", "main");
     await git("-c", "user.name=Synthetic", "-c", "user.email=synthetic@example.invalid", "commit", "-qm", "Commit legacy evidence fixture");
+    const calls = path.join(root, "legacy-integrity-calls"), sameEnvironment = {...env, ORACLE_CALLS: calls, ORACLE_OMIT_VALIDATION: "1"};
     let reference, target;
     if (kind === "supplied") {
       target = path.join(repo, "Vault/tmp/legacy-evidence.txt"); await writeFile(target, "original supplied evidence"); reference = `@${target}`;
     } else {
-      const captured = await command(repo, ["validate", "--input", "candidate.txt", "--", process.execPath, "-e", "console.log('legacy proof')"], env);
+      const captured = await command(repo, ["validate", "--input", "candidate.txt", "--", process.execPath, "-e", "console.log('legacy proof')"], sameEnvironment);
       reference = captured.stdout.match(/ORACLE_VALIDATION_EVIDENCE=(.+)/)[1].trim();
       target = JSON.parse(await readFile(reference.slice(1))).output_file;
     }
     const originalBinding = await evidenceBinding(repo, reference);
-    const legacy = await runningLegacyReview(repo, root, env, {validation: [originalBinding]});
-    const original = JSON.parse(await readFile(path.join(repo, ".git/oracle/active-review.json"))), calls = path.join(root, "legacy-integrity-calls");
-    const observing = command(repo, ["review", "--validation", reference], {...env, ORACLE_CALLS: calls});
+    const legacy = await runningLegacyReview(repo, root, sameEnvironment, {validation: [originalBinding]});
+    const original = JSON.parse(await readFile(path.join(repo, ".git/oracle/active-review.json")));
+    const observing = command(repo, ["review", "--validation", reference], sameEnvironment);
     await waitFor(path.join(repo, ".git/oracle/controllers/00000000.json"));
     await writeFile(path.join(repo, "arrived-source.mjs"), "export const arrived = true;"); await git("add", ".");
     await git("-c", "user.name=Synthetic", "-c", "user.email=synthetic@example.invalid", "commit", "-qm", "Arrived source during legacy assessment");
