@@ -37,6 +37,12 @@ function boundedPayload(value, evidence, primary) {
     value.review_context.observed_finding_index = [...identities.values()];
     value.review_context.observed_assessments = [];
   }
+  if (serializedPayloadBytes(value) > payloadLimit && primary) {
+    const proofs = context.validation_proofs ?? [];
+    value.retained_collections.validation_proofs = collection(proofs, "/review_context/validation_proofs");
+    value.review_context.validation_proof_index = proofs.map(item => ({id: item.id, eligible: item.eligible}));
+    value.review_context.validation_proofs = [];
+  }
   if (serializedPayloadBytes(value) > payloadLimit) throw new Error(`Cohort payload exceeds its bound after retained collection projection: ${serializedPayloadBytes(value)} bytes`);
   return value;
 }

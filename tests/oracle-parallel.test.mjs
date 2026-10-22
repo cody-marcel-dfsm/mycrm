@@ -127,6 +127,18 @@ test("large retained history projects every finding version into exact immutable
   assert.throws(() => partitionPayload(tooLarge, tooLarge.cohorts[1], impossible), /exceeds its bound/);
 });
 
+test("large validation descriptions preserve every eligibility identity and exact original proof collection", () => {
+  const e = largeRetainedEvidence();
+  e.review_context.validation_proofs = Array.from({length: 30}, (_, index) => ({id: String(index).padStart(64, "0"),
+    eligible: index === 0, reason: "Exact native source, configuration and custody applicability details. ".repeat(100),
+    evidence: {value: `@original-proof-${index}.json`}, record: {command: ["node", "--test", `test-${index}.mjs`], output_file: `original-${index}.log`}}));
+  const plan = cohortPlan({candidate, inputs: e.inputs, context: e.review_context}), value = partitionPayload(plan, plan.cohorts[0], e);
+  assert.ok(Buffer.byteLength(`${JSON.stringify(value, null, 2)}\n`) <= payloadLimit);
+  assert.equal(value.retained_collections.validation_proofs.original_sha256, bindingHash(e.review_context.validation_proofs));
+  assert.deepEqual(value.review_context.validation_proof_index, e.review_context.validation_proofs.map(({id, eligible}) => ({id, eligible})));
+  assert.equal(value.retained_collections.validation_proofs.original_reference.pointer, "/review_context/validation_proofs");
+});
+
 test("aggregate rejects missing, duplicate, mixed-candidate and uncovered cohorts", () => {
   const plan = cohortPlan({candidate, inputs, context: evidence().review_context});
   const all = plan.cohorts.map((cohort) => ({id: cohort.id, envelope: envelope(plan, cohort)}));
