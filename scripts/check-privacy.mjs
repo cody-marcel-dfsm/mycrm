@@ -9,7 +9,7 @@ import {verifySeries} from "./oracle-series.mjs";
 
 const policyFile = path.join(repositoryRoot, "config/privacy-policy.json");
 const ignoredDirectories = new Set([".git", "node_modules", "coverage", ".Trash"]);
-const textExtensions = new Set([".cjs", ".js", ".json", ".md", ".mjs", ".toml", ".ts", ".tsx", ".txt", ".yaml", ".yml"]);
+const textExtensions = new Set([".cjs", ".js", ".json", ".jsonl", ".log", ".md", ".mjs", ".ndjson", ".toml", ".ts", ".tsx", ".txt", ".yaml", ".yml"]);
 const emailPattern = /\b[A-Z0-9._%+-]+@([A-Z0-9.-]+\.[A-Z]{2,})\b/giu;
 const nativeRunNames = new Set(["inputs.json", "process.json", "response.txt", "response.json", "response.schema.json", "reviewer.json", "reviewer.stdout.log", "reviewer.stderr.log", "timings.json", "outcome.json", "evidence.json", "preparation.json", "authorization.schema.json", "authorization.response.json", "authorization.evidence.json"]);
 const nativeUuid = /^[a-f0-9]{8}-[a-f0-9]{4}-[a-f0-9]{4}-[a-f0-9]{4}-[a-f0-9]{12}$/;
@@ -137,6 +137,27 @@ async function uuidAuditContent(content, relative, provenance) {
   return `${audited}\n${tokens.map((token) => masked.get(token) ?? token.value).join("\n")}`;
 }
 
+function decodedAuditContent(content) {
+  // Inspect occurrences rather than parsing a whole document: native copied
+  // logs contain multiple records, fragments and nested serialized payloads.
+  // Every derived view is shorter than its producer, so nesting terminates
+  // without silently skipping a record or imposing an encoding-depth escape.
+  const views = [content], seen = new Set(views);
+  const add = (value, producer) => {
+    if (value.length < producer.length && !seen.has(value)) { seen.add(value); views.push(value); }
+  };
+  for (let index = 0; index < views.length; index++) {
+    const view = views[index];
+    const normalized = view.replace(/"(?:\\[\s\S]|[^"\\])*"/g, token => {
+      try { const decoded = JSON.parse(token); add(decoded, view); return JSON.stringify(decoded); }
+      catch { return token; }
+    });
+    add(normalized, view);
+    add(view.replace(/\\u([0-9a-f]{4})/gi, (_, hex) => String.fromCharCode(Number.parseInt(hex, 16))), view);
+  }
+  return views.join("\n");
+}
+
 async function walk(directory, {includeDist}, files = []) {
   for (const entry of await readdir(directory, {withFileTypes: true})) {
     if (ignoredDirectories.has(entry.name) || (!includeDist && entry.name === "dist")) continue;
@@ -173,21 +194,22 @@ export async function checkPrivacy({root = repositoryRoot, includeDist = false, 
   for (const file of files) {
     const content = await readFile(file, "utf8");
     const relative = path.relative(root, file);
-    const uuidContent = await uuidAuditContent(content, relative, provenance);
-    for (const match of content.matchAll(emailPattern)) {
+    const audited = decodedAuditContent(content), uuidOriginal = await uuidAuditContent(content, relative, provenance);
+    const uuidContent = uuidOriginal === content ? audited : decodedAuditContent(uuidOriginal);
+    for (const match of audited.matchAll(emailPattern)) {
       if (!allowedDomains.has(match[1].toLowerCase())) failures.push(`${relative} contains a non-synthetic email address`);
     }
     for (const {id, regex} of patterns) {
       regex.lastIndex = 0;
-      if (regex.test(id === "uuid-value" ? uuidContent : content)) failures.push(`${relative} contains forbidden identity pattern ${id}`);
+      if (regex.test(id === "uuid-value" ? uuidContent : audited)) failures.push(`${relative} contains forbidden identity pattern ${id}`);
     }
     if (relative.startsWith(`Vault${path.sep}evidence${path.sep}`) || relative.startsWith(`Vault${path.sep}reviews${path.sep}`)) {
       for (const {id, regex} of evidencePatterns) {
         regex.lastIndex = 0;
-        if (regex.test(content)) failures.push(`${relative} contains forbidden evidence identity pattern ${id}`);
+        if (regex.test(audited)) failures.push(`${relative} contains forbidden evidence identity pattern ${id}`);
       }
     }
-    const folded = content.toLocaleLowerCase("en-US");
+    const folded = audited.toLocaleLowerCase("en-US");
     for (const value of denylist) {
       if (folded.includes(value.toLocaleLowerCase("en-US"))) failures.push(`${relative} contains an externally denied customer identifier`);
     }

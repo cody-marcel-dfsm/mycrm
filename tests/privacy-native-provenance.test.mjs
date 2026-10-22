@@ -145,3 +145,44 @@ test("authority-drift diagnostic invocation requires its exact private field and
   await f.write("public-diagnostic.json", record);
   await assert.rejects(checkPrivacy({root: f.root, denylistValues: []}), /uuid-value/);
 });
+
+test("actual copied log formats preserve every escaped identity occurrence across records and fragments", async t => {
+  const f = await fixture(t), unknown = randomUUID(), escaped = unknown.replaceAll("-", "\\u002d");
+  const records = [
+    `{"safe":true}\n{"customer_id":"${escaped}"}\n`,
+    `{"safe":true}\n{"customer_id":"${escaped}","customer_id":"synthetic"}\n`,
+    `native prefix\n{"customer_id":"${escaped}"`,
+    JSON.stringify({payload: JSON.stringify({customer_id: unknown}).replaceAll("-", "\\u002d")}),
+    `unframed diagnostic ${escaped}`,
+    `${JSON.stringify({invocation: {id: f.run, kind: "proposal"}})}\n{"customer_id":"${escaped}"}`
+  ];
+  for (const name of ["multiple.json", "native.stdout.log", "native.stderr.log", "events.ndjson", "events.jsonl", "public.log"]) {
+    for (const text of records) {
+      const filename = await f.write(`Vault/tmp/${name}`, text);
+      await assert.rejects(checkPrivacy({root: f.root, denylistValues: []}), /uuid-value/, name);
+      assert.equal(await readFile(filename, "utf8"), text);
+      await rm(filename);
+    }
+  }
+  const nativeLog = await f.write("Vault/tmp/native.stdout.log", JSON.stringify({invocation: {id: f.run, kind: "proposal"}}));
+  await assert.rejects(checkPrivacy({root: f.root, denylistValues: []}), /uuid-value/, "Typed native exemptions remain confined to their existing private JSON documents");
+  await rm(nativeLog);
+  await f.write("Vault/tmp/synthetic.stdout.log", '{"safe":"first"}\n{"safe":"second"}\nmalformed but identity-free text');
+  await checkPrivacy({root: f.root, denylistValues: []});
+});
+
+test("decoded keys, handles, emails and denylist values keep privacy rejection in streamed text", async t => {
+  const f = await fixture(t);
+  const cases = [
+    ["Vault/reviews/escaped.stdout.log", '{"safe":true}\n{"\\u0075ser_id":"synthetic"}', /identity-bearing-evidence-field/, []],
+    ["Vault/tmp/handle.stderr.log", JSON.stringify({safe: true}) + '\n{"value":"bos\\u005fctx\\u005fv2_' + "a".repeat(64) + '"}', /bos-context-handle-value/, []],
+    ["Vault/tmp/email.ndjson", '{"safe":true}\n{"value":"synthetic\\u0040reserved.invalid"}', /non-synthetic email address/, []],
+    ["Vault/tmp/denylist.jsonl", '{"safe":true}\n{"value":"synthetic\\u002ddenied\\u002dcustomer"}', /externally denied/, ["synthetic-denied-customer"]]
+  ];
+  for (const [name, text, expected, denylistValues] of cases) {
+    const filename = await f.write(name, text);
+    await assert.rejects(checkPrivacy({root: f.root, denylistValues}), expected);
+    assert.equal(await readFile(filename, "utf8"), text);
+    await rm(filename);
+  }
+});
