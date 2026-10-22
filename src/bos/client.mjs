@@ -97,6 +97,8 @@ export class BosContractClient {
     this.discoveryTransport = discovery;
     this.http = http;
     this.bos = bos;
+    if (bos.captureExecutionScope !== undefined && typeof bos.captureExecutionScope !== "function") throw new TypeError("captureExecutionScope must be provided as a function");
+    if (typeof bos.captureExecutionScope === "function") this.captureExecutionScope = () => this.#captureExecutionScope();
     this.onAuthenticationReady = onAuthenticationReady;
     this.discovery = null;
     this.descriptions = new Map();
@@ -173,7 +175,7 @@ export class BosContractClient {
     return true;
   }
 
-  async captureExecutionScope() {
+  async #captureExecutionScope() {
     return typeof this.bos.captureExecutionScope === "function"
       ? this.bos.captureExecutionScope() : null;
   }
@@ -196,7 +198,7 @@ export class BosContractClient {
 
   async #readDiscovery(refresh) {
     const previouslyScoped = this.discovery !== null;
-    const verifyScope = previouslyScoped ? await this.captureExecutionScope() : null;
+    const verifyScope = previouslyScoped ? await this.#captureExecutionScope() : null;
     let value;
     try {
       value = await this.discoveryTransport[refresh ? "refresh" : "read"]();
@@ -221,7 +223,7 @@ export class BosContractClient {
   }
 
   async #requestWithRecovery(action, {operationIds, operation, redescribe = true}) {
-    const verifyScope = await this.captureExecutionScope();
+    const verifyScope = await this.#captureExecutionScope();
     let response;
     try { response = await action(); } catch (error) {
       if (error instanceof BosContractError) throw error;

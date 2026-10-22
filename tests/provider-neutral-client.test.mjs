@@ -2,10 +2,42 @@ import assert from "node:assert/strict";
 import test from "node:test";
 
 import {CrmCacheMaintenanceError, ProviderNeutralCrmClient} from "../src/crm/client.mjs";
-import {createSyntheticDocuments} from "./support/synthetic-bos-service.mjs";
+import {BosContractClient} from "../src/bos/client.mjs";
+import {createSyntheticDocuments, startSyntheticBosService} from "./support/synthetic-bos-service.mjs";
 
 const {describe: described, examples} = createSyntheticDocuments();
 const descriptions = new Map(described.operations.map((operation) => [operation.operation, operation]));
+
+test("real BOS wrapper preserves absent optional scope capability and validates supplied hooks", async t => {
+  const service = await startSyntheticBosService(); t.after(() => service.close());
+  for (const maintenance of [false, true]) {
+    const underlying = {...service.bos, verifyExecutionIntent: async () => true,
+      invokeStateAction: async action => ({status: 200, body: structuredClone(service.documents.examples[action.href.split("/").at(-1)].response)})};
+    delete underlying.captureExecutionScope;
+    const bos = new BosContractClient({discovery: service.discovery, http: service.http, bos: underlying});
+    assert.equal(bos.captureExecutionScope, undefined);
+    const handoffs = [], client = new ProviderNeutralCrmClient({bos,
+      ...(maintenance ? {onMutationComplete: async handoff => handoffs.push(handoff)} : {})});
+    await client.create(service.documents.examples.create.request);
+    await client.update(service.documents.examples.update.request);
+    await client.delete(service.documents.examples.delete.request);
+    await bos.describe(["create", "update", "delete"]);
+    const action = operation => ({verb: "state", method: "GET", href: `/bos/state/${operation}`, payload_schema: null});
+    await client.observeCreate(action("create"), {source: service.documents.examples.create.request.source});
+    await client.observeUpdate(action("update"), {targets: service.documents.examples.update.request.targets});
+    await client.observeDelete(action("delete"), {targets: service.documents.examples.delete.request.targets});
+    assert.deepEqual(await client.retryCacheMaintenance(), {complete: true, pendingConfirmations: 0});
+    if (maintenance) assert.equal(handoffs.length, 3);
+  }
+  for (const hook of [null, "malformed"]) assert.throws(() => new BosContractClient({discovery: service.discovery, http: service.http,
+    bos: {...service.bos, captureExecutionScope: hook}}), /captureExecutionScope/);
+  for (const verifier of [null, false, async () => false]) {
+    const bos = new BosContractClient({discovery: service.discovery, http: service.http,
+      bos: {...service.bos, captureExecutionScope: async () => verifier}});
+    const client = new ProviderNeutralCrmClient({bos});
+    await assert.rejects(client.create(service.documents.examples.create.request), /scope verification/);
+  }
+});
 
 function fixtureBos() {
   const calls = [];
