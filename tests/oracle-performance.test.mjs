@@ -756,17 +756,17 @@ test("actual explicit-source cohort output reaches exact receipt and native veri
   assert.deepEqual(raw.dependencies, ["AGENTS.md"], "Receipt retains independent original response");
   const bound = series.rounds.at(-1).coverage.find(item => item.path === "candidate.txt");
   assert.deepEqual(bound.dependencies, ["candidate.txt", "AGENTS.md"]);
-  assert.match((await command(repo, ["verify"], env)).stdout, /APPROVED/);
+  assert.match((await command(repo, ["verify-index"], env)).stdout, /APPROVED/);
   const invocation = JSON.parse(await readFile(path.join(repo, ".git/oracle/active-review.json")));
   const run = path.join(repo, ".git/oracle/runs", invocation.id), packet = JSON.parse(await readFile(path.join(run, "cohorts/implementation-consumers/source-packet/manifest.json")));
   const navigation = packet.items[0].retained_review_navigation.pages[0].path, bytes = await readFile(navigation);
   await chmod(navigation, 0o640);
-  await assert.rejects(command(repo, ["verify"], env), /integrity changed/);
+  await assert.rejects(command(repo, ["verify-index"], env), /integrity changed/);
   await chmod(navigation, 0o600); await writeFile(navigation, "changed native navigation");
-  await assert.rejects(command(repo, ["verify"], env), /evidence changed/);
+  await assert.rejects(command(repo, ["verify-index"], env), /evidence changed/);
   await writeFile(navigation, bytes);
   await writeFile(path.join(repo, "candidate.txt"), "changed exact source\n"); await git("add", "candidate.txt");
-  await assert.rejects(command(repo, ["verify"], env), /stale|differ|changed/);
+  await assert.rejects(command(repo, ["verify-index"], env), /stale|differ|changed/);
 });
 
 test("contradictory native cohort finding identities retain ERROR", async t => {
