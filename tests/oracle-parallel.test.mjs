@@ -160,6 +160,36 @@ test("concurrent findings are consolidated and incompatible finding resolutions 
   assert.equal(aggregateCohorts(plan, all).response.verdict, null);
 });
 
+test("compatible unavailable-scope evidence reaches assessment while contradictions and duplicates remain fatal", async t => {
+  const directory = await mkdtemp(path.join(os.tmpdir(), "mycrm-scope-consolidation-"));
+  t.after(() => rm(directory, {recursive: true, force: true}));
+  const claim = "historical diagnostic: prepared binding changed, not a source identity";
+  const options = {directory, candidate: {...candidate, files: names},
+    inputs: {...inputs, validation: [], tool_sha256: "synthetic-tool", proposal_sha256: "synthetic-proposal",
+      observed_sources: [{path: claim, availability: "UNAVAILABLE", reason: "Unbindable historical prose"}]},
+    files: Object.fromEntries(names.map(name => [name, "same-content"])), environment: "synthetic"};
+  const current = await prepareSeries(options), plan = cohortPlan({candidate, inputs: options.inputs, context: current.public});
+  const all = plan.cohorts.map(cohort => ({id: cohort.id, envelope: envelope(plan, cohort)}));
+  all[0].envelope.response.scope_dispositions = [{path: claim, disposition: "UNAVAILABLE", evidence: "Independent governing-scope assessment grants no source identity or coverage."}];
+  all[1].envelope.response.scope_dispositions = [{path: claim, disposition: "UNAVAILABLE", evidence: "Independent consumer assessment grants no replacement manifest or external authority."}];
+  const original = JSON.stringify(all), merged = aggregateCohorts(plan, all);
+  assert.deepEqual(merged.issues, []); assert.equal(merged.response.review_status, "COMPLETE"); assert.equal(merged.response.verdict, "APPROVED");
+  assert.equal(merged.response.scope_dispositions.length, 1);
+  assert.match(merged.response.scope_dispositions[0].evidence, /governing-scope[\s\S]*consumer assessment/);
+  assert.ok(!merged.response.coverage.some(item => item.path === claim));
+  assert.doesNotThrow(() => assessRound(current, merged.response, []));
+  await saveRound(current, merged.response, assessRound(current, merged.response, []));
+  assert.equal(JSON.stringify(all), original, "Independent originals remain unchanged");
+  for (const kind of ["contradiction", "duplicate", "blank", "mixed-candidate"]) {
+    const changed = structuredClone(all);
+    if (kind === "contradiction") changed[1].envelope.response.scope_dispositions[0].disposition = "AVAILABLE";
+    if (kind === "duplicate") changed[1].envelope.response.scope_dispositions.push({...changed[1].envelope.response.scope_dispositions[0]});
+    if (kind === "blank") changed[1].envelope.response.scope_dispositions[0].evidence = " ";
+    if (kind === "mixed-candidate") changed[1].envelope.candidate_tree = "different";
+    assert.equal(aggregateCohorts(plan, changed).response.verdict, null, kind);
+  }
+});
+
 test("an OPEN disposition and its stable current finding reach native assessment and repair synthesis", async (t) => {
   const directory = await mkdtemp(path.join(os.tmpdir(), "mycrm-parallel-open-"));
   t.after(() => rm(directory, {recursive: true, force: true}));

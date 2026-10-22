@@ -129,6 +129,9 @@ function mergeRecords(responses, field, identity, issues) {
         records.set(key, {...old, evidence: `${old.evidence}; ${item.evidence}`});
       } else if (field === "resolutions" && old.status === item.status) {
         records.set(key, {...old, evidence: combinedText(old.evidence, item.evidence)});
+      } else if (field === "scope_dispositions" && old.disposition === "UNAVAILABLE" && item.disposition === "UNAVAILABLE"
+          && typeof old.evidence === "string" && old.evidence.trim() && typeof item.evidence === "string" && item.evidence.trim()) {
+        records.set(key, {...old, evidence: combinedText(old.evidence, item.evidence)});
       } else if (field === "findings" && old.code === item.code && old.path === item.path && old.origin === item.origin) {
         const severity = ["critical", "high", "medium", "low"].find(value => [old.severity, item.severity].includes(value)) ?? old.severity;
         records.set(key, {...old, severity, message: combinedText(old.message, item.message),
