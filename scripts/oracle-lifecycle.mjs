@@ -5,7 +5,8 @@ import {readFile, realpath, readdir, lstat} from "node:fs/promises";
 import {randomUUID} from "node:crypto";
 import path from "node:path";
 import process from "node:process";
-import {atomicJson, bindingHash, contentHash, metadataDirectory, readMetadataFile} from "./oracle-inputs.mjs";
+import {atomicJson, bindingHash, contentHash, metadataDirectory, readMetadataFile, assertEvidenceIntegrity} from "./oracle-inputs.mjs";
+import {readValidationProofs} from "./oracle-validation.mjs";
 
 const execute = promisify(execFile);
 const pause = (ms) => new Promise((resolve) => setTimeout(resolve, ms));
@@ -64,6 +65,12 @@ async function legacyTerminal(record, state) {
   if (!native) return null;
   if (native.kind !== "review" || typeof native.started_at !== "string" || typeof native.finished_at !== "string") throw new Error("Legacy native review outcome is malformed");
   const evidence = await optional(path.join(run, "evidence.json"), state.owner);
+  // Old parents may finish with source drift before checking their original
+  // proof. Observe its retained evidence before accepting or continuing it.
+  if (evidence?.inputs?.validation) {
+    await readValidationProofs({root: state.root, directory: path.join(state.owner, "oracle"), validation: evidence.inputs.validation, checkCurrentExecutable: false});
+    await assertEvidenceIntegrity(state.root, [...evidence.inputs.validation, evidence.inputs.owner]);
+  }
   return {outcome: native.outcome, native_outcome: native, native_outcome_file: filename,
     native_outcome_sha256: contentHash(await readMetadataFile(filename)),
     result: {action: "LEGACY_REVIEW_COMPLETED", native_outcome: native, invocation: record.legacy_invocation,

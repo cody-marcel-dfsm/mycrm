@@ -76,7 +76,7 @@ export async function readValidatedCheckpoint(root = process.cwd()) {
   if (receipt.review_status !== "COMPLETE" || receipt.candidate_commit !== record.last_validated_commit || receipt.receipt_sha256 !== record.receipt_sha256 || await git(root, ["rev-parse", `${record.last_validated_commit}^{tree}`]) !== record.tree) throw new Error("Shipment checkpoint lacks its exact complete committed-source receipt");
   return {record, receipt};
 }
-export async function recordValidatedCommit({root = process.cwd(), receipt}) {
+export async function recordValidatedCommit({root = process.cwd(), receipt, beforePublish = async () => {}}) {
   if (!receipt.candidate_commit) return null; // Historical staged-tree receipts retain their own custody.
   const {verifyReceipt} = await import("./oracle-review.mjs");
   verifyReceipt(receipt, receipt.reviewed_tree);
@@ -88,9 +88,11 @@ export async function recordValidatedCommit({root = process.cwd(), receipt}) {
   const record = {schema: "my-crm.shipment-validated/v1", last_validated_commit: receipt.candidate_commit, tree: receipt.reviewed_tree, receipt_sha256: receipt.receipt_sha256, reviewed_base: receipt.base_commit};
   record.checkpoint_sha256 = checkpointDigest(record);
   await exactSource(root, receipt.candidate_commit, receipt.reviewed_tree);
+  await beforePublish();
   await atomicJson(path.join(directory, "committed-receipts", `${receipt.candidate_commit}.json`), record, {root: owner});
   await exactSource(root, receipt.candidate_commit, receipt.reviewed_tree);
   await assertPublishedInvocation(receipt.invocation, directory, owner);
+  await beforePublish();
   await atomicJson(path.join(directory, "shipment-validated.json"), record, {root: owner});
   return record;
 }

@@ -324,6 +324,9 @@ async function review(args = [], {run, phase, producer = null, verifyProducer = 
     await readValidationProofs({root: process.cwd(), directory, validation: admittedEvidence});
     await assertEvidenceIntegrity(process.cwd(), [...admittedEvidence, admittedOwner]);
   };
+  // Every admitted phase shares the original evidence boundary, including
+  // preparation and receipt/checkpoint failures outside the assessment block.
+  try {
   const capture = async () => { try {
     await verifyProducer();
     const current = await assertExactStagedCandidate();
@@ -461,10 +464,30 @@ async function review(args = [], {run, phase, producer = null, verifyProducer = 
   receipt.receipt_sha256 = receiptSha256(receipt);
   // The final exact-input check precedes series publication above. Live receipt
   // verification independently rejects source movement after that observation.
-  await phase("publication_ms", async () => { await assertCurrentInvocation(); await archiveTechnicalReceipt(receipt, directory); await assertCurrentInvocation(); await atomicJson(await receiptPath(), receipt); await assertCurrentInvocation(); if (receipt.verdict === "APPROVED") await recordValidatedCommit({receipt}); });
+  let published = false;
+  try {
+    await phase("publication_ms", async () => {
+      await recheckAdmittedEvidence(); await assertCurrentInvocation();
+      await archiveTechnicalReceipt(receipt, directory);
+      await recheckAdmittedEvidence(); await assertCurrentInvocation();
+      await atomicJson(await receiptPath(), receipt); published = true;
+      await assertCurrentInvocation();
+      if (receipt.verdict === "APPROVED") await recordValidatedCommit({receipt, beforePublish: recheckAdmittedEvidence});
+      await recheckAdmittedEvidence();
+    });
+  } catch (error) {
+    // Retain immutable historical assessment bytes. A failed current
+    // publication supplies no live approval marker, even after archive IO.
+    if (published) { await assertCurrentInvocation(); await removeMetadataFile(await receiptPath(), {force: true}); }
+    throw error;
+  }
   process.stdout.write(`ORACLE_VERDICT=${receipt.verdict} tree=${receipt.reviewed_tree} receipt=${receipt.receipt_sha256}\n`);
   if (receipt.verdict !== "APPROVED") process.exitCode = 1;
   return receipt;
+  } catch (error) {
+    await recheckAdmittedEvidence();
+    throw error;
+  }
 }
 
 async function captureValidation(args, {run, phase}) {
@@ -838,6 +861,20 @@ async function continuousReview(args, controller) {
     }
     const before = await git(["rev-parse", "HEAD"]);
     const beforeSource = await authoredCandidateIdentity();
+    // Freeze original requested and automatic evidence before the bootstrap.
+    // Import/pre-admission failures cannot turn its corruption into a retry.
+    const directory = await oracleDirectory(), proposal = await readProposalRecord();
+    const staged = await git(["diff", "--cached", "--name-only"]);
+    const evidenceBase = staged ? before : checkpoint?.receipt.base_commit ?? proposal.base_commit;
+    const native = await inheritNativeEvidence({root: process.cwd(), directory, base: evidenceBase, requestedEvidence: [...evidence]});
+    const observed = await inheritObservedEvidence({root: process.cwd(), directory, base: evidenceBase, requestedEvidence: [...evidence, ...native.evidence]});
+    const admitted = await Promise.all([...new Set([...evidence, ...native.evidence, ...observed.evidence])].map(value => evidenceBinding(process.cwd(), value)));
+    const admittedOwner = await evidenceBinding(process.cwd(), owner);
+    const recheckAttemptEvidence = async () => {
+      await readValidationProofs({root: process.cwd(), directory, validation: admitted});
+      await assertEvidenceIntegrity(process.cwd(), [...admitted, admittedOwner]);
+    };
+    await recheckAttemptEvidence();
     const currentArgs = [...evidence].flatMap((item) => ["--validation", item]);
     if (owner !== null) currentArgs.push("--owner-approval", owner);
     await controller.progress({phase: "ASSESSING", candidate_commit: before, attempt: ++attempt});
@@ -847,6 +884,7 @@ async function continuousReview(args, controller) {
       // attempt. Commits cannot label the parent's cached emitters as new code.
       result = await freshReviewAttempt(currentArgs);
     } catch (error) { failure = error; }
+    try { await recheckAttemptEvidence(); } catch (error) { failure = error; }
     const after = await git(["rev-parse", "HEAD"]);
     const moved = before !== after;
     const sourceDrift = failure && ["ORACLE_INPUT_DRIFT", "ORACLE_CANDIDATE_MOVED"].includes(failure.code);

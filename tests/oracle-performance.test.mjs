@@ -591,23 +591,25 @@ test("source movement retains simultaneous supplied-evidence integrity errors", 
   }
 });
 
-test("pre-dispatch candidate drift cannot skip admitted evidence integrity", async t => {
-  for (const kind of ["native", "supplied"]) await t.test(kind, async context => {
-    const {repo, root, env, prepare} = await fixture(context); await prepare();
+test("bootstrap preparation and checkpoint drift cannot skip admitted evidence integrity", async t => {
+  for (const stage of ["bootstrap", "pre-dispatch", "checkpoint"]) for (const kind of ["native", "supplied"]) await t.test(`${stage} ${kind}`, async context => {
+    const {repo, root, env, prepare, git} = await fixture(context); await prepare();
+    await git("branch", "-m", "main");
+    await git("-c", "user.name=Synthetic", "-c", "user.email=synthetic@example.invalid", "commit", "-qm", "Commit integrity fixture before validation");
     const actualGit = (await execute("which", ["git"])).stdout.trim();
     const trigger = path.join(root, "pre-dispatch-trigger"), control = path.join(root, "damage-control.json");
     const shim = path.join(root, "bin/git");
     await writeFile(shim, `#!${process.execPath}
 const fs=require('node:fs'),cp=require('node:child_process'),path=require('node:path');
 const trigger=${JSON.stringify(trigger)},control=${JSON.stringify(control)},actual=${JSON.stringify(actualGit)};
-const args=process.argv.slice(2),pointer=path.join(process.cwd(),'.git/oracle/active-review.json');
-if(args.join(' ')==='diff --name-only' && fs.existsSync(trigger) && fs.existsSync(pointer)) {
- const invocation=JSON.parse(fs.readFileSync(pointer));
- if(fs.existsSync(path.join(process.cwd(),'.git/oracle/runs',invocation.id,'evidence.json'))) {
+const args=process.argv.slice(2),pointer=path.join(process.cwd(),'.git/oracle/active-review.json'),stage=${JSON.stringify(stage)};
+const archives=path.join(process.cwd(),'.git/oracle/technical-receipts');
+const prepared=fs.existsSync(pointer)&&fs.existsSync(path.join(process.cwd(),'.git/oracle/runs',JSON.parse(fs.readFileSync(pointer)).id,'evidence.json'));
+const admitted=stage==='bootstrap'?args.join(' ')==='diff --name-only'&&!fs.existsSync(pointer):stage==='pre-dispatch'?args.join(' ')==='diff --name-only'&&prepared:args.join(' ')==='branch --show-current'&&fs.existsSync(archives)&&fs.readdirSync(archives).length>0;
+if(admitted && fs.existsSync(trigger)) {
   fs.unlinkSync(trigger);const damage=JSON.parse(fs.readFileSync(control));
   fs.writeFileSync(path.join(process.cwd(),'candidate.txt'),'source changed before dispatch');
   fs.writeFileSync(damage.target,'immutable evidence changed before dispatch');
- }
 }
 try {process.stdout.write(cp.execFileSync(actual,args,{cwd:process.cwd()}));}
 catch(error){if(error.stderr)process.stderr.write(error.stderr);process.exitCode=error.status??1;}
@@ -627,8 +629,9 @@ catch(error){if(error.stderr)process.stderr.write(error.stderr);process.exitCode
     });
     const invocation = JSON.parse(await readFile(path.join(repo, ".git/oracle/active-review.json")));
     const run = path.join(repo, ".git/oracle/runs", invocation.id), outcome = JSON.parse(await readFile(path.join(run, "outcome.json")));
-    assert.equal(outcome.outcome, "ERROR"); assert.equal(outcome.reviewer_invoked, false);
+    assert.equal(outcome.outcome, "ERROR"); assert.equal(outcome.reviewer_invoked, stage === "checkpoint");
     await assert.rejects(readFile(path.join(repo, ".git/oracle/approval.json")), {code: "ENOENT"});
+    await assert.rejects(readFile(path.join(repo, ".git/oracle/shipment-validated.json")), {code: "ENOENT"});
   });
 });
 
@@ -1493,7 +1496,7 @@ function runningReview(repo, env, args = [], entrypoint = launcher) {
   return {child, done, output: () => stdout};
 }
 
-async function runningLegacyReview(repo, root, env, {withholdEvidence = false, failure = null, allowMovement = false} = {}) {
+async function runningLegacyReview(repo, root, env, {withholdEvidence = false, failure = null, allowMovement = false, validation = []} = {}) {
   const directory = path.join(root, "legacy"); await mkdir(directory);
   const script = path.join(directory, "oracle-review.mjs"), ready = path.join(root, "legacy-ready"), release = path.join(root, "legacy-release");
   await writeFile(script, `import {writeFile,readFile} from 'node:fs/promises';
@@ -1503,7 +1506,7 @@ import {withOracleRun,atomicJson} from ${JSON.stringify(new URL("../scripts/orac
 const git=(...args)=>execFileSync('git',args,{encoding:'utf8'}).trim();
 const original=git('rev-parse','HEAD');
 try { await withOracleRun(path.join(git('rev-parse','--absolute-git-dir'),'oracle'),async({run})=>{
- ${withholdEvidence ? "" : "await atomicJson(path.join(run,'evidence.json'),{inputs:{candidate_commit:original}});"}
+ ${withholdEvidence ? "" : `await atomicJson(path.join(run,'evidence.json'),{inputs:{candidate_commit:original,validation:${JSON.stringify(validation)},owner:null}});`}
  await writeFile(${JSON.stringify(ready)},'Native legacy parent admitted and preparing.');
  let released=false;
  for(let attempt=0;attempt<3000;attempt++) {
@@ -1560,6 +1563,42 @@ test("legacy native failure after an arrived commit retains its outcome before c
   assert.equal(native.outcome, "ERROR"); assert.match(native.error.message, /committed source moved/);
   const {readValidatedCheckpoint} = await import("../scripts/shipment-state.mjs");
   assert.equal((await readValidatedCheckpoint(repo)).record.last_validated_commit, await git("rev-parse", "HEAD"));
+});
+
+test("legacy source continuation rechecks its retained native and supplied evidence", async t => {
+  for (const kind of ["native", "supplied", "intact-native"]) await t.test(kind, async context => {
+    const {repo, root, env, prepare, git} = await fixture(context); await prepare(); await git("branch", "-m", "main");
+    await git("-c", "user.name=Synthetic", "-c", "user.email=synthetic@example.invalid", "commit", "-qm", "Commit legacy evidence fixture");
+    let reference, target;
+    if (kind === "supplied") {
+      target = path.join(repo, "Vault/tmp/legacy-evidence.txt"); await writeFile(target, "original supplied evidence"); reference = `@${target}`;
+    } else {
+      const captured = await command(repo, ["validate", "--input", "candidate.txt", "--", process.execPath, "-e", "console.log('legacy proof')"], env);
+      reference = captured.stdout.match(/ORACLE_VALIDATION_EVIDENCE=(.+)/)[1].trim();
+      target = JSON.parse(await readFile(reference.slice(1))).output_file;
+    }
+    const originalBinding = await evidenceBinding(repo, reference);
+    const legacy = await runningLegacyReview(repo, root, env, {validation: [originalBinding]});
+    const original = JSON.parse(await readFile(path.join(repo, ".git/oracle/active-review.json"))), calls = path.join(root, "legacy-integrity-calls");
+    const observing = command(repo, ["review", "--validation", reference], {...env, ORACLE_CALLS: calls});
+    await waitFor(path.join(repo, ".git/oracle/controllers/00000000.json"));
+    await writeFile(path.join(repo, "arrived-source.mjs"), "export const arrived = true;"); await git("add", ".");
+    await git("-c", "user.name=Synthetic", "-c", "user.email=synthetic@example.invalid", "commit", "-qm", "Arrived source during legacy assessment");
+    if (kind !== "intact-native") await writeFile(target, "changed immutable original evidence");
+    await legacy.release();
+    if (kind === "intact-native") {
+      const result = await observing; assert.match(result.stdout, /ORACLE_VERDICT=APPROVED/);
+      const receipt = JSON.parse(await readFile(path.join(repo, ".git/oracle/approval.json")));
+      assert.equal(receipt.candidate_commit, await git("rev-parse", "HEAD")); assert.ok(receipt.validation_evidence.includes(reference));
+    } else {
+      await assert.rejects(observing, /native validation output|supplied evidence integrity/);
+      await assert.rejects(readFile(calls), {code: "ENOENT"});
+      await assert.rejects(readFile(path.join(repo, ".git/oracle/approval.json")), {code: "ENOENT"});
+    }
+    assert.equal((await legacy.done).code, 1);
+    const native = JSON.parse(await readFile(path.join(repo, ".git/oracle/runs", original.id, "outcome.json")));
+    assert.equal(native.outcome, "ERROR"); assert.match(native.error.message, /committed source moved/);
+  });
 });
 
 for (const oldSuccess of [false, true]) test(`PREPARING legacy ${oldSuccess ? "success" : "drift failure"} with unknown candidate continues exact committed scope`, async (t) => {
