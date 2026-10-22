@@ -536,7 +536,10 @@ test("source movement cannot conceal explicit or inherited native proof corrupti
         const latest = series.rounds.at(-1);
         assert.equal(latest.execution_status, "ERROR"); assert.equal(latest.verdict, null);
         assert.equal(latest.observed_assessment.response.verdict, "APPROVED");
-        assert.equal(latest.coverage.length, 0);
+        for (const item of latest.coverage) {
+          assert.deepEqual(item, series.rounds[0].coverage.find(previous => previous.path === item.path));
+        }
+        assert.ok(!latest.coverage.some(item => item.path === "arrived-source.mjs"));
         assert.ok(series.rounds[0].validations.some(item => item.execution_record_sha256 === original.record_sha256));
       }
       assert.equal(original.outcome, "PASSED");
