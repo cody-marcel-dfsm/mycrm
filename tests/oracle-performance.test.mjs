@@ -60,6 +60,17 @@ const emit=()=>{
   const response={verdict:process.env.ORACLE_INCOMPLETE?null:'APPROVED',review_status:process.env.ORACLE_INCOMPLETE?'INCOMPLETE':'COMPLETE',api_version_assessment:{impact:'NONE',request_kind:'NOT_REQUIRED',requested_change:null,request_quote:null,request_evidence:null},summary:'Synthetic candidate assessed.',authentication_impact:false,owner_approval_status:'NOT_REQUIRED',warning:null,findings:[],protected_deployment_effects:[],deployment_effect_dispositions:[],unreviewed:process.env.ORACLE_INCOMPLETE?['synthetic remaining scope']:[],reused_coverage:[],reused_validations:[],validations:[],resolutions:[],scope_dispositions:[],synthesis:null,coverage:(evidence?.review_context.required_paths??[]).map(name=>({path:name,dependencies:[name],dependency_rationale:'Synthetic isolated dependency.',assessment:'Synthetic path assessed.',criteria:['Synthetic acceptance criteria.'],evidence:['Synthetic source inspection.'],finding_ids:[]}))};
   if(!proposal && process.env.ORACLE_MISSING_DEPLOYMENT) { response.authentication_impact=true; response.owner_approval_status='MISSING'; response.protected_deployment_effects=[{id:'SYNTHETIC-PERMISSION',category:'PERMISSION_AUTHORITY',description:'Synthetic exact permission authority effect.',affected_paths:[process.env.ORACLE_EFFECT_PATH||'candidate.txt'],authority:null}]; }
   const proof=evidence?.review_context.validation_proofs.find(item=>item.eligible);
+  if(!proposal && captureThis && proof && process.env.ORACLE_PROOF_DAMAGE_READY && fs.existsSync(process.env.ORACLE_PROOF_DAMAGE_READY)) {
+    fs.unlinkSync(process.env.ORACLE_PROOF_DAMAGE_READY);
+    fs.writeFileSync(process.env.ORACLE_PROOF_MOVE_SOURCE,'changed authored source during assessment');
+    const record=proof.evidence.slice(1), output=proof.record.output_file, damage=process.env.ORACLE_PROOF_DAMAGE;
+    if(damage==='record') fs.appendFileSync(record,' altered');
+    if(damage==='output') fs.writeFileSync(output,'altered original output');
+    if(damage==='missing-output') fs.unlinkSync(output);
+    if(damage==='record-custody') fs.chmodSync(record,fs.statSync(record).mode ^ 0o020);
+    if(damage==='output-custody') fs.chmodSync(output,fs.statSync(output).mode ^ 0o020);
+    fs.writeFileSync(process.env.ORACLE_PROOF_CHANGED,'applied');
+  }
   if(!proposal && process.env.ORACLE_REUSE_COVERAGE) { response.reused_coverage=(evidence.review_context.eligible_coverage??[]).map(item=>item.path); response.coverage=response.coverage.filter(item=>!response.reused_coverage.includes(item.path)); }
   if(proof && !process.env.ORACLE_OMIT_VALIDATION) response.validations=[{id:'native-check',evidence:proof.evidence,command:JSON.stringify(proof.record.command),dependencies:evidence.staged_files,dependency_rationale:'Synthetic complete candidate closure.',assessment:'Native passing execution and output checked.'}];
   if(!proposal && process.env.ORACLE_SOURCE_FINDING) { response.verdict='REJECTED'; response.findings=[{id:'SYNTHETIC-EXIT-1',severity:'medium',code:'SYNTHETIC_EXIT_FINDING',message:'Synthetic source finding.',path:'candidate.txt',reproduction:'Synthetic input.',required_behavior:'Synthetic required behavior.',affected_paths:['candidate.txt'],acceptance_checks:['Synthetic acceptance.'],origin:'initial',missed_finding_reason:null}]; }
@@ -474,6 +485,62 @@ test("final publication rechecks native executable and source modes beyond uncha
     const latest = JSON.parse(await readFile(path.join(repo, ".git/oracle/series", `${await git("rev-parse", "HEAD")}.json`), "utf8")).rounds.at(-1);
     assert.equal(latest.execution_status, "ERROR"); assert.equal(latest.verdict, null); assert.ok(latest.observed_assessment);
     await assert.rejects(readFile(path.join(repo, ".git/oracle/approval.json")), {code: "ENOENT"});
+  }
+});
+
+test("source movement cannot conceal explicit or inherited native proof corruption", async (t) => {
+  for (const admission of ["explicit", "inherited"]) for (const damage of ["record", "output", "missing-output", "record-custody", "output-custody", "none"]) {
+    await t.test(`${admission} ${damage}`, async (context) => {
+      const {repo, root, env, prepare, git} = await fixture(context); await prepare();
+      await git("branch", "-m", "main");
+      await git("-c", "user.name=Synthetic", "-c", "user.email=synthetic@example.invalid", "commit", "-qm", "Commit proof fixture before validation");
+      const target = path.join(repo, "arrived-source.mjs"), ready = path.join(root, "damage-ready"), changed = path.join(root, "damage-applied");
+      const sameEnvironment = {...env, ORACLE_OMIT_VALIDATION: "1", ORACLE_PROOF_DAMAGE: damage,
+        ORACLE_PROOF_DAMAGE_READY: ready, ORACLE_PROOF_CHANGED: changed, ORACLE_PROOF_MOVE_SOURCE: target};
+      const captured = await command(repo, ["validate", "--input", "candidate.txt", "--", process.execPath, "-e", "console.log('synthetic scoped proof')"], sameEnvironment);
+      const reference = captured.stdout.match(/ORACLE_VALIDATION_EVIDENCE=(.+)/)[1].trim();
+      const original = JSON.parse(await readFile(reference.slice(1)));
+      await command(repo, ["review", "--validation", reference], sameEnvironment);
+      const firstReceipt = JSON.parse(await readFile(path.join(repo, ".git/oracle/approval.json")));
+      await writeFile(target, "new committed source before review\n"); await git("add", "arrived-source.mjs");
+      await git("-c", "user.name=Synthetic", "-c", "user.email=synthetic@example.invalid", "commit", "-qm", "Committed delta requires current assessment");
+      await writeFile(ready, "Apply one combined source/evidence change.");
+      const args = admission === "explicit" ? ["--validation", reference] : [];
+      if (damage === "none") {
+        const owner = runningReview(repo, sameEnvironment, args); await waitFor(changed);
+        const generation = JSON.parse(await readFile(path.join(repo, ".git/oracle/controllers/00000000.json")));
+        let progress;
+        for (let count = 0; count < 1000; count++) {
+          progress = JSON.parse(await readFile(path.join(repo, ".git/oracle/controllers", generation.id, "progress.json")));
+          if (progress.phase === "WAITING_FOR_COMMIT") break;
+          await new Promise(resolve => setTimeout(resolve, 20));
+        }
+        assert.equal(progress.phase, "WAITING_FOR_COMMIT");
+        await git("add", "arrived-source.mjs");
+        await git("-c", "user.name=Synthetic", "-c", "user.email=synthetic@example.invalid", "commit", "-qm", "Commit intact-proof source arrival");
+        const done = await owner.done; assert.equal(done.code, 0, done.stderr);
+        assert.match(done.stdout, /ORACLE_REVIEW=CONTINUING/);
+        const receipt = JSON.parse(await readFile(path.join(repo, ".git/oracle/approval.json")));
+        assert.equal(receipt.candidate_commit, await git("rev-parse", "HEAD"));
+        assert.ok(receipt.validation_evidence.includes(reference));
+      } else {
+        await assert.rejects(command(repo, ["review", ...args], sameEnvironment, {timeout: 30_000}), error => {
+          assert.equal(Boolean(error.killed), false, "Integrity failure must terminate without the fixture timeout");
+          assert.doesNotMatch(error.stdout ?? "", /ORACLE_REVIEW=CONTINUING/);
+          return /native validation|JSON|Unexpected|ENOENT/.test(error.message);
+        });
+        await assert.rejects(readFile(path.join(repo, ".git/oracle/approval.json")), {code: "ENOENT"});
+        const series = JSON.parse(await readFile(path.join(repo, ".git/oracle/series", `${firstReceipt.base_commit}.json`)));
+        const latest = series.rounds.at(-1);
+        assert.equal(latest.execution_status, "ERROR"); assert.equal(latest.verdict, null);
+        assert.equal(latest.observed_assessment.response.verdict, "APPROVED");
+        assert.equal(latest.coverage.length, 0);
+        assert.ok(series.rounds[0].validations.some(item => item.execution_record_sha256 === original.record_sha256));
+      }
+      assert.equal(original.outcome, "PASSED");
+      const execution = JSON.parse(await readFile(path.join(path.dirname(original.output_file), "outcome.json")));
+      assert.equal(execution.kind, "validation"); assert.equal(execution.outcome, "COMPLETED");
+    });
   }
 });
 

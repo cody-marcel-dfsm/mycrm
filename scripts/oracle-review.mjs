@@ -398,11 +398,20 @@ async function review(args = [], {run, phase, producer = null, verifyProducer = 
     if (!new Ajv({strict: false}).validate(responseSchema, response)) throw new Error("Independent Oracle response does not satisfy its response schema");
     assessed = assessRound(series, response, inputs.validation);
     await verifyParallelArtifacts(parallelEvidence, {root: path.dirname(directory)});
-    await phase("postcheck_ms", async () => assertInputsMatch(inputs, await capture()));
-    completedSeries = await saveRound(series, response, assessed, {beforePublish: async () => {
+    const recheck = async () => {
+      let current, movement;
+      try { current = await capture(); } catch (error) { movement = error; }
+      // Candidate/producer movement cannot skip the original record, nested
+      // output and custody checks. Current executable/source applicability is
+      // still evaluated; an intact moved candidate receives a fresh assessment.
       const currentProofs = await readValidationProofs({root: process.cwd(), directory, validation: inputs.validation});
+      if (movement) throw movement;
       assertValidationProofsMatch(series.public.validation_proofs, currentProofs);
-      assertInputsMatch(inputs, await capture());
+      assertInputsMatch(inputs, current);
+    };
+    await phase("postcheck_ms", recheck);
+    completedSeries = await saveRound(series, response, assessed, {beforePublish: async () => {
+      await recheck();
       await assertCurrentInvocation();
       await verifyParallelArtifacts(parallelEvidence, {root: path.dirname(directory)});
     }});
@@ -434,7 +443,7 @@ async function review(args = [], {run, phase, producer = null, verifyProducer = 
   for (const finding of response.findings) process.stdout.write(`ORACLE_FINDING=${JSON.stringify(finding)}\n`);
   if (completedSeries.rounds.at(-1).repair_plan) process.stdout.write(`ORACLE_REPAIR_PLAN=${JSON.stringify(completedSeries.rounds.at(-1).repair_plan)}\n`);
   if (response.synthesis) process.stdout.write(`ORACLE_REPAIR_SYNTHESIS=${response.synthesis}\n`);
-  if (response.review_status === "INCOMPLETE") { process.exitCode = 1; return response; }
+  if (response.review_status === "INCOMPLETE") { process.exitCode = 1; return {...response, input_binding: inputs}; }
   const receipt = {schema: "my-crm.oracle-approval/v2", ...reviewerRecord, parallel_review_evidence: parallelEvidence, input_binding: inputs, proposal_record_sha256: proposalRecord.record_sha256, repository: "my-crm", invocation: currentInvocation(), reviewed_tree: candidate.tree, base_commit: candidate.base, ...(candidate.commit ? {candidate_commit: candidate.commit, deployment_history_base_commit: candidate.parent} : {}), ...response, deployment_baseline_commit: deployment.baseline, deployment_history_sha256: deployment.sha256, deployment_history_status: deployment.status, recovered_deployment_commits: deployment.recovered_commits, review_series_sha256: completedSeries.sha256, review_series_id: completedSeries.series_id, review_round: series.public.round, validation_evidence: validationEvidence, requested_validation_evidence: requestedValidationEvidence, inherited_validation_evidence: inherited.evidence, owner_approval_evidence: ownerApprovalEvidence};
   receipt.receipt_sha256 = receiptSha256(receipt);
   // The final exact-input check precedes series publication above. Live receipt
@@ -830,6 +839,11 @@ async function continuousReview(args, controller) {
     const sourceDrift = failure && ["ORACLE_INPUT_DRIFT", "ORACLE_CANDIDATE_MOVED"].includes(failure.code);
     const sourceArrived = sourceDrift && (moved || beforeSource !== await authoredCandidateIdentity());
     if (sourceArrived || moved && !failure) {
+      if (!failure && result?.input_binding) {
+        // Movement after worker finalization also retains the original proof
+        // binding. A corrupted automatic witness never becomes a retry hint.
+        await readValidationProofs({root: process.cwd(), directory: await oracleDirectory(), validation: result.input_binding.validation});
+      }
       process.stdout.write(`ORACLE_REVIEW=CONTINUING controller=${controller.record.id} previous=${before} current=${after}\n`);
       await controller.progress({phase: "CATCHING_UP", previous_commit: before, candidate_commit: after, attempt});
       // The prior native run retains its literal ERROR/COMPLETE result. Only

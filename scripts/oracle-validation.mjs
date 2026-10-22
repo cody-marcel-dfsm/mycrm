@@ -62,6 +62,7 @@ export async function readValidationProofs({root, directory, validation, checkCu
     const recordCustody = await pathCustody(root, requested, {scopeRoot: owned ? root : null, allowFinalLink: false});
     const filename = recordCustody.resolved_path;
     if (path.dirname(filename) !== path.join(canonicalDirectory, "validations")) continue; // Legacy evidence remains readable.
+    if (evidence.custody && bindingHash(evidence.custody) !== bindingHash(recordCustody)) throw new Error("Oracle native validation record custody changed during review");
     const bytes = await readMetadataFile(filename, {}, {root: path.dirname(directory)});
     const record = JSON.parse(bytes);
     if (contentHash(bytes) !== evidence.sha256 || record.schema !== "my-crm.oracle-validation/v1" ||
