@@ -71,12 +71,15 @@ test("three saved rounds retain a command-specific functional environment indepe
 test("reviewer proof navigation preserves sealed hashes while native admission retains the complete original", async t => {
   const {prepare, options, nativeProofs} = await fixture(t);
   nativeProofs[0].record.before.file_metadata = {"synthetic-retained-native-custody": "x".repeat(1024 * 1024)};
+  nativeProofs[0].current_provenance = {environment: options.environment, current_snapshot: "y".repeat(1024 * 1024)};
   options.validationProofs = nativeProofs;
   const prepared = await prepare(), view = prepared.public.validation_proofs[0];
   assert.equal(view.original_inputs_sha256, bindingHash(nativeProofs[0].record.before));
   assert.equal(view.record_sha256, nativeProofs[0].record.record_sha256);
   assert.equal(view.original_record.sha256, "evidence-a");
   assert.equal(view.record, undefined);
+  assert.equal(view.current_provenance, undefined);
+  assert.equal(view.current_provenance_sha256, bindingHash(nativeProofs[0].current_provenance));
   assert.ok(Buffer.byteLength(JSON.stringify(prepared.public.validation_proofs)) < 4096);
   assert.equal(prepared.validationProofs[0].record, nativeProofs[0].record);
   const validation = {id: "native-original", evidence: "@check.log", command: JSON.stringify(nativeProofs[0].record.command), dependencies: ["a.mjs", "test.mjs", "config.json"], dependency_rationale: "Complete original source/configuration closure remains native.", assessment: "Retained original execution verified."};

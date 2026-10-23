@@ -175,7 +175,10 @@ function validationScopeReason(proof, snapshot) {
 }
 
 export function validationProofNavigation(validationProofs, bindings) {
-  return validationProofs.map(({record, ...proof}) => ({...proof,
+  return validationProofs.map(({record, ...proof}) => ({evidence: proof.evidence, eligible: proof.eligible,
+    original_eligible: proof.original_eligible ?? null, reason: proof.reason ?? null,
+    current_provenance_sha256: proof.current_provenance ? bindingHash(proof.current_provenance) : null,
+    current_environment_sha256: proof.current_provenance?.environment ?? null,
     id: `native-${record.record_sha256}`, record_sha256: record.record_sha256, command: record.command,
     original_outcome: record.outcome ?? null, original_scope: record.before.scope ?? null,
     original_tree: record.before.tree ?? null, original_base: record.before.base_commit ?? null,

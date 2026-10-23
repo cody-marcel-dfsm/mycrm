@@ -441,7 +441,7 @@ async function review(args = [], {run, phase, producer = null, verifyProducer = 
         await assertEvidenceIntegrity(process.cwd(), [...inputs.validation, inputs.owner]);
       } catch (error) { throw await withIntegrityPrecedence(movement ?? error); }
       if (movement) throw movement;
-      assertValidationProofsMatch(series.public.validation_proofs, currentProofs);
+      assertValidationProofsMatch(series.validationProofs, currentProofs);
       assertInputsMatch(inputs, current);
     };
     await phase("postcheck_ms", recheck);
