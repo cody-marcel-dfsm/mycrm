@@ -59,24 +59,30 @@ export async function findCommandValidation({root, directory, command, before, e
   return {proof: null, invalidated};
 }
 
-// Each immutable event names real Git changelists and the original execution
-// which covered them in this integrated candidate. It claims no standalone test
-// result for an intermediate historical tree.
+// Each immutable event names real Git changelists and the original execution.
+// Declared-input executions retain their working input identities as supporting
+// evidence: their live bytes need not exist in any index or committed tree.
 export async function recordCommandCoverage({root, directory, record, evidence, disposition, invalidated = []}) {
-  const source_commit = await git(root, ["rev-parse", "HEAD"]), source_tree = await git(root, ["rev-parse", "HEAD^{tree}"]);
-  const candidate_tree = record.before.tree ?? await git(root, ["write-tree"]);
+  const source_commit = await git(root, ["rev-parse", "HEAD"]), source_tree = await git(root, ["rev-parse", `${source_commit}^{tree}`]);
+  const candidate_tree = record.before.tree ?? null;
   const base = record.before.base_commit ?? source_commit;
   const history = await git(root, ["log", "--reverse", "--format=%H %T", `${base}..${source_commit}`]);
   const changelists = (history ? history.split("\n") : [`${source_commit} ${source_tree}`]).map(line => {
     const [commit_sha, tree_sha] = line.split(" ");
-    return {commit_sha, tree_sha, validated_in_candidate: candidate_tree, coverage: record.outcome === "PASSED" ? "COVERED" : "PENDING"};
+    return {commit_sha, tree_sha, validated_in_candidate: candidate_tree, coverage: record.outcome === "PASSED" ? candidate_tree ? "COVERED" : "SUPPORTING" : "PENDING"};
   });
   const value = {schema: "my-crm.command-coverage/v1", command: record.command, source_commit, source_tree, candidate_tree,
     execution_record_sha256: record.record_sha256, evidence, input_sha256: bindingHash(record.before), executable_sha256: bindingHash(record.executable),
-    environment_sha256: record.before.context.environment, output_sha256: record.output_sha256, outcome: record.outcome, disposition, changelists, invalidated};
+    environment_sha256: record.before.context.environment, output_sha256: record.output_sha256, outcome: record.outcome, disposition, changelists, invalidated,
+    ...(candidate_tree === null ? {scoped_inputs: record.before} : {})};
   value.record_sha256 = digest(value);
   const location = path.join(directory, "command-tracking"); await metadataDirectory(path.dirname(directory), location);
   const filename = path.join(location, `${value.record_sha256}.json`);
-  await atomicJson(filename, value, {root: path.dirname(directory)});
+  try { await atomicJson(filename, value, {root: path.dirname(directory), exclusive: true}); }
+  catch (error) {
+    if (error.code !== "EEXIST") throw error;
+    const bytes = await readMetadataFile(filename, "utf8", {root: path.dirname(directory)});
+    if (bytes !== `${JSON.stringify(value, null, 2)}\n`) throw new Error("Immutable command coverage record conflicts with its original content");
+  }
   return {record: value, filename};
 }

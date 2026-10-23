@@ -1,6 +1,6 @@
 import assert from "node:assert/strict";
 import {execFile} from "node:child_process";
-import {mkdir, mkdtemp, readFile, readdir, realpath, rm, writeFile} from "node:fs/promises";
+import {mkdir, mkdtemp, readFile, readdir, realpath, rm, stat, writeFile} from "node:fs/promises";
 import os from "node:os";
 import path from "node:path";
 import process from "node:process";
@@ -47,4 +47,40 @@ test("changed consumed input, environment and altered original output execute on
   const original = JSON.parse(await readFile(changed.stdout.match(/ORACLE_VALIDATION_EVIDENCE=@(.+)/)[1])); await writeFile(original.output_file, "synthetic altered original output\n");
   const altered = await f.run(); assert.match(altered.stdout, /output is missing or changed/); assert.equal(await readFile(f.counter, "utf8"), "4");
   assert.ok((await readdir(path.join(f.root, ".git/oracle/command-tracking"))).length >= 4);
+});
+
+test("dirty declared inputs remain supporting facts without claiming an older Git tree was covered", async t => {
+  const f = await fixture(t); await f.run();
+  const tree = await f.git("rev-parse", "HEAD^{tree}");
+  await writeFile(path.join(f.root, "candidate.txt"), "synthetic unstaged input\n");
+  const result = await f.run();
+  assert.equal(await readFile(f.counter, "utf8"), "2");
+  const coverage = JSON.parse(await readFile(result.stdout.match(/ORACLE_COMMAND_COVERAGE=@(.+)/)[1]));
+  const execution = JSON.parse(await readFile(result.stdout.match(/ORACLE_VALIDATION_EVIDENCE=@(.+)/)[1]));
+  assert.equal(coverage.source_tree, tree); assert.equal(coverage.candidate_tree, null);
+  assert.deepEqual(coverage.scoped_inputs, execution.before);
+  assert.equal(coverage.scoped_inputs.files["candidate.txt"], await f.git("hash-object", "candidate.txt"));
+  assert.notEqual(coverage.scoped_inputs.files["candidate.txt"], await f.git("rev-parse", "HEAD:candidate.txt"));
+  assert.ok(coverage.changelists.every(item => item.coverage === "SUPPORTING" && item.validated_in_candidate === null));
+});
+
+test("repeated adoption preserves original immutable coverage bytes and inode", async t => {
+  const f = await fixture(t); await f.run();
+  const second = await f.run(), filename = second.stdout.match(/ORACLE_COMMAND_COVERAGE=@(.+)/)[1];
+  const before = await stat(filename), bytes = await readFile(filename);
+  const third = await f.run();
+  assert.equal(third.stdout.match(/ORACLE_COMMAND_COVERAGE=@(.+)/)[1], filename);
+  assert.deepEqual(await readFile(filename), bytes);
+  const after = await stat(filename); assert.equal(after.ino, before.ino); assert.equal(after.mtimeMs, before.mtimeMs);
+  assert.equal(await readFile(f.counter, "utf8"), "1");
+});
+
+test("conflicting existing coverage fails closed and preserves the original file", async t => {
+  const f = await fixture(t); await f.run();
+  const second = await f.run(), filename = second.stdout.match(/ORACLE_COMMAND_COVERAGE=@(.+)/)[1];
+  const conflict = "synthetic conflicting coverage\n";
+  await writeFile(filename, conflict); const before = await stat(filename);
+  await assert.rejects(f.run(), /Immutable command coverage record conflicts/);
+  assert.equal(await readFile(filename, "utf8"), conflict); assert.equal((await stat(filename)).ino, before.ino);
+  assert.equal(await readFile(f.counter, "utf8"), "1");
 });
