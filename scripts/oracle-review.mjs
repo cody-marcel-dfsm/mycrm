@@ -529,7 +529,8 @@ async function review(args = [], {run, phase, producer = null, verifyProducer = 
   if (receipt.verdict !== "APPROVED") process.exitCode = 1;
   if (publicationCandidate) {
     if (receipt.verdict === "APPROVED") await sealPublicationValidation({...publicationCandidate, expectedDecisionId: publicationCandidate.decisionId, receipt: receipt.receipt_sha256, plan: publicationPlanFromValidatedReceipt({receipt, history: deployment.history})});
-    else await recordPublicationDecision({...publicationCandidate, expectedDecisionId: publicationCandidate.decisionId, status: receipt.verdict, receipt: receipt.receipt_sha256});
+    else await recordPublicationDecision({...publicationCandidate, expectedDecisionId: publicationCandidate.decisionId, status: receipt.verdict, receipt: receipt.receipt_sha256,
+      invalidationReason: receipt.findings.length ? JSON.stringify({receipt_sha256: receipt.receipt_sha256, summary: receipt.summary, findings: receipt.findings}) : null});
   }
   return receipt;
   } catch (error) {

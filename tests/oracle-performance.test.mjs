@@ -1539,7 +1539,12 @@ test("deployment verifies consumed native records and output custody without amb
 });
 
 test("committed-range review checkpoints exact source and unchanged shipment executes zero callbacks", async (t) => {
-  const {repo, env, git, prepare} = await fixture(t); await prepare();
+  const {repo, root, env, git, prepare} = await fixture(t);
+  const remote = path.join(root, "remote.git"); await execute("git", ["init", "--bare", remote]); await git("remote", "add", "origin", remote); await git("push", "origin", "main");
+  const publisher = fileURLToPath(new URL("../scripts/publication-checkpoint.mjs", import.meta.url));
+  const hook = path.join(repo, ".git/hooks/pre-push");
+  await writeFile(hook, `#!/bin/sh\nexec '${process.execPath.replaceAll("'", "'\\''")}' '${publisher.replaceAll("'", "'\\''")}' pre-push "$@"\n`, {mode: 0o755});
+  await prepare();
   await git("branch", "-m", "main");
   await git("-c", "user.name=Synthetic", "-c", "user.email=synthetic@example.invalid", "commit", "-qm", "Synthetic prepared source before validation");
   const first = await git("rev-parse", "HEAD");
@@ -1562,6 +1567,8 @@ test("committed-range review checkpoints exact source and unchanged shipment exe
   assert.match((await command(repo, ["review"], env)).stdout, /NO_UNVALIDATED_COMMITS/);
   assert.equal(JSON.parse(await readFile(path.join(repo, ".git/oracle/series", `${checkpoint.receipt.base_commit}.json`))).rounds.length, roundsBefore);
   const admission = await admitDeployment({root: repo}); assert.equal(admission.source_commit, head);
+  const {preparePublication, publishPrepared} = await import("../scripts/publication-checkpoint.mjs");
+  const prepared = await preparePublication({root: repo});
   await assert.rejects(recordDeliveredCommit({root: repo, admission, installation: {pluginId: "my-crm@synthetic", release: {content_sha256: "a".repeat(64)}}}), /published main/);
   await git("update-ref", "refs/remotes/origin/main", head);
   await recordDeliveredCommit({root: repo, admission, installation: {pluginId: "my-crm@synthetic", release: {content_sha256: "a".repeat(64)}}});
@@ -1572,6 +1579,8 @@ test("committed-range review checkpoints exact source and unchanged shipment exe
   const sameSource = await readValidatedCheckpoint(repo), sameSourceBytes = await readFile(path.join(repo, ".git/oracle/shipment-validated.json"));
   assert.equal(sameSource.record.last_validated_commit, head);
   assert.notEqual(sameSource.record.receipt_sha256, checkpoint.record.receipt_sha256);
+  assert.equal((await publishPrepared(prepared.prepared_record, {root: repo})).source_commit, head);
+  assert.equal((await execute("git", ["rev-parse", "refs/heads/main"], {cwd: remote})).stdout.trim(), head);
   const capturedDelivery = await recordDeliveredCommit({root: repo, admission, installation: {pluginId: "my-crm@synthetic", release: {content_sha256: "a".repeat(64)}}});
   assert.equal(capturedDelivery.validated_checkpoint_sha256, checkpoint.record.checkpoint_sha256);
   assert.deepEqual(await readFile(path.join(repo, ".git/oracle/shipment-validated.json")), sameSourceBytes);
@@ -2229,4 +2238,45 @@ process.exit(result.status ?? 1);
   assert.deepEqual(await readFile(archive), archiveBytes);
   assert.deepEqual((await readValidatedCheckpoint(repo)).record, renewedCheckpoint.record);
 });
+});
+
+test("native proof audit deduplicates current inputs while rejecting mid-audit movement and sampling each new audit", async (t) => {
+  const {repo, env, git} = await fixture(t);
+  const fs = await import('node:fs');
+  const privateInput = path.join(repo, 'Vault/tmp/audit-input.txt');
+  const script = path.join(repo, 'check.sh');
+  await writeFile(privateInput, 'original private dependency');
+  await writeFile(script, '#!/bin/sh\nprintf audit-pass\\n\n'); await chmod(script, 0o755);
+  await git('add', 'check.sh');
+  const captured = await command(repo, ['validate', '--input', 'candidate.txt', '--input', 'Vault/tmp/audit-input.txt', '--input', 'check.sh', '--environment', 'CODEX_THREAD_ID', '--', './check.sh'], env);
+  const evidence = captured.stdout.match(/ORACLE_VALIDATION_EVIDENCE=(.+)/)[1];
+  const original = await readFile(evidence.slice(1)), record = JSON.parse(original);
+  const binding = {kind: 'file', value: evidence, sha256: sha256(original)};
+  const read = validation => readValidationProofs({root: repo, directory: path.join(repo, '.git/oracle'), validation});
+  const initial = (await read([binding, binding]))[0];
+  assert.equal(initial.eligible, true);
+  const source = path.join(repo, 'candidate.txt'), sourceBytes = fs.readFileSync(source), privateBytes = fs.readFileSync(privateInput), scriptBytes = fs.readFileSync(script), outputBytes = fs.readFileSync(record.output_file);
+  const previousThread = process.env.CODEX_THREAD_ID;
+  for (const [name, mutate, restore] of [
+    ['source bytes', () => fs.writeFileSync(source, 'arrived source bytes'), () => fs.writeFileSync(source, sourceBytes)],
+    ['private bytes', () => fs.writeFileSync(privateInput, 'arrived private bytes'), () => fs.writeFileSync(privateInput, privateBytes)],
+    ['source custody', () => {fs.renameSync(source, `${source}.retained`); fs.symlinkSync('candidate.txt.retained', source);}, () => {fs.unlinkSync(source); fs.renameSync(`${source}.retained`, source);}],
+    ['source membership', () => fs.writeFileSync(path.join(repo, 'arrived.txt'), 'arrived member'), () => fs.unlinkSync(path.join(repo, 'arrived.txt'))],
+    ['executable bytes', () => fs.writeFileSync(script, '#!/bin/sh\nexit 1\n'), () => fs.writeFileSync(script, scriptBytes)],
+    ['functional environment', () => {process.env.CODEX_THREAD_ID = 'synthetic-declared-input';}, () => {if (previousThread === undefined) delete process.env.CODEX_THREAD_ID; else process.env.CODEX_THREAD_ID = previousThread;}],
+    ['original record', () => fs.appendFileSync(evidence.slice(1), 'altered'), () => fs.writeFileSync(evidence.slice(1), original)],
+    ['original output', () => fs.writeFileSync(record.output_file, 'altered original output'), () => fs.writeFileSync(record.output_file, outputBytes)],
+  ]) {
+    // A later evidence item arrives after the first proof has been sampled. It
+    // provides deterministic concurrent movement without a production test hook.
+    const later = {get kind() {mutate(); return 'text';}};
+    try {await assert.rejects(read([binding, later]), /changed during audit/, name);} finally {restore();}
+  }
+  await writeFile(privateInput, 'new current dependency');
+  const later = (await read([binding]))[0];
+  assert.notEqual(initial.current_provenance.source_files['Vault/tmp/audit-input.txt'], later.current_provenance.source_files['Vault/tmp/audit-input.txt']);
+  assert.equal(later.record.record_sha256, record.record_sha256);
+  assert.deepEqual(await readFile(evidence.slice(1)), original);
+  await writeFile(privateInput, privateBytes);
+  assert.deepEqual((await read([binding]))[0], initial);
 });

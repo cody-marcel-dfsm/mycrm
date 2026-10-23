@@ -76,14 +76,14 @@ test("applicable complete coverage survives raw attempts; explicit rejection and
   const f = await fixture(t); let prepared = await preparePublication({root: f.root, admit: f.admit});
   const binding = {root: f.root, sourceCommit: f.source, sourceTree: f.tree};
   const tuple = `fixed-source ${f.source} refs/heads/main ${f.before}\n`;
-  for (const status of ["IN_PROGRESS", "INCOMPLETE", "ERROR"]) {
+  for (const status of ["IN_PROGRESS", "INCOMPLETE", "ERROR", "REJECTED", "INVALIDATED_CRITERIA"]) {
     const original = await recordPublicationDecision({...binding, status});
     assert.equal(original.status, status);
     await readPreparedPublication(prepared.prepared_record, {root: f.root});
     await admitPreparedPush(tuple, {root: f.root, remote: "origin", remoteUrl: f.remote});
   }
   for (const status of ["REJECTED", "INVALIDATED_CRITERIA"]) {
-    await recordPublicationDecision({...binding, status});
+    await recordPublicationDecision({...binding, status, invalidationReason: `Synthetic established ${status} defect in original required support`});
     let calls = 0;
     await assert.rejects(publishPrepared(prepared.prepared_record, {root: f.root, run: async () => {calls++;}}), /later native candidate decision/);
     await assert.rejects(admitPreparedPush(tuple, {root: f.root, remote: "origin", remoteUrl: f.remote}), /later native candidate decision/);
@@ -125,7 +125,7 @@ test("equivalent later complete approval preserves the original prepared decisio
   assert.equal((await readPreparedPublication(first.prepared_record, {root: f.root})).record.decision_sha256, prior.decision_sha256);
 });
 
-test("complete review bookkeeping preserves native prepared coverage while a changed consumed proof invalidates it", async t => {
+test("additive completed evidence preserves captured readiness and explicit invalidation prevents resurrection", async t => {
   const f = await fixture(t), binding = {root: f.root, sourceCommit: f.source, sourceTree: f.tree};
   const plan = (receiptHash, output = "original-output") => ({commit: f.source, reviewedCommit: f.source, tree: f.tree, effects: [], plan_sha256: "b".repeat(64),
     receipt: {receipt_sha256: receiptHash, candidate_commit: f.source, deployment_baseline_commit: f.before, deployment_history_status: "READY", deployment_history_sha256: "f".repeat(64),
@@ -135,7 +135,12 @@ test("complete review bookkeeping preserves native prepared coverage while a cha
   await recordPublicationDecision({...binding, status: "APPROVED", receipt: "d".repeat(64), validationPlan: plan("d".repeat(64))});
   assert.equal((await preparePublication({root: f.root})).prepared_record, first.prepared_record);
   await recordPublicationDecision({...binding, status: "APPROVED", receipt: "e".repeat(64), validationPlan: plan("e".repeat(64), "changed-output")});
+  await readPreparedPublication(first.prepared_record, {root: f.root});
+  await recordPublicationDecision({...binding, status: "INVALIDATED_CRITERIA", invalidationReason: "Original required output was concretely invalidated"});
   await assert.rejects(readPreparedPublication(first.prepared_record, {root: f.root}), /later native candidate decision/);
+  await recordPublicationDecision({...binding, status: "APPROVED", receipt: "f".repeat(64), validationPlan: plan("f".repeat(64), "repaired-output")});
+  await assert.rejects(readPreparedPublication(first.prepared_record, {root: f.root}), /later native candidate decision/);
+  await readPreparedPublication((await preparePublication({root: f.root})).prepared_record, {root: f.root});
 });
 
 test("direct sealed preparation checks governing applicability and preserves technical approval with unavailable history", async t => {
@@ -170,7 +175,7 @@ test("a pending same-candidate issuance preserves prior prepared readiness until
   await readPreparedPublication(first.prepared_record, {root: f.root});
   const value = {controller_id: admission.controller_id, outcome: "APPROVED", result: {receipt_sha256: receipt.receipt_sha256, candidate_commit: f.source}, error: null};
   await writeFile(path.join(controller, "outcome.json"), JSON.stringify({...value, sha256: bindingHash(value)}));
-  await assert.rejects(readPreparedPublication(first.prepared_record, {root: f.root}), /later native candidate decision/);
+  await readPreparedPublication(first.prepared_record, {root: f.root});
   const later = {...value, result: {...value.result, receipt_sha256: "d".repeat(64)}};
   await writeFile(path.join(controller, "outcome.json"), JSON.stringify({...later, sha256: bindingHash(later)}));
   await readPreparedPublication(first.prepared_record, {root: f.root});

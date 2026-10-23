@@ -98,6 +98,7 @@ async function readDecision(current, sourceCommit, sourceTree, filename = decisi
       || !["IN_PROGRESS", "APPROVED", "REJECTED", "INVALIDATED_CRITERIA", "INCOMPLETE", "ERROR"].includes(record.status)
       || typeof record.decision_id !== "string" || !record.decision_id
       || record.validation_plan_sha256 != null && !sha.test(record.validation_plan_sha256)
+      || record.readiness_epoch_sha256 != null && !sha.test(record.readiness_epoch_sha256)
       || record.status === "APPROVED" && !sha.test(record.technical_receipt_sha256 ?? "")) throw new Error("Native publication decision is malformed or bound to another candidate");
   if (resolveAdmission && record.status === "APPROVED" && !await terminalAdmissionComplete({owner: current.owner, receipt: {native_terminal_admission: record.native_terminal_admission, receipt_sha256: record.technical_receipt_sha256, candidate_commit: sourceCommit}})) {
     if (record.previous_ready_sha256) {
@@ -117,8 +118,12 @@ export async function recordPublicationDecision({root = process.cwd(), sourceCom
   if (!oid.test(sourceCommit ?? "") || !oid.test(sourceTree ?? "") || !["IN_PROGRESS", "APPROVED", "REJECTED", "INVALIDATED_CRITERIA", "INCOMPLETE", "ERROR"].includes(status)
       || status === "APPROVED" && !sha.test(receipt ?? "")) throw new Error("Native publication decision requires an exact candidate and outcome");
   const current = await layout(root, true);
-  let previousReady;
-  if (status === "APPROVED") try {const prior = await readDecision(current, sourceCommit, sourceTree); if (prior.status === "APPROVED") previousReady = prior.record_sha256;} catch (error) {if (error.code !== "ENOENT") throw error;}
+  let previousReady, readinessEpoch = null;
+  if (status === "APPROVED") try {
+    const prior = await readDecision(current, sourceCommit, sourceTree);
+    if (prior.status === "APPROVED") {previousReady = prior.record_sha256; readinessEpoch = prior.readiness_epoch_sha256 ?? null;}
+    else if (["REJECTED", "INVALIDATED_CRITERIA"].includes(prior.status) && prior.invalidation_reason?.trim()) readinessEpoch = prior.record_sha256;
+  } catch (error) {if (error.code !== "ENOENT") throw error;}
   let validationPlanHash = null;
   if (validationPlan || admitted) {
     const coverage = {schema: "my-crm.publication-validation-coverage/v1", source_commit: sourceCommit, source_tree: sourceTree, technical_receipt_sha256: receipt, plan: validationPlan, admitted};
@@ -130,6 +135,7 @@ export async function recordPublicationDecision({root = process.cwd(), sourceCom
   }
   const record = {schema: "my-crm.publication-decision/v1", purpose: "product-publication", repository_root: current.root, source_commit: sourceCommit, source_tree: sourceTree,
     status, technical_receipt_sha256: receipt, decision_id: decisionId, validation_plan_sha256: validationPlanHash,
+    ...(status === "APPROVED" ? {readiness_epoch_sha256: readinessEpoch} : {}),
     ...(invalidationReason === null ? {} : {invalidation_reason: invalidationReason}),
     ...(validationPlan?.receipt.native_terminal_admission ? {native_terminal_admission: validationPlan.receipt.native_terminal_admission, ...(previousReady ? {previous_ready_sha256: previousReady} : {})} : {})};
   record.record_sha256 = digest(record);
@@ -156,7 +162,7 @@ export async function recordPublicationDecision({root = process.cwd(), sourceCom
       if (coverageIdentity(previous) === coverageIdentity(next)) return prior;
     } else if (prior?.status === "APPROVED" && !validationPlanHash && prior.technical_receipt_sha256 === receipt) return prior;
   }
-  if (["IN_PROGRESS", "INCOMPLETE", "ERROR"].includes(status)) {
+  if (["IN_PROGRESS", "INCOMPLETE", "ERROR"].includes(status) || ["REJECTED", "INVALIDATED_CRITERIA"].includes(status) && !invalidationReason?.trim()) {
     let prior; try { prior = await readDecision(current, sourceCommit, sourceTree); } catch (error) { if (error.code !== "ENOENT") throw error; }
     // Raw attempts retain their own immutable outcome. Explicit candidate
     // defects/criteria invalidation remain separate from still-applicable
@@ -217,8 +223,14 @@ export async function publicationDecisionStatus({root = process.cwd(), sourceCom
 
 async function assertDecision(current, record) {
   const decision = await readDecision(current, record.source_commit, record.source_tree);
-  if (decision.status !== "APPROVED" || decision.technical_receipt_sha256 !== record.admission.technical_receipt_sha256
-      || decision.record_sha256 !== record.decision_sha256) throw new Error("Prepared publication was superseded by a later native candidate decision");
+  const original = decision.record_sha256 === record.decision_sha256 ? decision
+    : await readDecision(current, record.source_commit, record.source_tree, path.join(current.directory, `${record.decision_sha256}.decision.json`));
+  // A later complete approval may add evidence while the captured approval
+  // remains applicable. Only an explicit candidate invalidation starts a new
+  // readiness epoch; renewal must never resurrect an earlier revoked capability.
+  if (decision.status !== "APPROVED" || original.status !== "APPROVED"
+      || original.record_sha256 !== record.decision_sha256 || original.technical_receipt_sha256 !== record.admission.technical_receipt_sha256
+      || (decision.readiness_epoch_sha256 ?? null) !== (original.readiness_epoch_sha256 ?? null)) throw new Error("Prepared publication was superseded by a later native candidate decision");
 }
 
 function verify(record, filename, directory) {
