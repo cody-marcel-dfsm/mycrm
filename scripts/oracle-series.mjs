@@ -174,6 +174,16 @@ function validationScopeReason(proof, snapshot) {
   return changed.length ? `recorded validation input facts changed: ${changed.join(", ")}` : null;
 }
 
+export function validationProofNavigation(validationProofs, bindings) {
+  return validationProofs.map(({record, ...proof}) => ({...proof,
+    id: `native-${record.record_sha256}`, record_sha256: record.record_sha256, command: record.command,
+    original_outcome: record.outcome ?? null, original_scope: record.before.scope ?? null,
+    original_tree: record.before.tree ?? null, original_base: record.before.base_commit ?? null,
+    original_inputs_sha256: bindingHash(record.before), original_input_count: Object.keys(record.before.files).length,
+    original_environment_sha256: record.before.context.environment, original_output_sha256: record.output_sha256 ?? null,
+    original_record: bindings.find(item => item.kind === "file" && item.value === proof.evidence) ?? null}));
+}
+
 export function retainedObservations(series, kind) {
   const latest = new Map();
   for (const round of series.rounds) {
@@ -439,7 +449,11 @@ export async function prepareSeries({directory, candidate, inputs, files, fileFa
       if (finding) history.set(resolution.id, {...finding, last_status: resolution.status, last_round: round.round, resolution_evidence: resolution.evidence});
     }
   }
-  return {filename, metadataRoot: path.dirname(directory), series, snapshot, proposalRecord, public: {
+  // Original native records remain sealed in their evidence files and in the
+  // private assessment context. The reviewer wire carries identities and
+  // applicability facts, rather than duplicating every before/after input map.
+  const proofNavigation = validationProofNavigation(validationProofs, inputs.validation);
+  return {filename, metadataRoot: path.dirname(directory), series, snapshot, proposalRecord, validationProofs, public: {
     series_id: series.series_id, round: series.rounds.length + 1,
     mode: !previous ? "initial" : previous.review_status === "INCOMPLETE" ? "resume" : "followup",
     previous_candidate: previous?.snapshot.tree ?? null, previous_binding: previous ? bindingHash(previous.snapshot) : null,
@@ -452,7 +466,7 @@ export async function prepareSeries({directory, candidate, inputs, files, fileFa
     latest_repair_plan: previous?.repair_plan ?? null,
     prior_findings: previous?.findings ?? [], eligible_coverage: eligibleCoverage, eligible_validations: eligibleValidation, invalidated,
     finding_history: [...history.values()], history_file: filename, history_sha256: series.sha256 ?? null,
-    validation_proofs: validationProofs,
+    validation_proofs: proofNavigation,
     reviewer_policy_equivalence: equivalence,
     recovered_coverage: recovered, owner_evidence_changed: Boolean(previous && bindingHash(previous.snapshot.context.owner) !== bindingHash(context.owner)), fresh_protected_authority_assessment_required: true,
     preverified_validations: preverifiedValidations,
@@ -491,7 +505,7 @@ export function assessRound(context, response, validation) {
   const validations = response.validations.map((item) => {
     const evidence = validation.find((entry) => entry.kind === "file" && entry.value === item.evidence);
     if (!evidence) throw new Error(`Oracle validation reuse requires supplied hash-bound file evidence: ${item.evidence}`);
-    const proof = current.validation_proofs.find((entry) => entry.evidence === item.evidence && entry.eligible);
+    const proof = (context.validationProofs ?? current.validation_proofs).find((entry) => entry.evidence === item.evidence && entry.eligible);
     if (!proof) throw new Error("Reusable Oracle validation requires an original launcher-recorded passing execution witness; raw logs cannot be relabeled");
     const scopeReason = validationScopeReason(proof, snapshot);
     if (scopeReason) throw new Error(`Oracle validation original command, input, dependency, configuration, environment or recorded scope does not match current candidate: ${scopeReason}`);

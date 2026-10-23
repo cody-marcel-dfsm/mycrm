@@ -68,6 +68,24 @@ test("three saved rounds retain a command-specific functional environment indepe
   assert.equal(nativeProofs[0].record.before.context.environment, functionalEnvironment);
 });
 
+test("reviewer proof navigation preserves sealed hashes while native admission retains the complete original", async t => {
+  const {prepare, options, nativeProofs} = await fixture(t);
+  nativeProofs[0].record.before.file_metadata = {"synthetic-retained-native-custody": "x".repeat(1024 * 1024)};
+  options.validationProofs = nativeProofs;
+  const prepared = await prepare(), view = prepared.public.validation_proofs[0];
+  assert.equal(view.original_inputs_sha256, bindingHash(nativeProofs[0].record.before));
+  assert.equal(view.record_sha256, nativeProofs[0].record.record_sha256);
+  assert.equal(view.original_record.sha256, "evidence-a");
+  assert.equal(view.record, undefined);
+  assert.ok(Buffer.byteLength(JSON.stringify(prepared.public.validation_proofs)) < 4096);
+  assert.equal(prepared.validationProofs[0].record, nativeProofs[0].record);
+  const validation = {id: "native-original", evidence: "@check.log", command: JSON.stringify(nativeProofs[0].record.command), dependencies: ["a.mjs", "test.mjs", "config.json"], dependency_rationale: "Complete original source/configuration closure remains native.", assessment: "Retained original execution verified."};
+  assert.doesNotThrow(() => assessRound(prepared, response({validations: [validation]}), options.inputs.validation));
+  nativeProofs[0].eligible = false;
+  assert.equal(view.eligible, true, "The wire index remains an observation, never admission authority");
+  assert.throws(() => assessRound(prepared, response({validations: [validation]}), options.inputs.validation), /original launcher-recorded/);
+});
+
 test("complete first scan consolidates findings and repair review carries only verified unaffected coverage", async (t) => {
   const {prepare, record, options} = await fixture(t);
   const initial = await prepare();
