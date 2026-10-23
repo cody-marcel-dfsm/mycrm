@@ -1030,10 +1030,16 @@ test("run telemetry distinguishes approved, rejected and failed phases without i
 
 test("actual rejected preflight retains timing and outcome while reviewer stays unstarted", async (t) => {
   const {repo, env} = await fixture(t);
-  await assert.rejects(command(repo, ["review"], env));
-  const [run] = await readdir(path.join(repo, ".git/oracle/runs"));
-  const timings = JSON.parse(await readFile(path.join(repo, ".git/oracle/runs", run, "timings.json")));
-  const outcome = JSON.parse(await readFile(path.join(repo, ".git/oracle/runs", run, "outcome.json")));
+  await command(repo, ["proposal", "Problem: synthetic. Cause: synthetic. Recommended change: synthetic."], env);
+  await assert.rejects(command(repo, ["review"], env), /requires unvalidated commits or a non-empty staged candidate/);
+  const directory = path.join(repo, ".git/oracle/runs");
+  const records = await Promise.all((await readdir(directory)).map(async (run) => ({
+    timings: JSON.parse(await readFile(path.join(directory, run, "timings.json"))),
+    outcome: JSON.parse(await readFile(path.join(directory, run, "outcome.json"))),
+  })));
+  const reviews = records.filter(({outcome}) => outcome.kind === "review");
+  assert.equal(reviews.length, 1);
+  const [{timings, outcome}] = reviews;
   assert.ok(timings.precheck_ms >= 0);
   assert.equal(timings.reviewer_ms, undefined);
   assert.equal(outcome.outcome, "ERROR");
