@@ -7,7 +7,7 @@ import {prepareSeries, reviewSnapshot, assessRound, saveRound, verifySeries, inh
 import {contentHash} from "../scripts/oracle-inputs.mjs";
 import {cohortPlan, aggregateCohorts} from "../scripts/oracle-parallel.mjs";
 import {bindingHash} from "../scripts/oracle-inputs.mjs";
-import {environmentHash, fullEnvironmentHash} from "../scripts/oracle-validation.mjs";
+import {environmentHash, fullEnvironmentHash, executionEnvironment} from "../scripts/oracle-validation.mjs";
 
 const coverage = (name, dependencies = [name]) => ({path: name, dependencies, dependency_rationale: "Synthetic complete dependency closure.", assessment: "Synthetic behavior and failure paths checked.", criteria: ["Synthetic acceptance and failure criteria."], evidence: ["Synthetic source inspection."], finding_ids: []});
 const finding = (id = "F-1", extra = {}) => ({id, severity: "high", code: id, message: "Synthetic defect.", path: "a.mjs", reproduction: "Invoke the synthetic failing input.", required_behavior: "Return the expected synthetic output.", affected_paths: ["a.mjs"], acceptance_checks: ["Exercise the synthetic failure."], origin: "initial", missed_finding_reason: null, ...extra});
@@ -31,6 +31,9 @@ test("new-chat bookkeeping preserves source observations and full original envir
   const first = {PATH: "/synthetic/bin", CODEX_THREAD_ID: "synthetic-first", SHLVL: "1"};
   const next = {...first, CODEX_THREAD_ID: "synthetic-next", SHLVL: "8"};
   assert.notEqual(fullEnvironmentHash(first), fullEnvironmentHash(next)); assert.equal(environmentHash(first), environmentHash(next));
+  const functional = {_: "synthetic-execution-context", npm_lifecycle_event: "synthetic-functional-event"};
+  assert.deepEqual(executionEnvironment(functional, Object.keys(functional)), functional);
+  assert.notEqual(environmentHash(functional, ["_"]), environmentHash({...functional, _: "synthetic-new-context"}, ["_"]));
   await record(await prepare({environment: environmentHash(first), environmentProvenance: fullEnvironmentHash(first)}), response());
   const repeated = await prepare({environment: environmentHash(next), environmentProvenance: fullEnvironmentHash(next)});
   assert.deepEqual(repeated.public.eligible_coverage.map(item => item.path), ["a.mjs", "b.mjs"]);

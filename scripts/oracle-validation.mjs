@@ -21,7 +21,7 @@ export async function fileMetadata(root, names) {
 // explicitly; canonical cwd, executable, runtime and all other config stay bound.
 const dispatchEnvironment = new Set(["CODEX_THREAD_ID", "CODEX_PARENT_THREAD_ID", "CODEX_SESSION_ID", "PWD", "OLDPWD", "SHLVL"]);
 export function executionEnvironment(environment = process.env, declared = []) {
-  return Object.fromEntries(Object.entries(environment).filter(([name]) => name !== "_" && !name.startsWith("npm_lifecycle_") && (!dispatchEnvironment.has(name) || declared.includes(name))));
+  return Object.fromEntries(Object.entries(environment).filter(([name]) => declared.includes(name) || name !== "_" && !name.startsWith("npm_lifecycle_") && !dispatchEnvironment.has(name)));
 }
 
 export function fullEnvironmentHash(environment = process.env) {
