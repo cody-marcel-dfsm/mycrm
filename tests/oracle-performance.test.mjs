@@ -9,7 +9,7 @@ import test, {describe} from "node:test";
 import {captureInputs, assertInputsMatch, withOracleRun, preparedEvidence, observedSourceBindings, bindingHash, pathCustody, evidenceBinding} from "../scripts/oracle-inputs.mjs";
 import {receiptSha256, sha256} from "../scripts/oracle-review.mjs";
 import {seriesDigest, reviewSnapshot} from "../scripts/oracle-series.mjs";
-import {readValidationProofs, inheritNativeEvidence, executableBinding, fileMetadata, validationDigest} from "../scripts/oracle-validation.mjs";
+import {readValidationProofs, inheritNativeEvidence, executableBinding, fileMetadata, validationDigest, selectedGitInputs} from "../scripts/oracle-validation.mjs";
 import {admitDeployment} from "../scripts/oracle-deployment.mjs";
 import {nativeCohortObservations, createNativeCohortAudit} from "../scripts/oracle-parallel.mjs";
 import {installReviewed} from "../scripts/codex-maintainer-install.mjs";
@@ -972,6 +972,45 @@ test("restart manifest context restores intact historical originals without gran
     await writeFile(manifestFile, JSON.stringify(manifest));
   }
   assert.deepEqual((await inheritNativeEvidence(options)).evidence, [`@${filename}`]);
+});
+
+test("selected Git input batching preserves filtered bytes, quoted names, all index stages and missing inputs with two Git processes", async t => {
+  const {repo, root, git} = await fixture(t);
+  const names = ["filtered.txt", "space name.txt", "line\nname.txt", "tab\tname.txt", 'quote"name.txt', "slash\\name.txt", "control\u0001name.txt", "utf8-λ-😀.txt", "-leading.txt", "executable.txt", "conflict.txt", "indexed-link.txt",
+    ...Array.from({length: 80}, (_, index) => `batch-${index}.txt`)];
+  for (const name of names) await writeFile(path.join(repo, name), "synthetic selected bytes\r\n");
+  await writeFile(path.join(repo, ".gitattributes"), "filtered.txt filter=synthetic\n");
+  await git("config", "filter.synthetic.clean", "sed s/synthetic/SYNTHETIC/g");
+  await chmod(path.join(repo, "executable.txt"), 0o755);
+  await rm(path.join(repo, "indexed-link.txt")); await symlink("candidate.txt", path.join(repo, "indexed-link.txt"));
+  await git("add", "--all");
+  await rm(path.join(repo, "indexed-link.txt")); await writeFile(path.join(repo, "indexed-link.txt"), "synthetic live regular bytes");
+  const object = await git("hash-object", "--", "candidate.txt");
+  await new Promise((resolve, reject) => {
+    const child = execFile("git", ["update-index", "--index-info"], {cwd: repo}, error => error ? reject(error) : resolve());
+    child.stdin.on("error", reject); child.stdin.end(`0 ${"0".repeat(40)}\tconflict.txt\n${[1, 2, 3].map(stage => `100644 ${object} ${stage}\tconflict.txt\n`).join("")}`);
+  });
+  await writeFile(path.join(repo, "untracked.txt"), "synthetic untracked bytes"); names.push("untracked.txt");
+  await writeFile(path.join(repo, "missing.txt"), "synthetic indexed missing bytes"); await git("add", "--", "missing.txt"); await rm(path.join(repo, "missing.txt"));
+  const quote = value => `'${value.replaceAll("'", "'\\''")}'`;
+  const actualGit = (await execute("which", ["git"])).stdout.trim(), bin = path.join(root, "count-git"), log = path.join(root, "git-processes.log");
+  await mkdir(bin); await writeFile(path.join(bin, "git"), `#!/bin/sh\nprintf '%s\\n' "$*" >> ${quote(log)}\nexec ${quote(actualGit)} "$@"\n`); await chmod(path.join(bin, "git"), 0o755);
+  for (const quotePath of ["true", "false"]) {
+    await git("config", "core.quotePath", quotePath);
+    const started = performance.now(), expected = {files: {}, selected_index: {}};
+    for (const name of names) { expected.files[name] = await git("hash-object", "--", name); expected.selected_index[name] = await git("ls-files", "--stage", "--", name); }
+    expected.files["missing.txt"] = null; expected.selected_index["missing.txt"] = await git("ls-files", "--stage", "--", "missing.txt");
+    const priorMs = performance.now() - started;
+    await rm(log, {force: true});
+    const module = new URL("../scripts/oracle-validation.mjs", import.meta.url).href;
+    const source = `import {selectedGitInputs} from ${JSON.stringify(module)}; const started=performance.now(); const snapshot=await selectedGitInputs(process.cwd(),${JSON.stringify(names)},{missing:["missing.txt"]}); console.log(JSON.stringify({snapshot,elapsed_ms:performance.now()-started}));`;
+    const current = JSON.parse((await execute(process.execPath, ["--input-type=module", "-e", source], {cwd: repo, env: {...process.env, PATH: `${bin}${path.delimiter}${process.env.PATH}`}})).stdout);
+    assert.deepEqual(current.snapshot, expected, quotePath);
+    assert.deepEqual((await readFile(log, "utf8")).trim().split("\n").sort(), ["hash-object --stdin-paths", "ls-files --stage"]);
+    assert.match(current.snapshot.selected_index["indexed-link.txt"], /^120000 /); assert.equal(current.snapshot.selected_index["conflict.txt"].split("\n").length, 3);
+    console.log(`MYCRM_SELECTED_INPUT_BATCH_COMPARISON=${JSON.stringify({files: names.length, quote_path: quotePath, previous_git_processes: names.length * 2 + 1, current_git_processes: 2, previous_ms: priorMs, current_ms: current.elapsed_ms})}`);
+  }
+  await assert.rejects(selectedGitInputs(repo, ["absent.txt"]), /hash-object|could not open|No such file/);
 });
 
 test("native validation captures original command and inputs, supports proof reuse, and rejects changed output", async (t) => {

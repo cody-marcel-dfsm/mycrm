@@ -8,7 +8,7 @@ import {promisify} from "node:util";
 import {selectedSettings} from "./codex-child-model.mjs";
 import {atomicJson, withOracleRun, captureInputs, assertInputsMatch, preparedEvidence, bindingHash, pathCustody, metadataDirectory, readMetadataFile, writeMetadataFile, removeMetadataFile, currentInvocation, assertCurrentInvocation, assertPublishedInvocation, readBoundAuthority, observedSourceBindings, assertEvidenceIntegrity, evidenceBinding} from "./oracle-inputs.mjs";
 import {prepareSeries, reviewSnapshot, assessRound, saveRound, verifySeries, inheritObservedEvidence, observationSourcePaths, reviewSeriesPolicy, reviewSeriesSchemaProperties, seriesFindingSchema} from "./oracle-series.mjs";
-import {environmentHash, fullEnvironmentHash, executionEnvironment, executableBinding, readValidationProofs, assertValidationProofsMatch, inheritNativeEvidence, validationDigest, fileMetadata} from "./oracle-validation.mjs";
+import {environmentHash, fullEnvironmentHash, executionEnvironment, executableBinding, readValidationProofs, assertValidationProofsMatch, inheritNativeEvidence, validationDigest, fileMetadata, selectedGitInputs} from "./oracle-validation.mjs";
 import {findCommandValidation, recordCommandCoverage, commandArtifactBinding} from "./oracle-command-tracking.mjs";
 import Ajv from "ajv";
 import {recordValidatedCommit, readValidatedCheckpoint, shipmentPlan} from "./shipment-state.mjs";
@@ -571,16 +571,16 @@ async function captureValidation(args, {run, phase}) {
         if (custody.resolved_path !== filename || name.split(path.sep).some((part) => part === "." || part === "..")) throw new Error("Validation inputs must be regular canonical project files");
         return relative;
       })))].sort();
-      const files = {}, selected_index = {};
+      const present = [], absent = [];
       for (const name of paths) {
         const filename = path.join(root, name);
         try {
           const custody = await pathCustody(root, name, {excluded: [path.join(root, ".git")]});
           if (custody.metadata?.type !== "regular" || custody.resolved_path !== filename) throw new Error("Validation inputs must be regular canonical project files");
-          files[name] = await git(["hash-object", "--", name]);
-        } catch (error) { if (error.code !== "ENOENT") throw error; files[name] = null; }
-        selected_index[name] = await git(["ls-files", "--stage", "--", name]);
+          present.push(name);
+        } catch (error) { if (error.code !== "ENOENT") throw error; absent.push(name); }
       }
+      const {files, selected_index} = await selectedGitInputs(root, present, {missing: absent});
       if (selected.some((name) => files[path.relative(root, path.resolve(root, name))] === null)) throw new Error("A selected validation input is missing");
       const base = await git(["rev-parse", "HEAD"]);
       const inputs = await captureInputs({root, base, tree: null, ownerApprovalEvidence: options.ownerApprovalEvidence, complete: true});

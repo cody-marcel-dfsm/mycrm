@@ -9,6 +9,46 @@ import {verifySeries, retainedObservations} from "./oracle-series.mjs";
 export const validationDigest = ({record_sha256: _ignored, ...record}) => bindingHash(record);
 const execute = promisify(execFile);
 
+const gitPath = name => `"${[...Buffer.from(name)].map(byte => byte >= 32 && byte <= 126 && byte !== 34 && byte !== 92 ? String.fromCharCode(byte) : `\\${byte.toString(8).padStart(3, "0")}`).join("")}"`;
+function indexedPath(value) {
+  if (!value.startsWith('"')) return value;
+  if (!value.endsWith('"')) throw new Error("Git index path quoting is malformed");
+  const bytes = [], controls = {a: 7, b: 8, t: 9, n: 10, v: 11, f: 12, r: 13, '"': 34, "\\": 92};
+  for (let index = 1; index < value.length - 1; index++) {
+    if (value[index] !== "\\") { const point = value.codePointAt(index), text = String.fromCodePoint(point); bytes.push(...Buffer.from(text)); index += text.length - 1; continue; }
+    const escaped = value[++index];
+    if (Object.hasOwn(controls, escaped)) bytes.push(controls[escaped]);
+    else if (/[0-7]/.test(escaped ?? "")) {
+      let octal = escaped;
+      while (octal.length < 3 && /[0-7]/.test(value[index + 1] ?? "")) octal += value[++index];
+      bytes.push(Number.parseInt(octal, 8));
+    } else throw new Error("Git index path escape is malformed");
+  }
+  return Buffer.from(bytes).toString("utf8");
+}
+
+export async function selectedGitInputs(root, names, {missing = []} = {}) {
+  if (!names.length && !missing.length) return {files: {}, selected_index: {}};
+  const [hashes, index] = await Promise.all([
+    names.length ? new Promise((resolve, reject) => {
+      const child = execFile("git", ["hash-object", "--stdin-paths"], {cwd: root, encoding: "utf8", maxBuffer: 16 * 1024 * 1024}, (error, stdout) => error ? reject(error) : resolve(stdout));
+      child.stdin.on("error", reject); child.stdin.end(`${names.map(gitPath).join("\n")}\n`);
+    }) : Promise.resolve(""),
+    execute("git", ["ls-files", "--stage"], {cwd: root, maxBuffer: 16 * 1024 * 1024}).then(result => result.stdout),
+  ]);
+  const values = names.length ? hashes.trim().split("\n") : [];
+  if (values.length !== names.length || values.some(value => !/^[a-f0-9]{40}(?:[a-f0-9]{24})?$/.test(value))) throw new Error("Selected Git input hash inventory is incomplete");
+  const entries = new Map();
+  for (const line of index.split("\n").filter(Boolean)) {
+    const separator = line.indexOf("\t");
+    if (separator < 0) throw new Error("Git index entry is malformed");
+    const name = indexedPath(line.slice(separator + 1));
+    entries.set(name, [...entries.get(name) ?? [], line]);
+  }
+  return {files: Object.fromEntries([...names.map((name, position) => [name, values[position]]), ...missing.map(name => [name, null])]),
+    selected_index: Object.fromEntries([...names, ...missing].map(name => [name, (entries.get(name) ?? []).join("\n").trim()]))};
+}
+
 export async function fileMetadata(root, names) {
   return Object.fromEntries(await Promise.all(names.map(async (name) => {
     const custody = await pathCustody(root, name, {scopeRoot: path.isAbsolute(name) ? path.dirname(path.resolve(root)) : root, allowMissing: true, excluded: [path.join(root, ".git")]});
