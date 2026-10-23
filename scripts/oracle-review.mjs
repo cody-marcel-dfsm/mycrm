@@ -9,6 +9,7 @@ import {selectedSettings} from "./codex-child-model.mjs";
 import {atomicJson, withOracleRun, captureInputs, assertInputsMatch, preparedEvidence, bindingHash, pathCustody, metadataDirectory, readMetadataFile, writeMetadataFile, removeMetadataFile, currentInvocation, assertCurrentInvocation, assertPublishedInvocation, readBoundAuthority, observedSourceBindings, assertEvidenceIntegrity, evidenceBinding} from "./oracle-inputs.mjs";
 import {prepareSeries, reviewSnapshot, assessRound, saveRound, verifySeries, inheritObservedEvidence, observationSourcePaths, reviewSeriesPolicy, reviewSeriesSchemaProperties, seriesFindingSchema} from "./oracle-series.mjs";
 import {environmentHash, executionEnvironment, executableBinding, readValidationProofs, assertValidationProofsMatch, inheritNativeEvidence, validationDigest, fileMetadata} from "./oracle-validation.mjs";
+import {findCommandValidation, recordCommandCoverage, commandArtifactBinding} from "./oracle-command-tracking.mjs";
 import Ajv from "ajv";
 import {recordValidatedCommit, readValidatedCheckpoint, shipmentPlan} from "./shipment-state.mjs";
 import {runParallelReview, verifyParallelArtifacts, nativeCohortObservations} from "./oracle-parallel.mjs";
@@ -569,6 +570,18 @@ async function captureValidation(args, {run, phase}) {
   const before = await phase("snapshot_ms", capture);
   const executionCwd = await realpath(process.cwd());
   const executable = await executableBinding(command[0], executionEnvironment(), executionCwd);
+  const directory = await oracleDirectory();
+  const existing = await phase("command_coverage_ms", () => findCommandValidation({root: executionCwd, directory, command, before, executable}));
+  if (existing.proof) {
+    // Recheck the live candidate after original-output verification. Reuse
+    // emits the original execution reference rather than rewriting its hashes.
+    assertInputsMatch(before, await capture());
+    if (existing.proof.record.produced_artifact) assertInputsMatch(existing.proof.record.produced_artifact, await commandArtifactBinding(executionCwd, command));
+    const coverage = await recordCommandCoverage({root: executionCwd, directory, record: existing.proof.record, evidence: existing.proof.evidence, disposition: "REUSED", invalidated: existing.invalidated});
+    process.stdout.write(`ORACLE_VALIDATION=PASSED\nORACLE_VALIDATION_REUSED=true\nORACLE_COMMAND_COVERAGE=@${coverage.filename}\nORACLE_VALIDATION_EVIDENCE=${existing.proof.evidence}\n`);
+    return existing.proof.record;
+  }
+  for (const item of existing.invalidated) process.stdout.write(`ORACLE_VALIDATION_INVALIDATED=${JSON.stringify(item)}\n`);
   let result, failure;
   const startedAt = new Date().toISOString();
   const controller = new AbortController();
@@ -589,13 +602,15 @@ async function captureValidation(args, {run, phase}) {
     started_at: startedAt, finished_at: new Date().toISOString(), before, after, executable, after_executable: afterExecutable,
     outcome: failure ? "FAILED" : unchanged ? "PASSED" : "INPUT_DRIFT", exit_code: failure ? typeof failure.code === "number" ? failure.code : null : 0, signal: failure?.signal ?? null,
     error: failure?.message ?? driftError, output_file: outputFile, output_sha256: sha256(output),
+    produced_artifact: await commandArtifactBinding(executionCwd, command),
     output_custody: await pathCustody(process.cwd(), outputFile, {scopeRoot: path.join(await oracleDirectory(), "runs"), allowFinalLink: false})};
   record.record_sha256 = validationDigest(record);
-  const directory = path.join(await oracleDirectory(), "validations");
-  await metadataDirectory(path.dirname(await oracleDirectory()), directory);
-  const filename = path.join(directory, `${record.record_sha256}.json`);
+  const validationDirectory = path.join(directory, "validations");
+  await metadataDirectory(path.dirname(directory), validationDirectory);
+  const filename = path.join(validationDirectory, `${record.record_sha256}.json`);
   await atomicJson(filename, record);
-  process.stdout.write(`ORACLE_VALIDATION=${record.outcome}\nORACLE_VALIDATION_EVIDENCE=@${filename}\n`);
+  const coverage = await recordCommandCoverage({root: executionCwd, directory, record, evidence: `@${filename}`, disposition: "EXECUTED", invalidated: existing.invalidated});
+  process.stdout.write(`ORACLE_VALIDATION=${record.outcome}\nORACLE_COMMAND_COVERAGE=@${coverage.filename}\nORACLE_VALIDATION_EVIDENCE=@${filename}\n`);
   if (record.outcome !== "PASSED") process.exitCode = 1;
   return record;
 }
