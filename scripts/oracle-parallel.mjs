@@ -49,6 +49,22 @@ function boundedPayload(value, evidence, primary) {
     value.review_context.validation_proof_index = proofs.map(item => ({id: item.id, eligible: item.eligible}));
     value.review_context.validation_proofs = [];
   }
+  if (serializedPayloadBytes(value) > payloadLimit && primary && value.review_context.observed_finding_index?.length) {
+    // Growing repair histories repeat the same original collection locator for
+    // every distinct finding version. Keep each hash and exact numeric location
+    // while declaring the shared immutable collection pointer once.
+    value.review_context.observed_finding_versions = {
+      original_reference: originalReference("/review_context/observed_assessments"),
+      tuple_fields: ["original_sha256", "assessment_index", "finding_index"],
+      reading_contract: "Each original_versions tuple selects findings[finding_index] in observed_assessments[assessment_index]; verify its exact original_sha256 before disposition."
+    };
+    for (const item of value.review_context.observed_finding_index) item.original_versions = item.original_versions.map(version => {
+      if (Array.isArray(version)) return version; // A second bounded preparation pass retains the same projection.
+      const location = /^\/review_context\/observed_assessments\/(\d+)\/findings\/(\d+)$/.exec(version.original_reference.pointer);
+      if (!location) throw new Error("Observed finding version has no exact original collection location");
+      return [version.original_sha256, Number(location[1]), Number(location[2])];
+    });
+  }
   if (serializedPayloadBytes(value) > payloadLimit) throw new Error(`Cohort payload exceeds its bound after retained collection projection: ${serializedPayloadBytes(value)} bytes`);
   return value;
 }

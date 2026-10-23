@@ -139,6 +139,24 @@ test("large validation descriptions preserve every eligibility identity and exac
   assert.equal(value.retained_collections.validation_proofs.original_reference.pointer, "/review_context/validation_proofs");
 });
 
+test("combined retained proof and finding-version indexes stay bounded with every original locator intact", () => {
+  const e = largeRetainedEvidence();
+  e.inputs.authorities = e.inputs.authorities.map((item, i) => ({...item, path: `Vault/docs/architecture/retained-production-authority-${i}-${"scope-".repeat(10)}.md`}));
+  for (const [number, item] of e.review_context.observed_assessments.entries()) item.findings[0].required_behavior = `Distinct original finding version ${number}`;
+  e.review_context.validation_proofs = Array.from({length: 100}, (_, index) => ({id: String(index).padStart(64, "0"), eligible: false, reason: "Original qualification remains independent. ".repeat(100)}));
+  const original = JSON.stringify(e), plan = cohortPlan({candidate, inputs: e.inputs, context: e.review_context});
+  const payload = partitionPayload(plan, plan.cohorts[0], e);
+  assert.ok(Buffer.byteLength(`${JSON.stringify(payload, null, 2)}\n`) <= payloadLimit);
+  assert.deepEqual(payload.review_context.observed_finding_versions.tuple_fields, ["original_sha256", "assessment_index", "finding_index"]);
+  assert.equal(payload.review_context.observed_finding_versions.original_reference.pointer, "/review_context/observed_assessments");
+  const versions = payload.review_context.observed_finding_index[0].original_versions;
+  assert.equal(versions.length, 100);
+  for (const [hash, assessment, finding] of versions) assert.equal(hash, bindingHash(e.review_context.observed_assessments[assessment].findings[finding]));
+  assert.equal(payload.retained_collections.observed_assessments.grants_eligible_coverage, false);
+  assert.equal(payload.retained_collections.observed_assessments.grants_approval, false);
+  assert.equal(JSON.stringify(e), original);
+});
+
 test("aggregate rejects missing, duplicate, mixed-candidate and uncovered cohorts", () => {
   const plan = cohortPlan({candidate, inputs, context: evidence().review_context});
   const all = plan.cohorts.map((cohort) => ({id: cohort.id, envelope: envelope(plan, cohort)}));
