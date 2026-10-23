@@ -579,16 +579,16 @@ async function captureValidation(args, {run, phase}) {
       let proposal = null;
       try { proposal = sha256(await readMetadataFile(await proposalPath())); } catch (error) { if (error.code !== "ENOENT") throw error; }
       reviewProvenance.push({base_commit: base, branch: await git(["branch", "--show-current"]), inputs, proposal_file_sha256: proposal});
-      return {tree: null, scope: "declared-inputs-v2", files, context: {environment: environmentHash(process.env, environmentInputs)}, environment_inputs: [...new Set(environmentInputs)].sort(), selected_index, selected_paths: paths, file_metadata: await fileMetadata(root, paths)};
+      return {tree: null, scope: "declared-inputs-v2", files, context: {environment: environmentHash(undefined, environmentInputs)}, environment_inputs: [...new Set(environmentInputs)].sort(), selected_index, selected_paths: paths, file_metadata: await fileMetadata(root, paths)};
     }
     const candidate = await assertExactStagedCandidate();
     const inputs = await captureInputs({root: process.cwd(), base: candidate.base, tree: candidate.tree, ownerApprovalEvidence: options.ownerApprovalEvidence, complete: true});
-    const snapshot = reviewSnapshot({candidate, inputs, ...await candidateFiles(candidate), environment: environmentHash(process.env, environmentInputs)});
+    const snapshot = reviewSnapshot({candidate, inputs, ...await candidateFiles(candidate), environment: environmentHash(undefined, environmentInputs)});
     return {...snapshot, environment_inputs: [...new Set(environmentInputs)].sort(), file_metadata: await fileMetadata(process.cwd(), Object.keys(snapshot.files))};
   };
   const before = await phase("snapshot_ms", capture);
   const executionCwd = await realpath(process.cwd());
-  const childEnvironment = executionEnvironment(process.env, environmentInputs);
+  const childEnvironment = executionEnvironment(undefined, environmentInputs);
   const dispatchEnvironmentHash = fullEnvironmentHash();
   const executable = await executableBinding(command[0], childEnvironment, executionCwd);
   const directory = await oracleDirectory();
@@ -615,7 +615,7 @@ async function captureValidation(args, {run, phase}) {
   const output = `${result.stdout}\n--- stderr ---\n${result.stderr}`;
   await writeMetadataFile(outputFile, output, {mode: 0o600});
   let after = null, afterExecutable = null, driftError = null;
-  try { after = await capture(); afterExecutable = await executableBinding(command[0], executionEnvironment(process.env, environmentInputs), executionCwd); } catch (error) { driftError = error.message; }
+  try { after = await capture(); afterExecutable = await executableBinding(command[0], executionEnvironment(undefined, environmentInputs), executionCwd); } catch (error) { driftError = error.message; }
   const unchanged = after && bindingHash(before) === bindingHash(after) && bindingHash(executable) === bindingHash(afterExecutable);
   const record = {schema: "my-crm.oracle-validation/v1", provenance: "launcher-owned-command-execution", command, execution_cwd: executionCwd,
     environment_inputs: [...new Set(environmentInputs)].sort(), environment_provenance: {original_dispatch_sha256: dispatchEnvironmentHash, executed_sha256: fullEnvironmentHash(childEnvironment), applicability: "dispatch-identity-excluded-with-explicit-functional-inputs"},
