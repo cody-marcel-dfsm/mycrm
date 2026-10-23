@@ -32,18 +32,20 @@ export async function prepareSourcePacket({directory, candidate, inputs, evidenc
   const invalidations = evidence.review_context.invalidated ?? [];
   const invalidationPages = await pagesFor(`${JSON.stringify(invalidations, null, 2)}\n`,
     {kind: "ALL_NATIVE_INVALIDATION_REASONS", original_pointer: "/review_context/invalidated", original_sha256: bindingHash(invalidations)});
+  const navigationCollection = evidence.review_context.navigation_coverage ?? [];
+  const navigationCollectionHash = bindingHash(navigationCollection);
   for (const name of cohort.required_paths) {
     const consumed = [...evidence.review_context.eligible_coverage ?? [], ...evidence.review_context.supporting_coverage ?? []].filter(item => item.path === name);
     const item = {path: name, required: true, candidate_commit: candidate.commit ?? null, candidate_tree: candidate.tree,
       dependency_closure: "UNKNOWN_UNTIL_INDEPENDENT_TRACE", dependencies_on_demand: [...new Set(consumed.flatMap(item => item.dependencies ?? []))],
       retained_observation_checkpoints: consumed.map(item => ({path: item.path, input_sha256: item.input_sha256 ?? null,
         origin: item.round ?? item.origin ?? null, eligibility: "INDEPENDENT_CURRENT_APPLICABILITY_REQUIRED"})), versions: []};
-    const navigation = (evidence.review_context.navigation_coverage ?? []).filter(entry => entry.path === name)
+    const navigation = navigationCollection.filter(entry => entry.path === name)
       .sort((a, b) => (a.origin?.round ?? 0) - (b.origin?.round ?? 0));
     const latest = navigation.at(-1);
     item.retained_review_navigation = {observation_count: navigation.length,
       grants_eligible_coverage: false, grants_approval: false,
-      original_collection: {file: "../../evidence.json", pointer: "/review_context/navigation_coverage", original_sha256: bindingHash(evidence.review_context.navigation_coverage ?? [])},
+      original_collection: {file: "../../evidence.json", pointer: "/review_context/navigation_coverage", original_sha256: navigationCollectionHash},
       pages: await pagesFor(`${JSON.stringify({path: name, latest_observation: latest ?? null,
         current_disposition: (evidence.review_context.path_dispositions ?? []).find(entry => entry.path === name) ?? null,
         invalidations: invalidations.filter(entry => entry.id === name || entry.changed_dependencies?.includes(name)),
