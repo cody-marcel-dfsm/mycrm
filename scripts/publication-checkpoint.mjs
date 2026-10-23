@@ -64,7 +64,7 @@ async function readDecision(current, sourceCommit, sourceTree, filename = decisi
 
 // The native review writer advances one bounded candidate-specific decision.
 // Unrelated source commits and proposal attempts never change this identity.
-export async function recordPublicationDecision({root = process.cwd(), sourceCommit, sourceTree, status, receipt = null, decisionId = randomUUID(), ifAbsent = false, expectedDecisionId = null, validationPlan = null, admitted = null, invalidationReason = null} = {}) {
+export async function recordPublicationDecision({root = process.cwd(), sourceCommit, sourceTree, status, receipt = null, decisionId = randomUUID(), ifAbsent = false, expectedDecisionId = null, expectedReadinessSha = null, validationPlan = null, admitted = null, invalidationReason = null} = {}) {
   if (!oid.test(sourceCommit ?? "") || !oid.test(sourceTree ?? "") || !["IN_PROGRESS", "APPROVED", "REJECTED", "INVALIDATED_CRITERIA", "INCOMPLETE", "ERROR"].includes(status)
       || status === "APPROVED" && !sha.test(receipt ?? "")) throw new Error("Native publication decision requires an exact candidate and outcome");
   const current = await layout(root, true);
@@ -86,6 +86,7 @@ export async function recordPublicationDecision({root = process.cwd(), sourceCom
   catch (error) { if (error.code !== "EEXIST" || !(await boundedRead(filename)).equals(Buffer.from(bytes))) throw error; }
   const pointer = decisionName(current.directory, sourceCommit, sourceTree);
   const attempt = attemptName(current.directory, sourceCommit, sourceTree);
+  if (expectedReadinessSha && (await readDecision(current, sourceCommit, sourceTree)).record_sha256 !== expectedReadinessSha) return record;
   if (ifAbsent) {
     try { await writeFile(pointer, bytes, {flag: "wx", mode: 0o600}); }
     catch (error) { if (error.code !== "EEXIST") throw error; return readDecision(current, sourceCommit, sourceTree); }
@@ -105,9 +106,27 @@ export async function recordPublicationDecision({root = process.cwd(), sourceCom
   return record;
 }
 
-export async function sealPublicationValidation({root = process.cwd(), sourceCommit, sourceTree, receipt, decisionId, expectedDecisionId, plan, ifAbsent = false} = {}) {
+export async function sealPublicationValidation({root = process.cwd(), sourceCommit, sourceTree, receipt, decisionId, expectedDecisionId, expectedReadinessSha, plan, ifAbsent = false} = {}) {
   const validationPlan = plan ?? await (await import("./oracle-deployment.mjs")).deploymentPlan({root, reference: sourceCommit});
-  return recordPublicationDecision({root, sourceCommit, sourceTree, receipt, decisionId, expectedDecisionId, ifAbsent, status: "APPROVED", validationPlan});
+  return recordPublicationDecision({root, sourceCommit, sourceTree, receipt, decisionId, expectedDecisionId, expectedReadinessSha, ifAbsent, status: "APPROVED", validationPlan});
+}
+
+async function validationTransport(current, {repository, sourceCommit, sourceTree, remote, admission, attest}) {
+  const transport = await import("./validation-transport.mjs");
+  const binding = {repository: repository.toLowerCase(), source_commit: sourceCommit, source_tree: sourceTree,
+    technical_receipt_sha256: admission.technical_receipt_sha256, contract_sha256: transport.validationContractHash};
+  const filename = path.join(current.directory, `${hash(canonical(binding))}.transport.json`);
+  try {
+    const prior = JSON.parse(await boundedRead(filename));
+    if (prior.record_sha256 !== digest(prior) || canonical(prior.binding) !== canonical(binding) || prior.schema !== "my-crm.prepared-validation-transport/v1") throw new Error("Prepared validation transport seal changed");
+    return prior.result;
+  } catch (error) {if (error.code !== "ENOENT") throw error;}
+  const result = await (attest ?? transport.exportNativeValidation)({root: current.root, repository, sourceCommit, sourceTree, remote, admission});
+  const record = {schema: "my-crm.prepared-validation-transport/v1", binding, result}; record.record_sha256 = digest(record);
+  const bytes = `${JSON.stringify(record)}\n`;
+  try {await writeFile(filename, bytes, {flag: "wx", mode: 0o600});}
+  catch (error) {if (error.code !== "EEXIST" || !(await boundedRead(filename)).equals(Buffer.from(bytes))) throw error;}
+  return result;
 }
 
 async function admittedCoverage(current, decision) {
@@ -176,17 +195,17 @@ export async function preparePublication({root = process.cwd(), reference = "HEA
     // Repeated same-CL preparation consumes that seal without proof traversal.
     if (admit) {
       admission = await admit({root: current.root, reference: source_commit});
-      decision = await recordPublicationDecision({root: current.root, sourceCommit: source_commit, sourceTree: source_tree, status: "APPROVED", receipt: admission.technical_receipt_sha256, admitted: admission, decisionId: `imported:${admission.technical_receipt_sha256}`, ifAbsent: true});
+      decision = await recordPublicationDecision({root: current.root, sourceCommit: source_commit, sourceTree: source_tree, status: "APPROVED", receipt: admission.technical_receipt_sha256, admitted: admission, decisionId: `imported:${admission.technical_receipt_sha256}`, ifAbsent: !decision, expectedReadinessSha: decision?.record_sha256});
     } else {
       const native = await import("./oracle-deployment.mjs"), plan = await native.deploymentPlan({root: current.root, reference: source_commit});
       admission = await native.admitDeploymentPlan({root: current.root, plan});
-      decision = await sealPublicationValidation({root: current.root, sourceCommit: source_commit, sourceTree: source_tree, receipt: admission.technical_receipt_sha256, plan, decisionId: `imported:${admission.technical_receipt_sha256}`, ifAbsent: true});
+      decision = await sealPublicationValidation({root: current.root, sourceCommit: source_commit, sourceTree: source_tree, receipt: admission.technical_receipt_sha256, plan, decisionId: `imported:${admission.technical_receipt_sha256}`, ifAbsent: !decision, expectedReadinessSha: decision?.record_sha256});
     }
   }
   if (admission.status !== "ADMITTED" || admission.source_commit !== source_commit || admission.target_tree !== source_tree) throw new Error("Publication preparation requires complete exact-source validation and effect admission");
   if (decision.status !== "APPROVED" || decision.technical_receipt_sha256 !== admission.technical_receipt_sha256) throw new Error("Publication preparation requires the latest native candidate approval");
   const github = remoteUrl.match(/^(?:https:\/\/github\.com\/|git@github\.com:)([A-Za-z0-9_.-]+\/[A-Za-z0-9_.-]+?)(?:\.git)?$/);
-  const validation_transport = github ? await (attest ?? (await import("./validation-transport.mjs")).exportNativeValidation)({root: current.root, repository: github[1], sourceCommit: source_commit, sourceTree: source_tree, remote, admission}) : null;
+  const validation_transport = github ? await validationTransport(current, {repository: github[1], sourceCommit: source_commit, sourceTree: source_tree, remote, admission, attest}) : null;
   const history = await git(current.root, ["log", "--reverse", "--format=%H %T", actualRemote === zeros ? source_commit : `${actualRemote}..${source_commit}`]);
   const changelists = history ? history.split("\n").map(line => {const [commit_sha, tree_sha] = line.split(" "); return {commit_sha, tree_sha, validated_in_candidate: source_commit};}) : [];
   const record = {schema: "my-crm.publication-prepared/v1", repository_root: current.root, source_commit, source_tree, remote_name: remote,

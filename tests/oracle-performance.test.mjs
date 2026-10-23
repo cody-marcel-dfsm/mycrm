@@ -7,7 +7,7 @@ import {fileURLToPath} from "node:url";
 import {promisify} from "node:util";
 import test, {describe} from "node:test";
 import {captureInputs, assertInputsMatch, withOracleRun, preparedEvidence, observedSourceBindings, bindingHash, pathCustody, evidenceBinding} from "../scripts/oracle-inputs.mjs";
-import {receiptSha256, sha256, runReviewAttempt} from "../scripts/oracle-review.mjs";
+import {receiptSha256, sha256} from "../scripts/oracle-review.mjs";
 import {seriesDigest, reviewSnapshot} from "../scripts/oracle-series.mjs";
 import {readValidationProofs, inheritNativeEvidence, executableBinding, fileMetadata} from "../scripts/oracle-validation.mjs";
 import {admitDeployment} from "../scripts/oracle-deployment.mjs";
@@ -660,16 +660,20 @@ test("first and second producer rechecks preserve original movement alongside in
     } else {
       target = path.join(repo, "Vault/tmp/early-evidence.txt"); await writeFile(target, "original early immutable evidence"); reference = `@${target}`;
     }
-    const previousCwd = process.cwd(), previousEnv = {...process.env}, message = `Original producer movement at check ${check}`, args = kind === "inherited-native" ? [] : ["--validation", reference];
-    let observed = 0;
-    try {
-      process.chdir(repo); Object.assign(process.env, sameEnvironment);
-      await assert.rejects(runReviewAttempt(args, {verifyProducer: async () => {
-        if (++observed !== check) return;
-        await chmod(path.join(repo, "candidate.txt"), 0o755);
-        if (kind !== "source-only") await writeFile(target, "changed immutable evidence");
-        throw Object.assign(new Error(message), {code: "ORACLE_INPUT_DRIFT"});
-      }}), error => kind === "source-only" ? error.code === "ORACLE_INPUT_DRIFT" && error.message === message : /native validation output|supplied evidence integrity/.test(error.message));
+    const message = `Original producer movement at check ${check}`, args = kind === "inherited-native" ? [] : ["--validation", reference];
+    // Injection runs in its own process: parallel fixtures must never observe
+    // another fixture's cwd, PATH or conservative validation environment.
+    const injection = `import assert from 'node:assert/strict';
+      import {chmod,writeFile} from 'node:fs/promises';
+      import {runReviewAttempt} from ${JSON.stringify(new URL("../scripts/oracle-review.mjs", import.meta.url).href)};
+      let observed=0;
+      await assert.rejects(runReviewAttempt(${JSON.stringify(args)}, {verifyProducer:async()=>{
+        if(++observed!==${check})return;
+        await chmod(${JSON.stringify(path.join(repo, "candidate.txt"))},0o755);
+        if(${JSON.stringify(kind)}!=='source-only')await writeFile(${JSON.stringify(target)},'changed immutable evidence');
+        throw Object.assign(new Error(${JSON.stringify(message)}),{code:'ORACLE_INPUT_DRIFT'});
+      }}),error=>${JSON.stringify(kind)}==='source-only'?error.code==='ORACLE_INPUT_DRIFT'&&error.message===${JSON.stringify(message)}:/native validation output|supplied evidence integrity/.test(error.message));`;
+    await execute(process.execPath, ["--input-type=module", "-e", injection], {cwd: repo, env: {...process.env, ...sameEnvironment}});
       const active = JSON.parse(await readFile(path.join(repo, ".git/oracle/active-review.json"))), run = path.join(repo, ".git/oracle/runs", active.id);
       const outcome = JSON.parse(await readFile(path.join(run, "outcome.json"))); assert.equal(outcome.outcome, "ERROR"); assert.equal(outcome.reviewer_invoked, false);
       if (kind === "source-only") await assert.rejects(readFile(path.join(run, "integrity-failure.json")), {code: "ENOENT"});
@@ -680,9 +684,6 @@ test("first and second producer rechecks preserve original movement alongside in
       }
       await assert.rejects(readFile(path.join(repo, ".git/oracle/approval.json")), {code: "ENOENT"});
       await assert.rejects(readFile(path.join(repo, ".git/oracle/shipment-validated.json")), {code: "ENOENT"});
-    } finally {
-      process.chdir(previousCwd); for (const name of Object.keys(process.env)) if (!(name in previousEnv)) delete process.env[name]; Object.assign(process.env, previousEnv);
-    }
   });
 });
 
@@ -2122,6 +2123,9 @@ process.exit(result.status ?? 1);
   assert.match(drifted.selection.reason, /Governing authority changed/); assert.equal(drifted.historyCalls, "");
 
   await writeFile(authority, authorityBytes);
+  assert.equal((await plan()).selection.action, "VALIDATE", "Established criteria invalidation requires a current independent decision");
+  await command(repo, ["review"], env);
+  const renewedCheckpoint = await readValidatedCheckpoint(repo);
   const matching = await plan();
   assert.equal(matching.selection.action, "DELIVER"); assert.equal(matching.historyCalls, "");
   assert.ok(matching.elapsed_ms < 1000, `Recorded shipment selection exceeded one second: ${matching.elapsed_ms}ms`);
@@ -2141,6 +2145,6 @@ process.exit(result.status ?? 1);
   await writeFile(authority, authorityBytes);
   assert.equal((await plan()).selection.action, "DELIVER");
   assert.deepEqual(await readFile(archive), archiveBytes);
-  assert.deepEqual((await readValidatedCheckpoint(repo)).record, originalCheckpoint.record);
+  assert.deepEqual((await readValidatedCheckpoint(repo)).record, renewedCheckpoint.record);
 });
 });

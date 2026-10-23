@@ -103,6 +103,17 @@ test("same-CL preparation consumes sealed validation without repeating deep admi
   assert.equal(repeated.prepared_record, first.prepared_record); assert.equal(f.admissions(), 1);
 });
 
+test("legacy complete approval imports its validation seal once and repeated GitHub preparation reuses its attestation", async t => {
+  const f = await fixture(t);
+  await recordPublicationDecision({root: f.root, sourceCommit: f.source, sourceTree: f.tree, status: "APPROVED", receipt: "a".repeat(64)});
+  await f.git("remote", "set-url", "--push", "origin", "https://github.com/synthetic-owner/synthetic-repository.git");
+  let exports = 0;
+  const attest = async () => {exports++; return {source_commit: f.source, source_tree: f.tree, envelope_sha256: "c".repeat(64), blob_sha: "d".repeat(40), status_context: "my-crm/native-validation"};};
+  const first = await preparePublication({root: f.root, admit: f.admit, attest});
+  const repeated = await preparePublication({root: f.root, admit: async () => {throw new Error("Legacy proof was audited twice");}, attest: async () => {throw new Error("Completed attestation was exported twice");}});
+  assert.equal(repeated.prepared_record, first.prepared_record); assert.equal(f.admissions(), 1); assert.equal(exports, 1);
+});
+
 test("unrelated candidate decisions and proposal changes preserve fixed-source admission; changed markers fail closed", async t => {
   const f = await fixture(t), prepared = await preparePublication({root: f.root, admit: f.admit});
   await writeFile(path.join(f.root, "source.txt"), "synthetic later author\n"); await f.git("add", "."); await f.git("commit", "-m", "Synthetic unrelated candidate");
