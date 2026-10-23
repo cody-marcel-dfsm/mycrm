@@ -57,6 +57,29 @@ export async function executableBinding(program, environment = process.env, cwd 
 
 export async function readValidationProofs({root, directory, validation, checkCurrentExecutable = true}) {
   const proofs = [];
+  // One operation owns these snapshots. Never retain mutable current input maps
+  // between phases: each audit samples afresh, then checks every sampled identity
+  // again before returning any current applicability decision.
+  const environment = {...process.env};
+  const inputs = new Map(), executables = new Map(), indexes = new Map(), originals = new Map(), metadataSets = new Map(), metadataHashes = new WeakMap();
+  const inspectInput = async name => {
+    const metadata = (await fileMetadata(root, [name]))[name];
+    return {metadata, sha256: metadata.type === "regular" ? contentHash(await readFile(metadata.custody.resolved_path)) : null};
+  };
+  const memo = (cache, key, operation) => {
+    if (!cache.has(key)) cache.set(key, operation());
+    return cache.get(key);
+  };
+  const metadataFor = names => memo(metadataSets, JSON.stringify([...names].sort()), async () => Object.fromEntries(await Promise.all(names.map(async name => [name, (await memo(inputs, name, () => inspectInput(name))).metadata]))));
+  const metadataHash = metadata => {
+    if (!metadataHashes.has(metadata)) metadataHashes.set(metadata, bindingHash(metadata));
+    return metadataHashes.get(metadata);
+  };
+  const executableFor = (program, cwd) => memo(executables, JSON.stringify([program, cwd]), () => executableBinding(program, environment, cwd));
+  const inspectIndex = async name => (await execute("git", ["ls-files", "--stage", "--", name], {cwd: root})).stdout.trim();
+  const indexFor = name => memo(indexes, name, () => inspectIndex(name));
+  const membership = async () => (await execute("git", ["ls-files", "--cached", "--stage", "--others", "--exclude-standard", "-z"], {cwd: root, maxBuffer: 16 * 1024 * 1024})).stdout;
+  const initialMembership = checkCurrentExecutable && validation.length ? await membership() : null;
   const canonicalDirectory = await metadataDirectory(path.dirname(directory), directory, {create: false});
   for (const evidence of validation) {
     if (evidence.kind !== "file") continue;
@@ -66,38 +89,65 @@ export async function readValidationProofs({root, directory, validation, checkCu
     const filename = recordCustody.resolved_path;
     if (path.dirname(filename) !== path.join(canonicalDirectory, "validations")) continue; // Legacy evidence remains readable.
     if (evidence.custody && bindingHash(evidence.custody) !== bindingHash(recordCustody)) throw new Error("Oracle native validation record custody changed during review");
-    const bytes = await readMetadataFile(filename, {}, {root: path.dirname(directory)});
-    const record = JSON.parse(bytes);
-    if (contentHash(bytes) !== evidence.sha256 || record.schema !== "my-crm.oracle-validation/v1" ||
-        record.record_sha256 !== validationDigest(record) || path.basename(filename) !== `${record.record_sha256}.json` ||
-        record.provenance !== "launcher-owned-command-execution" || !Array.isArray(record.command) || !record.command.length ||
-        !record.before?.files || (record.after !== null && !record.after?.files) || !["PASSED", "FAILED", "INPUT_DRIFT"].includes(record.outcome) || typeof record.output_sha256 !== "string") throw new Error("Oracle native validation record is malformed or changed");
-    const output = lexicalPath(root, record.output_file);
-    if (!output.startsWith(`${path.join(canonicalDirectory, "runs")}${path.sep}`)) throw new Error(`Oracle native validation output is missing or changed: ${output}`);
-    const outputCustody = await pathCustody(root, output, {scopeRoot: path.join(canonicalDirectory, "runs"), allowFinalLink: false});
-    if (record.output_custody && bindingHash(record.output_custody) !== bindingHash(outputCustody) || contentHash(await readMetadataFile(outputCustody.resolved_path, {}, {root: path.dirname(directory)})) !== record.output_sha256) throw new Error(`Oracle native validation output is missing or changed, including transitive custody: ${output}`);
-    const executable = checkCurrentExecutable ? await executableBinding(record.command[0], process.env, record.execution_cwd ?? root) : record.executable;
+    const original = await memo(originals, bindingHash({filename, sha256: evidence.sha256, custody: recordCustody}), async () => {
+      const bytes = await readMetadataFile(filename, {}, {root: path.dirname(directory)});
+      const record = JSON.parse(bytes);
+      if (contentHash(bytes) !== evidence.sha256 || record.schema !== "my-crm.oracle-validation/v1" ||
+          record.record_sha256 !== validationDigest(record) || path.basename(filename) !== `${record.record_sha256}.json` ||
+          record.provenance !== "launcher-owned-command-execution" || !Array.isArray(record.command) || !record.command.length ||
+          !record.before?.files || (record.after !== null && !record.after?.files) || !["PASSED", "FAILED", "INPUT_DRIFT"].includes(record.outcome) || typeof record.output_sha256 !== "string") throw new Error("Oracle native validation record is malformed or changed");
+      const output = lexicalPath(root, record.output_file);
+      if (!output.startsWith(`${path.join(canonicalDirectory, "runs")}${path.sep}`)) throw new Error(`Oracle native validation output is missing or changed: ${output}`);
+      const outputCustody = await pathCustody(root, output, {scopeRoot: path.join(canonicalDirectory, "runs"), allowFinalLink: false});
+      if (record.output_custody && bindingHash(record.output_custody) !== bindingHash(outputCustody) || contentHash(await readMetadataFile(outputCustody.resolved_path, {}, {root: path.dirname(directory)})) !== record.output_sha256) throw new Error(`Oracle native validation output is missing or changed, including transitive custody: ${output}`);
+      const executionIntact = record.outcome === "PASSED" && record.exit_code === 0 && !record.signal &&
+        bindingHash(record.before) === bindingHash(record.after) && bindingHash(record.executable) === bindingHash(record.after_executable);
+      return {record, requested, recordCustody, evidenceHash: evidence.sha256, output, outputCustody, outputHash: record.output_sha256,
+        executionIntact, metadataHash: record.before.file_metadata ? bindingHash(record.before.file_metadata) : null, executableHash: bindingHash(record.executable)};
+    });
+    const {record, outputCustody, executionIntact} = original;
+    const executable = checkCurrentExecutable ? await executableFor(record.command[0], record.execution_cwd ?? root) : record.executable;
     const metadataReasons = [];
     let currentProvenance = null;
     if (checkCurrentExecutable) {
-      const metadata = await fileMetadata(root, Object.keys(record.before.files));
-      const sourceFiles = Object.fromEntries(await Promise.all(Object.entries(metadata).map(async ([name, value]) => [name, value?.type === "regular" ? contentHash(await readFile(value.custody.resolved_path)) : null])));
-      currentProvenance = {executable, environment: environmentHash(process.env, record.environment_inputs ?? []), file_metadata: metadata, source_files: sourceFiles, record_custody: recordCustody, output_custody: outputCustody};
+      const metadata = await metadataFor(Object.keys(record.before.files));
+      const sourceFiles = Object.fromEntries(await Promise.all(Object.keys(metadata).map(async name => [name, (await inputs.get(name)).sha256])));
+      currentProvenance = {executable, environment: environmentHash(environment, record.environment_inputs ?? []), file_metadata: metadata, source_files: sourceFiles, record_custody: recordCustody, output_custody: outputCustody};
       if (record.file_metadata_policy !== "live-mode-and-type-v1" || !record.before.file_metadata) metadataReasons.push("original witness lacks live file mode/type provenance");
       if (!record.output_custody || Object.values(record.before.file_metadata ?? {}).some((value) => !value?.custody)) metadataReasons.push("original witness lacks complete transitive path custody");
-      else if (bindingHash(await fileMetadata(root, Object.keys(record.before.file_metadata))) !== bindingHash(record.before.file_metadata)) metadataReasons.push("selected source file mode/type changed");
+      else if (metadataHash(await metadataFor(Object.keys(record.before.file_metadata))) !== original.metadataHash) metadataReasons.push("selected source file mode/type changed");
       if (record.before.selected_index) for (const [name, previous] of Object.entries(record.before.selected_index)) {
-        const {stdout} = await execute("git", ["ls-files", "--stage", "--", name], {cwd: root});
-        if (stdout.trim() !== previous) { metadataReasons.push("selected index mode/type or source changed"); break; }
+        if (await indexFor(name) !== previous) { metadataReasons.push("selected index mode/type or source changed"); break; }
       }
       if (!record.execution_cwd || !Object.hasOwn(record.executable, "target_index")) metadataReasons.push("original witness lacks execution cwd or resolved executable index provenance");
     }
-    const eligible = !metadataReasons.length && record.outcome === "PASSED" && record.exit_code === 0 && !record.signal &&
-      bindingHash(record.before) === bindingHash(record.after) && bindingHash(record.executable) === bindingHash(record.after_executable) && bindingHash(executable) === bindingHash(record.executable);
-    const originalEligible = record.outcome === "PASSED" && record.exit_code === 0 && !record.signal && bindingHash(record.before) === bindingHash(record.after) && bindingHash(record.executable) === bindingHash(record.after_executable)
+    const eligible = !metadataReasons.length && executionIntact && bindingHash(executable) === original.executableHash;
+    const originalEligible = executionIntact
       && record.file_metadata_policy === "live-mode-and-type-v1" && Boolean(record.before.file_metadata && record.output_custody && record.execution_cwd && Object.hasOwn(record.executable, "target_index"))
       && Object.values(record.before.file_metadata).every(value => value?.custody);
     proofs.push({evidence: evidence.value, record, eligible, original_eligible: originalEligible, reason: eligible ? null : metadataReasons.join("; ") || "command failed, original inputs drifted, or executable changed", ...(currentProvenance ? {current_provenance: currentProvenance} : {})});
+  }
+  const changed = name => { throw Object.assign(new Error(`Oracle native validation inputs changed during audit: ${name}`), {code: "ORACLE_INPUT_DRIFT"}); };
+  // All I/O remains fresh at the boundary, including private ignored inputs and
+  // transitive aliases. Cached early bytes cannot conceal later source/output
+  // movement. Original records and their historical outcomes stay untouched.
+  if (checkCurrentExecutable) {
+    await Promise.all([...inputs].map(async ([name, initial]) => { if (bindingHash(await initial) !== bindingHash(await inspectInput(name))) changed(name); }));
+    for (const [key, initial] of executables) {
+      const [program, cwd] = JSON.parse(key);
+      if (bindingHash(await initial) !== bindingHash(await executableBinding(program, process.env, cwd))) changed(`executable ${program}`);
+    }
+    for (const [name, initial] of indexes) if (await initial !== await inspectIndex(name)) changed(`index ${name}`);
+    for (const proof of proofs) if (proof.current_provenance.environment !== environmentHash(process.env, proof.record.environment_inputs ?? [])) changed("functional environment");
+    if (initialMembership !== null && initialMembership !== await membership()) changed("Git source membership/index");
+  }
+  for (const pending of originals.values()) {
+    const original = await pending;
+    const owned = original.requested === path.resolve(root) || original.requested.startsWith(`${path.resolve(root)}${path.sep}`);
+    const custody = await pathCustody(root, original.requested, {scopeRoot: owned ? root : null, allowFinalLink: false});
+    if (bindingHash(custody) !== bindingHash(original.recordCustody) || contentHash(await readMetadataFile(custody.resolved_path, {}, {root: path.dirname(directory)})) !== original.evidenceHash) changed("original record custody/content");
+    const outputCustody = await pathCustody(root, original.output, {scopeRoot: path.join(canonicalDirectory, "runs"), allowFinalLink: false});
+    if (bindingHash(outputCustody) !== bindingHash(original.outputCustody) || contentHash(await readMetadataFile(outputCustody.resolved_path, {}, {root: path.dirname(directory)})) !== original.outputHash) changed("original output custody/content");
   }
   return proofs;
 }
