@@ -20,9 +20,9 @@ async function fixture(t) {
   const git = async (...args) => (await execute("git", args, {cwd: root})).stdout.trim();
   await git("init", "-b", "main"); await git("config", "user.name", "Synthetic Maintainer"); await git("config", "user.email", "synthetic@example.invalid"); await git("add", "."); await git("commit", "-m", "Synthetic source");
   const counter = path.join(root, ".git", "actual-command-runs");
-  const code = "const fs=require('node:fs');const name=process.argv[1];const old=fs.existsSync(name)?Number(fs.readFileSync(name)):0;fs.writeFileSync(name,String(old+1));console.log('synthetic passing execution');";
+  const code = "const fs=require('node:fs');const name=process.argv[1];const old=fs.existsSync(name)?Number(fs.readFileSync(name)):0;fs.writeFileSync(name,String(old+1));console.log('synthetic passing execution',process.env.CODEX_THREAD_ID??'no-dispatch-context');";
   const env = {...process.env, CODEX_THREAD_ID: "", CODEX_SELECTED_MODEL: "synthetic-test-model", CODEX_SELECTED_REASONING_EFFORT: "high"};
-  const run = extra => execute(process.execPath, [launcher, "validate", "--input", "candidate.txt", "--", process.execPath, "-e", code, counter], {cwd: root, env: {...env, ...extra}});
+  const run = (extra, declared = []) => execute(process.execPath, [launcher, "validate", "--input", "candidate.txt", ...declared.flatMap(name => ["--environment", name]), "--", process.execPath, "-e", code, counter], {cwd: root, env: {...env, ...extra}});
   return {root, git, counter, run};
 }
 
@@ -36,6 +36,22 @@ test("unchanged required validation accepts its original execution and records a
   assert.equal(coverage.disposition, "REUSED"); assert.equal(coverage.source_commit, await f.git("rev-parse", "HEAD"));
   assert.equal(coverage.changelists[0].tree_sha, await f.git("rev-parse", "HEAD^{tree}"));
   assert.match(coverage.input_sha256, /^[a-f0-9]{64}$/); assert.match(coverage.output_sha256, /^[a-f0-9]{64}$/);
+});
+
+test("new-chat and shell bookkeeping reuse the original required command while explicit functional environment changes invalidate it", async t => {
+  const f = await fixture(t), first = await f.run({CODEX_THREAD_ID: "synthetic-first-chat", SHLVL: "1", PWD: f.root});
+  const filename = first.stdout.match(/ORACLE_VALIDATION_EVIDENCE=@(.+)/)[1], bytes = await readFile(filename), original = JSON.parse(bytes);
+  const next = await f.run({CODEX_THREAD_ID: "synthetic-next-chat", SHLVL: "9", PWD: path.dirname(f.root)});
+  assert.match(next.stdout, /ORACLE_VALIDATION_REUSED=true/); assert.equal(await readFile(f.counter, "utf8"), "1");
+  assert.equal(next.stdout.match(/ORACLE_VALIDATION_EVIDENCE=@(.+)/)[1], filename); assert.deepEqual(await readFile(filename), bytes);
+  assert.match(original.environment_provenance.original_dispatch_sha256, /^[a-f0-9]{64}$/);
+  assert.match(await readFile(original.output_file, "utf8"), /no-dispatch-context/);
+  await f.run({CODEX_THREAD_ID: "synthetic-functional-first"}, ["CODEX_THREAD_ID"]);
+  const changed = await f.run({CODEX_THREAD_ID: "synthetic-functional-next"}, ["CODEX_THREAD_ID"]);
+  assert.doesNotMatch(changed.stdout, /ORACLE_VALIDATION_REUSED=true/); assert.match(changed.stdout, /environment changed/);
+  assert.equal(await readFile(f.counter, "utf8"), "3");
+  const functional = JSON.parse(await readFile(changed.stdout.match(/ORACLE_VALIDATION_EVIDENCE=@(.+)/)[1]));
+  assert.match(await readFile(functional.output_file, "utf8"), /synthetic-functional-next/);
 });
 
 test("changed consumed input, environment and altered original output execute only the invalidated command", async t => {

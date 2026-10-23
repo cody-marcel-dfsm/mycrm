@@ -16,7 +16,7 @@ export function verifySeries(record, base) {
         !round.snapshot?.files || !Array.isArray(round.coverage) || !Array.isArray(round.validations) || !Array.isArray(round.findings)) throw new Error("Oracle review-series round is malformed");
     for (const item of [...round.coverage, ...round.validations]) {
       dependenciesOf(item, round.snapshot, item.path ?? null);
-      if (item.input_sha256 !== (item.binding_kind === "declared-command-inputs-v1" ? commandWitness(round.snapshot, item.dependencies) : item.binding_kind === "execution-inputs-v2" ? executionWitness(round.snapshot, item.dependencies) : witness(round.snapshot, item.dependencies))) throw new Error("Oracle review-series dependency witness is malformed or changed");
+      if (item.input_sha256 !== (item.binding_kind === "declared-command-inputs-v1" ? commandWitness(round.snapshot, item.dependencies, item.execution_environment_sha256) : item.binding_kind === "execution-inputs-v2" ? executionWitness(round.snapshot, item.dependencies, item.execution_environment_sha256) : witness(round.snapshot, item.dependencies))) throw new Error("Oracle review-series dependency witness is malformed or changed");
     }
     if (round.observed_assessment) {
       const observed = round.observed_assessment;
@@ -144,19 +144,19 @@ export async function inheritObservedEvidence({directory, base, requestedEvidenc
   return {evidence, invalidated, cohorts};
 }
 
-function executionContext(snapshot) { const {owner: _authorization, ...context} = snapshot.context; return context; }
-function executionWitness(snapshot, dependencies) {
-  return witness({...snapshot, context: executionContext(snapshot)}, dependencies);
+function executionContext(snapshot, environment) { const {owner: _authorization, ...context} = snapshot.context; return environment ? {...context, environment} : context; }
+function executionWitness(snapshot, dependencies, environment) {
+  return witness({...snapshot, context: executionContext(snapshot, environment)}, dependencies);
 }
-function commandWitness(snapshot, dependencies) {
-  return bindingHash({environment: snapshot.context.environment, files: Object.fromEntries(dependencies.map((name) => [name, snapshot.files[name] ?? null]))});
+function commandWitness(snapshot, dependencies, environment) {
+  return bindingHash({environment: environment ?? snapshot.context.environment, files: Object.fromEntries(dependencies.map((name) => [name, snapshot.files[name] ?? null]))});
 }
 function bindExecution(item, snapshot) {
   dependenciesOf(item, snapshot);
   if (snapshot.scope === "declared-inputs-v2" || item.binding_kind === "declared-command-inputs-v1") {
-    return {...item, binding_kind: "declared-command-inputs-v1", input_sha256: commandWitness(snapshot, item.dependencies)};
+    return {...item, execution_environment_sha256: snapshot.context.environment, binding_kind: "declared-command-inputs-v1", input_sha256: commandWitness(snapshot, item.dependencies)};
   }
-  return {...item, binding_kind: "execution-inputs-v2", input_sha256: executionWitness(snapshot, item.dependencies)};
+  return {...item, execution_environment_sha256: snapshot.context.environment, binding_kind: "execution-inputs-v2", input_sha256: executionWitness(snapshot, item.dependencies)};
 }
 
 function validationScopeReason(proof, snapshot) {
@@ -166,7 +166,8 @@ function validationScopeReason(proof, snapshot) {
   const scoped = declared || original.scope === "declared-inputs-v1";
   if (!declared && original.base_commit !== snapshot.base_commit) return "recorded validation base changed";
   if (!scoped && original.tree !== snapshot.tree) return "recorded full-candidate validation tree changed";
-  const sameContext = declared ? original.context.environment === snapshot.context.environment : bindingHash(executionContext(original)) === bindingHash(executionContext(snapshot));
+  const environment = proof.current_provenance?.environment ?? snapshot.context.environment;
+  const sameContext = declared ? original.context.environment === environment : bindingHash(executionContext(original)) === bindingHash(executionContext(snapshot, environment));
   if (!sameContext) return declared ? "recorded command environment changed" : "recorded conservative validation context changed";
   const paths = scoped ? Object.keys(original.files) : [...new Set([...Object.keys(original.files), ...Object.keys(snapshot.files)])];
   const changed = paths.filter((name) => (original.files[name] ?? null) !== (snapshot.files[name] ?? null));
@@ -238,7 +239,7 @@ export function reviewSnapshot({candidate, inputs, files, fileFacts = null, envi
   return snapshot;
 }
 
-export async function prepareSeries({directory, candidate, inputs, files, fileFacts = null, environment, validationProofs = [], proposalRecord = null, inheritedInvalidations = [], cohortAssessments = null, root = process.cwd()}) {
+export async function prepareSeries({directory, candidate, inputs, files, fileFacts = null, environment, environmentProvenance = null, validationProofs = [], proposalRecord = null, inheritedInvalidations = [], cohortAssessments = null, root = process.cwd()}) {
   const filename = path.join(directory, "series", `${candidate.base}.json`);
   let series;
   try { series = verifySeries(JSON.parse(await readMetadataFile(filename, "utf8", {root: path.dirname(directory)})), candidate.base); }
@@ -274,6 +275,7 @@ export async function prepareSeries({directory, candidate, inputs, files, fileFa
   // Proposal records may change during an in-scope repair. Preserve series
   // continuity and show scope changes explicitly for independent reassessment.
   const snapshot = reviewSnapshot({candidate, inputs, files, fileFacts, environment});
+  if (environmentProvenance) snapshot.environment_provenance_sha256 = environmentProvenance;
   const {paths: observedPaths, established} = await observationSourcePaths({series, withBindingState: true});
   const observedSources = inputs.observed_sources ?? await observedSourceBindings(root, observedPaths, {allowUnavailable: observedPaths.filter((name) => !established.includes(name))});
   const unavailableSources = observedSources.filter((item) => item.availability === "UNAVAILABLE");
@@ -346,7 +348,7 @@ export async function prepareSeries({directory, candidate, inputs, files, fileFa
     const proof = nativeProof?.eligible ? nativeProof : null;
     const witnessFor = item.binding_kind === "declared-command-inputs-v1" ? commandWitness : executionWitness;
     const scopeReason = validationScopeReason(proof, snapshot);
-    const valid = Boolean(evidence && proof) && !scopeReason && witnessFor(origin.snapshot, item.dependencies) === witnessFor(snapshot, item.dependencies);
+    const valid = Boolean(evidence && proof) && !scopeReason && witnessFor(origin.snapshot, item.dependencies, item.execution_environment_sha256) === witnessFor(snapshot, item.dependencies, proof?.current_provenance?.environment);
     if (!valid && !invalidated.some((entry) => entry.kind === "validation" && entry.id === item.id)) invalidated.push({kind: "validation", id: item.id, reason: !evidence ? "hash-bound validation evidence changed or was not supplied" : nativeProof?.reason ?? scopeReason ?? "declared inputs (source/configuration/dependencies), controlling policy, or environment changed"});
     if (valid) eligibleValidation.push(bindExecution(item, snapshot));
   }
@@ -497,7 +499,7 @@ export function assessRound(context, response, validation) {
     const declared = proof.record.before.scope === "declared-inputs-v2";
     const witnessFor = declared ? commandWitness : executionWitness;
     if (declared && bindingHash([...item.dependencies].sort()) !== bindingHash(Object.keys(proof.record.before.files).sort())) throw new Error("Oracle validation requires the complete originally declared command dependency set");
-    if (item.command !== JSON.stringify(proof.record.command) || witnessFor(proof.record.before, item.dependencies) !== witnessFor(snapshot, item.dependencies)) throw new Error("Oracle validation original command, input, dependency, configuration or environment proof does not match current candidate");
+    if (item.command !== JSON.stringify(proof.record.command) || witnessFor(proof.record.before, item.dependencies) !== witnessFor(snapshot, item.dependencies, proof.current_provenance?.environment)) throw new Error("Oracle validation original command, input, dependency, configuration or environment proof does not match current candidate");
     return {...bindExecution(item, proof.record.before), evidence_sha256: evidence.sha256, execution_record_sha256: proof.record.record_sha256};
   });
   for (const id of response.reused_validations) {

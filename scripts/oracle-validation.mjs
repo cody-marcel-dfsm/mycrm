@@ -16,16 +16,19 @@ export async function fileMetadata(root, names) {
   })));
 }
 
-// npm dispatch metadata identifies the wrapper invocation, not the environment
-// in which a captured check executes. Remove it from both the command's actual
-// environment and the comparable reviewer environment. Keep all other values
-// in the fingerprint without persisting their contents.
-export function executionEnvironment(environment = process.env) {
-  return Object.fromEntries(Object.entries(environment).filter(([name]) => name !== "_" && !name.startsWith("npm_lifecycle_")));
+// Dispatch identity is removed from the actual child environment as well as its
+// applicability hash. A command that consumes one of these values declares it
+// explicitly; canonical cwd, executable, runtime and all other config stay bound.
+const dispatchEnvironment = new Set(["CODEX_THREAD_ID", "CODEX_PARENT_THREAD_ID", "CODEX_SESSION_ID", "PWD", "OLDPWD", "SHLVL"]);
+export function executionEnvironment(environment = process.env, declared = []) {
+  return Object.fromEntries(Object.entries(environment).filter(([name]) => name !== "_" && !name.startsWith("npm_lifecycle_") && (!dispatchEnvironment.has(name) || declared.includes(name))));
 }
 
-export function environmentHash(environment = process.env) {
-  return bindingHash({env: executionEnvironment(environment), node: process.version, versions: process.versions, platform: process.platform, architecture: process.arch});
+export function fullEnvironmentHash(environment = process.env) {
+  return bindingHash({env: environment, node: process.version, versions: process.versions, platform: process.platform, architecture: process.arch});
+}
+export function environmentHash(environment = process.env, declared = []) {
+  return fullEnvironmentHash(executionEnvironment(environment, declared));
 }
 
 export async function executableBinding(program, environment = process.env, cwd = process.cwd()) {
@@ -79,7 +82,7 @@ export async function readValidationProofs({root, directory, validation, checkCu
     if (checkCurrentExecutable) {
       const metadata = await fileMetadata(root, Object.keys(record.before.files));
       const sourceFiles = Object.fromEntries(await Promise.all(Object.entries(metadata).map(async ([name, value]) => [name, value?.type === "regular" ? contentHash(await readFile(value.custody.resolved_path)) : null])));
-      currentProvenance = {executable, environment: environmentHash(), file_metadata: metadata, source_files: sourceFiles, record_custody: recordCustody, output_custody: outputCustody};
+      currentProvenance = {executable, environment: environmentHash(process.env, record.environment_inputs ?? []), file_metadata: metadata, source_files: sourceFiles, record_custody: recordCustody, output_custody: outputCustody};
       if (record.file_metadata_policy !== "live-mode-and-type-v1" || !record.before.file_metadata) metadataReasons.push("original witness lacks live file mode/type provenance");
       if (!record.output_custody || Object.values(record.before.file_metadata ?? {}).some((value) => !value?.custody)) metadataReasons.push("original witness lacks complete transitive path custody");
       else if (bindingHash(await fileMetadata(root, Object.keys(record.before.file_metadata))) !== bindingHash(record.before.file_metadata)) metadataReasons.push("selected source file mode/type changed");

@@ -7,6 +7,7 @@ import {prepareSeries, reviewSnapshot, assessRound, saveRound, verifySeries, inh
 import {contentHash} from "../scripts/oracle-inputs.mjs";
 import {cohortPlan, aggregateCohorts} from "../scripts/oracle-parallel.mjs";
 import {bindingHash} from "../scripts/oracle-inputs.mjs";
+import {environmentHash, fullEnvironmentHash} from "../scripts/oracle-validation.mjs";
 
 const coverage = (name, dependencies = [name]) => ({path: name, dependencies, dependency_rationale: "Synthetic complete dependency closure.", assessment: "Synthetic behavior and failure paths checked.", criteria: ["Synthetic acceptance and failure criteria."], evidence: ["Synthetic source inspection."], finding_ids: []});
 const finding = (id = "F-1", extra = {}) => ({id, severity: "high", code: id, message: "Synthetic defect.", path: "a.mjs", reproduction: "Invoke the synthetic failing input.", required_behavior: "Return the expected synthetic output.", affected_paths: ["a.mjs"], acceptance_checks: ["Exercise the synthetic failure."], origin: "initial", missed_finding_reason: null, ...extra});
@@ -24,6 +25,19 @@ async function fixture(t) {
   const record = async (context, value) => saveRound(context, value, assessRound(context, value, options.inputs.validation));
   return {directory, options, inputs, nativeProofs, prepare, record};
 }
+
+test("new-chat bookkeeping preserves source observations and full original environment provenance stays distinct", async t => {
+  const {prepare, record} = await fixture(t);
+  const first = {PATH: "/synthetic/bin", CODEX_THREAD_ID: "synthetic-first", SHLVL: "1"};
+  const next = {...first, CODEX_THREAD_ID: "synthetic-next", SHLVL: "8"};
+  assert.notEqual(fullEnvironmentHash(first), fullEnvironmentHash(next)); assert.equal(environmentHash(first), environmentHash(next));
+  await record(await prepare({environment: environmentHash(first), environmentProvenance: fullEnvironmentHash(first)}), response());
+  const repeated = await prepare({environment: environmentHash(next), environmentProvenance: fullEnvironmentHash(next)});
+  assert.deepEqual(repeated.public.eligible_coverage.map(item => item.path), ["a.mjs", "b.mjs"]);
+  assert.equal(repeated.series.rounds[0].snapshot.environment_provenance_sha256, fullEnvironmentHash(first));
+  const configured = await prepare({environment: environmentHash({...next, NODE_OPTIONS: "--conditions=synthetic-functional"})});
+  assert.equal(configured.public.eligible_coverage.length, 0); assert.match(configured.public.invalidated[0].reason, /environment/);
+});
 
 test("complete first scan consolidates findings and repair review carries only verified unaffected coverage", async (t) => {
   const {prepare, record, options} = await fixture(t);

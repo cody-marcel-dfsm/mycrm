@@ -8,7 +8,7 @@ import {promisify} from "node:util";
 import {selectedSettings} from "./codex-child-model.mjs";
 import {atomicJson, withOracleRun, captureInputs, assertInputsMatch, preparedEvidence, bindingHash, pathCustody, metadataDirectory, readMetadataFile, writeMetadataFile, removeMetadataFile, currentInvocation, assertCurrentInvocation, assertPublishedInvocation, readBoundAuthority, observedSourceBindings, assertEvidenceIntegrity, evidenceBinding} from "./oracle-inputs.mjs";
 import {prepareSeries, reviewSnapshot, assessRound, saveRound, verifySeries, inheritObservedEvidence, observationSourcePaths, reviewSeriesPolicy, reviewSeriesSchemaProperties, seriesFindingSchema} from "./oracle-series.mjs";
-import {environmentHash, executionEnvironment, executableBinding, readValidationProofs, assertValidationProofsMatch, inheritNativeEvidence, validationDigest, fileMetadata} from "./oracle-validation.mjs";
+import {environmentHash, fullEnvironmentHash, executionEnvironment, executableBinding, readValidationProofs, assertValidationProofsMatch, inheritNativeEvidence, validationDigest, fileMetadata} from "./oracle-validation.mjs";
 import {findCommandValidation, recordCommandCoverage, commandArtifactBinding} from "./oracle-command-tracking.mjs";
 import Ajv from "ajv";
 import {recordValidatedCommit, readValidatedCheckpoint, shipmentPlan} from "./shipment-state.mjs";
@@ -361,7 +361,7 @@ async function review(args = [], {run, phase, producer = null, verifyProducer = 
   const series = await phase("series_ms", async () => {
     const facts = await candidateFiles(candidate);
     const validationProofs = await readValidationProofs({root: process.cwd(), directory, validation: inputs.validation});
-    return prepareSeries({directory, candidate, inputs, ...facts, environment: environmentHash(), validationProofs, proposalRecord, inheritedInvalidations: inherited.invalidated, cohortAssessments});
+    return prepareSeries({directory, candidate, inputs, ...facts, environment: environmentHash(), environmentProvenance: fullEnvironmentHash(), validationProofs, proposalRecord, inheritedInvalidations: inherited.invalidated, cohortAssessments});
   });
   const prepared = await phase("preparation_ms", () => preparedEvidence(directory, {inputs, ...reviewerRecord}, async () => ({inputs, ...reviewerRecord, proposal: proposalRecord, staged_files: candidate.files, diff: await git(candidate.commit ? ["diff", "--binary", "--no-ext-diff", candidate.base, candidate.commit] : ["diff", "--cached", "--binary", "--no-ext-diff"]), validation_evidence: validationEvidence, owner_approval_evidence: ownerApprovalEvidence})));
   const deployment = await candidateDeploymentHistory(candidate);
@@ -531,13 +531,17 @@ async function review(args = [], {run, phase, producer = null, verifyProducer = 
 
 async function captureValidation(args, {run, phase}) {
   const separator = args.indexOf("--");
-  if (separator < 0 || !args[separator + 1]) throw new Error("Usage: validate [--input <project-file>]... [--owner-approval <evidence>] -- <executable> [arguments]");
-  const evidenceArgs = [], selected = [];
+  if (separator < 0 || !args[separator + 1]) throw new Error("Usage: validate [--input <project-file>]... [--environment <functional-variable>]... [--owner-approval <evidence>] -- <executable> [arguments]");
+  const evidenceArgs = [], selected = [], environmentInputs = [];
   for (let index = 0; index < separator; index++) {
     if (args[index] === "--input") {
       const value = args[++index];
       if (!value || value.startsWith("--")) throw new Error("--input requires an exact project file path");
       selected.push(value);
+    } else if (args[index] === "--environment") {
+      const value = args[++index];
+      if (!/^[A-Za-z_][A-Za-z0-9_]*$/.test(value ?? "")) throw new Error("--environment requires an exact environment variable name");
+      environmentInputs.push(value);
     } else evidenceArgs.push(args[index]);
   }
   const options = reviewArguments(evidenceArgs);
@@ -575,16 +579,18 @@ async function captureValidation(args, {run, phase}) {
       let proposal = null;
       try { proposal = sha256(await readMetadataFile(await proposalPath())); } catch (error) { if (error.code !== "ENOENT") throw error; }
       reviewProvenance.push({base_commit: base, branch: await git(["branch", "--show-current"]), inputs, proposal_file_sha256: proposal});
-      return {tree: null, scope: "declared-inputs-v2", files, context: {environment: environmentHash()}, selected_index, selected_paths: paths, file_metadata: await fileMetadata(root, paths)};
+      return {tree: null, scope: "declared-inputs-v2", files, context: {environment: environmentHash(process.env, environmentInputs)}, environment_inputs: [...new Set(environmentInputs)].sort(), selected_index, selected_paths: paths, file_metadata: await fileMetadata(root, paths)};
     }
     const candidate = await assertExactStagedCandidate();
     const inputs = await captureInputs({root: process.cwd(), base: candidate.base, tree: candidate.tree, ownerApprovalEvidence: options.ownerApprovalEvidence, complete: true});
-    const snapshot = reviewSnapshot({candidate, inputs, ...await candidateFiles(candidate), environment: environmentHash()});
-    return {...snapshot, file_metadata: await fileMetadata(process.cwd(), Object.keys(snapshot.files))};
+    const snapshot = reviewSnapshot({candidate, inputs, ...await candidateFiles(candidate), environment: environmentHash(process.env, environmentInputs)});
+    return {...snapshot, environment_inputs: [...new Set(environmentInputs)].sort(), file_metadata: await fileMetadata(process.cwd(), Object.keys(snapshot.files))};
   };
   const before = await phase("snapshot_ms", capture);
   const executionCwd = await realpath(process.cwd());
-  const executable = await executableBinding(command[0], executionEnvironment(), executionCwd);
+  const childEnvironment = executionEnvironment(process.env, environmentInputs);
+  const dispatchEnvironmentHash = fullEnvironmentHash();
+  const executable = await executableBinding(command[0], childEnvironment, executionCwd);
   const directory = await oracleDirectory();
   const existing = await phase("command_coverage_ms", () => findCommandValidation({root: executionCwd, directory, command, before, executable}));
   if (existing.proof) {
@@ -602,16 +608,17 @@ async function captureValidation(args, {run, phase}) {
   const controller = new AbortController();
   const cancel = () => controller.abort();
   process.once("SIGINT", cancel); process.once("SIGTERM", cancel);
-  try { result = await phase("validation_ms", () => execFileAsync(command[0], command.slice(1), {cwd: executionCwd, env: executionEnvironment(), encoding: "utf8", maxBuffer: 64 * 1024 * 1024, signal: controller.signal})); }
+  try { result = await phase("validation_ms", () => execFileAsync(command[0], command.slice(1), {cwd: executionCwd, env: childEnvironment, encoding: "utf8", maxBuffer: 64 * 1024 * 1024, signal: controller.signal})); }
   catch (error) { failure = error; result = {stdout: error.stdout ?? "", stderr: error.stderr ?? ""}; }
   finally { process.removeListener("SIGINT", cancel); process.removeListener("SIGTERM", cancel); }
   const outputFile = path.join(run, "validation.output.log");
   const output = `${result.stdout}\n--- stderr ---\n${result.stderr}`;
   await writeMetadataFile(outputFile, output, {mode: 0o600});
   let after = null, afterExecutable = null, driftError = null;
-  try { after = await capture(); afterExecutable = await executableBinding(command[0], executionEnvironment(), executionCwd); } catch (error) { driftError = error.message; }
+  try { after = await capture(); afterExecutable = await executableBinding(command[0], executionEnvironment(process.env, environmentInputs), executionCwd); } catch (error) { driftError = error.message; }
   const unchanged = after && bindingHash(before) === bindingHash(after) && bindingHash(executable) === bindingHash(afterExecutable);
   const record = {schema: "my-crm.oracle-validation/v1", provenance: "launcher-owned-command-execution", command, execution_cwd: executionCwd,
+    environment_inputs: [...new Set(environmentInputs)].sort(), environment_provenance: {original_dispatch_sha256: dispatchEnvironmentHash, executed_sha256: fullEnvironmentHash(childEnvironment), applicability: "dispatch-identity-excluded-with-explicit-functional-inputs"},
     ...(selected.length ? {review_provenance: {before: reviewProvenance[0] ?? null, after: reviewProvenance[1] ?? null}} : {}),
     file_metadata_policy: "live-mode-and-type-v1",
     started_at: startedAt, finished_at: new Date().toISOString(), before, after, executable, after_executable: afterExecutable,
