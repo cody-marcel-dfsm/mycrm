@@ -105,14 +105,14 @@ serializedReleaseTest("same-version changed My CRM bytes fail closed", async (co
 
 serializedReleaseTest("protected installation admission precedes every native mutation", async () => {
   const harness = nativeHarness();
-  await assert.rejects(installReviewed({runCommand: harness.runCommand, admit: async () => { throw new Error("Synthetic exact deployment authority missing"); }}), /exact deployment authority missing/);
+  await assert.rejects(installReviewed({plan: async () => ({action: "DELIVER"}), runCommand: harness.runCommand, admit: async () => { throw new Error("Synthetic exact deployment authority missing"); }}), /exact deployment authority missing/);
   assert.deepEqual(harness.calls, []);
 });
 
 serializedReleaseTest("fresh public checkout installs without private maintainer review metadata", async (context) => {
   const root = await realpath(await mkdtemp(path.join(os.tmpdir(), "my-crm-public-checkout-")));
   context.after(() => rm(root, {recursive: true, force: true}));
-  for (const name of ["package.json", "package-lock.json", "plugins", "clients", "scripts", "src", "examples", "config", "README.md", "LICENSE", "NOTICE"]) await cp(path.join(repositoryRoot, name), path.join(root, name), {recursive: true});
+  for (const name of ["package.json", "package-lock.json", "node_modules", "plugins", "clients", "scripts", "src", "examples", "config", "README.md", "LICENSE", "NOTICE"]) await cp(path.join(repositoryRoot, name), path.join(root, name), {recursive: true});
   await assert.rejects(access(path.join(root, ".git/oracle")), {code: "ENOENT"});
   const publicHelper = await import(pathToFileURL(path.join(root, "scripts/codex-local-install.mjs")).href);
   const directory = path.join(root, "dist/my-crm"), harness = nativeHarness({root, directory});
@@ -125,8 +125,8 @@ serializedReleaseTest("fresh public checkout installs without private maintainer
 async function reviewedCheckout(context) {
   const root = await realpath(await mkdtemp(path.join(os.tmpdir(), "my-crm-reviewed-checkout-")));
   context.after(() => rm(root, {recursive: true, force: true}));
-  for (const name of ["package.json", "package-lock.json", "plugins", "clients", "scripts", "src", "examples", "config", "README.md", "LICENSE", "NOTICE"]) await cp(path.join(repositoryRoot, name), path.join(root, name), {recursive: true});
-  await writeFile(path.join(root, ".gitignore"), "dist/\nVault/\n");
+  for (const name of ["package.json", "package-lock.json", "node_modules", "plugins", "clients", "scripts", "src", "examples", "config", "README.md", "LICENSE", "NOTICE"]) await cp(path.join(repositoryRoot, name), path.join(root, name), {recursive: true});
+  await writeFile(path.join(root, ".gitignore"), "dist/\nVault/\nnode_modules/\n");
   const execute = promisify(execFile), git = async (...args) => (await execute("git", args, {cwd: root})).stdout.trim();
   await git("init", "-b", "main"); await git("config", "user.name", "Synthetic Maintainer"); await git("config", "user.email", "synthetic@example.invalid");
   await git("add", "."); await git("commit", "-qm", "Synthetic published package"); await git("update-ref", "refs/remotes/origin/main", await git("rev-parse", "HEAD"));

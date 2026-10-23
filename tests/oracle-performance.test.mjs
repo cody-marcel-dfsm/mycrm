@@ -103,7 +103,7 @@ if(!proposal && process.env.ORACLE_DELAY) setTimeout(emit,Number(process.env.ORA
 `);
   await chmod(fake, 0o700);
   const git = async (...args) => (await execute("git", args, {cwd: repo})).stdout.trim();
-  await git("init", "-q"); await git("add", ".");
+  await git("init", "-q", "-b", "main"); await git("add", ".");
   await git("-c", "user.name=Synthetic", "-c", "user.email=synthetic@example.invalid", "commit", "-qm", "fixture");
   await git("update-ref", "refs/remotes/origin/main", await git("rev-parse", "HEAD"));
   const env = {PATH: `${bin}${path.delimiter}${process.env.PATH}`};
