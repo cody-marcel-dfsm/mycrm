@@ -8,6 +8,8 @@ import {contentHash} from "../scripts/oracle-inputs.mjs";
 import {cohortPlan, aggregateCohorts} from "../scripts/oracle-parallel.mjs";
 import {bindingHash} from "../scripts/oracle-inputs.mjs";
 import {environmentHash, fullEnvironmentHash, executionEnvironment} from "../scripts/oracle-validation.mjs";
+import {prepareSourcePacket} from "../scripts/oracle-source-packet.mjs";
+import {observedSourceBindings, assertInputsMatch} from "../scripts/oracle-inputs.mjs";
 
 const coverage = (name, dependencies = [name]) => ({path: name, dependencies, dependency_rationale: "Synthetic complete dependency closure.", assessment: "Synthetic behavior and failure paths checked.", criteria: ["Synthetic acceptance and failure criteria."], evidence: ["Synthetic source inspection."], finding_ids: []});
 const finding = (id = "F-1", extra = {}) => ({id, severity: "high", code: id, message: "Synthetic defect.", path: "a.mjs", reproduction: "Invoke the synthetic failing input.", required_behavior: "Return the expected synthetic output.", affected_paths: ["a.mjs"], acceptance_checks: ["Exercise the synthetic failure."], origin: "initial", missed_finding_reason: null, ...extra});
@@ -25,6 +27,36 @@ async function fixture(t) {
   const record = async (context, value) => saveRound(context, value, assessRound(context, value, options.inputs.validation));
   return {directory, options, inputs, nativeProofs, prepare, record};
 }
+
+test("completed native child reuse candidates retain exact policy dependency and unfinished-path rejection reasons", async t => {
+  const {prepare, options} = await fixture(t), policy = "a".repeat(64), version = "b".repeat(64);
+  options.inputs = {...options.inputs, reviewer_policy_sha256: policy, reviewer_policy_version: version};
+  const origin = await prepare(), reference = {kind: "file", value: "@native-child.json", sha256: "c".repeat(64)};
+  await saveRound(origin, null, null, {error: {message: "Synthetic aggregate drift"}, cohortReports: [reference]});
+  const observation = {id: "native-child", observed_tree: options.candidate.tree, response_evidence: reference, native_manifest_sha256: "d".repeat(64),
+    reported_review_status: "COMPLETE", reported_verdict: "REJECTED", execution_status: "ERROR", findings: [], unreviewed: [], coverage: [],
+    reported_coverage: [coverage("a.mjs"), coverage("b.mjs", ["b.mjs", "test.mjs"])],
+    reuse_completion: {candidate: true, reviewer_policy_sha256: policy, reviewer_policy_version: version, reason: "Synthetic verified complete native child"}};
+  const current = await prepare({cohortAssessments: [observation]});
+  assert.deepEqual(current.public.eligible_coverage.map(item => item.path), ["a.mjs", "b.mjs"]);
+  assert.throws(() => assessRound(current, response({coverage: []}), []), /lacks coverage/);
+  assert.doesNotThrow(() => assessRound(current, response({coverage: [], reused_coverage: ["a.mjs", "b.mjs"]}), []));
+  const policyChanged = await prepare({inputs: {...options.inputs, reviewer_policy_sha256: "f".repeat(64)}, cohortAssessments: [observation]});
+  assert.equal(policyChanged.public.eligible_coverage.length, 2); assert.equal(policyChanged.public.eligible_coverage[0].policy_applicability.original_sha256, policy);
+  assert.equal(policyChanged.public.eligible_coverage[0].policy_applicability.status, "FRESH_INDEPENDENT_CURRENT_CRITERIA_VERIFICATION_REQUIRED");
+  const changed = await prepare({files: {...options.files, "test.mjs": "changed"}, cohortAssessments: [observation]});
+  assert.deepEqual(changed.public.eligible_coverage.map(item => item.path), ["a.mjs"]); assert.ok(changed.public.invalidated.some(item => item.id === "b.mjs" && item.changed_dependencies.includes("test.mjs")));
+  const context = await prepare({environment: "changed-environment", cohortAssessments: [observation]});
+  assert.equal(context.public.eligible_coverage.length, 0); assert.ok(context.public.invalidated.some(item => item.changed_context?.includes("environment")));
+  for (const reason of ["Original effective policy or trusted role identity is unknown", "Independent child assessment is unfinished or its process failed"]) {
+    const rejected = await prepare({cohortAssessments: [{...observation, reuse_completion: {...observation.reuse_completion, candidate: false, reason}}]});
+    assert.equal(rejected.public.eligible_coverage.length, 0); assert.ok(rejected.public.invalidated.some(item => item.reason === reason));
+  }
+  const unknown = await prepare({cohortAssessments: [{...observation, reuse_completion: {...observation.reuse_completion, reviewer_policy_sha256: null}}]});
+  assert.equal(unknown.public.eligible_coverage.length, 0);
+  const unfinished = await prepare({cohortAssessments: [observation, {...observation, id: "newer-child", reported_coverage: [], unreviewed: ["a.mjs"], reuse_completion: {candidate: false, reason: "Unfinished child"}}]});
+  assert.deepEqual(unfinished.public.eligible_coverage.map(item => item.path), ["b.mjs"]); assert.ok(unfinished.public.invalidated.some(item => item.id === "a.mjs" && /unfinished/.test(item.reason)));
+});
 
 test("new-chat bookkeeping preserves source observations and full original environment provenance stays distinct", async t => {
   const {prepare, record} = await fixture(t);
@@ -298,6 +330,38 @@ test("retained filename-bearing diagnostics remain criteria while typed current/
   const fresh = response({coverage: current.public.required_paths.map(name => coverage(name)), resolutions: [{id: "EXPLICIT-MISSING", status: "RESOLVED", evidence: "Independent absence and caller assessment."}]});
   assert.throws(() => assessRound(current, {...fresh, coverage: fresh.coverage.filter(item => item.path !== missing)}, inputs.validation), /lacks coverage/);
   assert.doesNotThrow(() => assessRound(current, fresh, inputs.validation));
+});
+
+test("legacy own null source keys retain ignored whitespace absence obligations without finding or coverage provenance", async t => {
+  const {prepare, options} = await fixture(t), root = path.join(options.directory, "source"); await mkdir(root);
+  const name = "ignored directory/absent-helper.mjs", diagnostics = [
+    "Current governing-input reconciliation: Vault/docs/design.md advanced; fresh preparation must assess its delta.",
+    "Exact-candidate required-command composition: both supplied manifests bind earlier commits / trees.",
+    "Execution coverage for the changed audit in tests/audit.test.mjs against scripts/audit.mjs remains unfinished."
+  ];
+  const attempted = await prepare({root, files: {...options.files, [name]: null}});
+  delete attempted.snapshot.source_paths;
+  Object.assign(attempted.snapshot.files, Object.fromEntries(diagnostics.map(value => [value, null])));
+  attempted.snapshot.observed_source_paths = [name, ...diagnostics];
+  const raw = response({review_status: "INCOMPLETE", verdict: null, coverage: [], validations: [], findings: [], unreviewed: [name, ...diagnostics]});
+  await saveRound(attempted, null, null, {error: {message: "Synthetic legacy interrupted absence assessment."}, observed: {response: raw, assessed: assessRound(attempted, raw, []), response_evidence: {value: "@synthetic-absence.json", sha256: "synthetic"}}});
+  const current = await prepare({root}), observed = await observationSourcePaths({series: current.series, withBindingState: true});
+  assert.ok(observed.paths.includes(name)); assert.ok(observed.established.includes(name));
+  assert.ok(current.public.required_paths.includes(name)); assert.equal(current.snapshot.files[name], null);
+  for (const diagnostic of diagnostics) { assert.ok(!observed.paths.includes(diagnostic)); assert.ok(!current.public.required_paths.includes(diagnostic)); }
+  const fresh = response({coverage: current.public.required_paths.map(value => coverage(value))});
+  assert.throws(() => assessRound(current, {...fresh, coverage: fresh.coverage.filter(item => item.path !== name)}, []), /lacks coverage/);
+  assert.doesNotThrow(() => assessRound(current, fresh, []));
+  await mkdir(path.join(options.directory, "absence-packet/source-packet"), {recursive: true});
+  const packet = await prepareSourcePacket({directory: path.join(options.directory, "absence-packet"), candidate: options.candidate, inputs: options.inputs,
+    evidence: {review_context: current.public}, cohort: {id: "implementation-consumers", required_paths: [name]}, diff: "",
+    sourceForPath: async (value, revision) => ({state: "ABSENT", locator: {path: value, revision}})});
+  const manifest = JSON.parse(await readFile(packet.reference.path)); assert.equal(manifest.items[0].path, name);
+  assert.ok(manifest.items[0].versions.every(version => version.state === "ABSENT"));
+  const before = await observedSourceBindings(root, [name]);
+  await mkdir(path.join(root, "ignored directory")); await writeFile(path.join(root, name), "export const synthetic = true;\n");
+  const after = await observedSourceBindings(root, [name]);
+  assert.throws(() => assertInputsMatch({observed_sources: before}, {observed_sources: after}), /inputs drifted/);
 });
 
 test("raw finding-only and explicit file scope require fresh absence coverage outside original membership", async (t) => {

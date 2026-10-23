@@ -319,12 +319,20 @@ export async function nativeCohortObservations({root, directory, validation = []
     const nativeBindings = await Promise.all([...new Set([manifestPath, path.join(run, "evidence.json"), path.join(run, "outcome.json"), reviewerPath, ...required])].map(name => bind(`@${name}`)));
     if (old) await assertEvidenceIntegrity(root, old.native_bindings);
     const response = envelope.response;
+    const completeChild = response.review_status === "COMPLETE" && response.unreviewed.length === 0 && outcome.error === null
+      && process.exit_code === 0 && !process.signal && !process.interrupted;
+    const knownPolicy = /^[a-f0-9]{64}$/.test(original.inputs.reviewer_policy_sha256 ?? "")
+      && /^[a-f0-9]{64}$/.test(original.inputs.reviewer_policy_version ?? "") && /^[a-f0-9]{64}$/.test(reviewer.role_instruction_sha256 ?? "");
     const observation = {id: `cohort-${invocation}-${cohort}`, round: original.review_context.round, execution_status: "ERROR", source_verdict: null,
       reported_review_status: response.review_status, reported_verdict: response.verdict, observed_tree: plan.candidate_tree,
       response_evidence: binding, original_response_sha256: bindingHash(response), native_manifest_sha256: manifestBinding.sha256,
       artifact_custody_sha256: custody, native_bindings: nativeBindings, execution: process, custody_intact: true,
       coverage: [], reported_coverage: response.coverage, findings: response.findings, unreviewed: response.unreviewed,
-      applicability: "Verified individual native cohort findings only. Original aggregate ERROR and child status retained; no coverage, passing validation or approval inherited."};
+      reuse_completion: {candidate: completeChild && knownPolicy, reason: !completeChild ? "Independent child assessment is unfinished or its process failed" : !knownPolicy ? "Original effective policy or trusted role identity is unknown" : "Complete independent child observations require exact current dependency/context checks and fresh independent reuse verification",
+        reviewer_policy_sha256: original.inputs.reviewer_policy_sha256 ?? null, reviewer_policy_version: original.inputs.reviewer_policy_version ?? null,
+        trusted_role_sha256: reviewer.role_instruction_sha256 ?? null, reviewer_metadata_sha256: original.reviewer_metadata_sha256,
+        input_binding_sha256: plan.input_binding_sha256, response_file_sha256: binding.sha256},
+      applicability: "Original aggregate ERROR and child status remain unchanged. Intact COMPLETE child observations with known policy may become dependency-compatible candidates for fresh independent reuse verification; no passing validation or approval is inherited."};
     auditState.assessed++; auditState.verified.set(cacheKey, {manifest, manifestBinding, base: original.inputs.base_commit, seriesId: original.review_context.series_id, observation: structuredClone(observation)});
     observations.push(observation);
   }

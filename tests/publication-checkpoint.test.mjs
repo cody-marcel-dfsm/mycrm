@@ -1,7 +1,7 @@
 import assert from "node:assert/strict";
 import {createHash, randomUUID} from "node:crypto";
 import {execFile} from "node:child_process";
-import {chmod, cp, mkdir, mkdtemp, readFile, realpath, rm, writeFile} from "node:fs/promises";
+import {chmod, cp, mkdir, mkdtemp, readFile, realpath, readdir, rm, writeFile} from "node:fs/promises";
 import os from "node:os";
 import path from "node:path";
 import {promisify} from "node:util";
@@ -9,8 +9,11 @@ import test from "node:test";
 import {admitPreparedPush, preparePublication, publishPrepared, readPreparedPublication, recordPublicationDecision} from "../scripts/publication-checkpoint.mjs";
 import {validateRelease} from "../scripts/release-validation.mjs";
 import {bindingHash} from "../scripts/oracle-inputs.mjs";
+import {admitRequiredCI, exportNativeValidation, requiredCommands, gitBlobHash} from "../scripts/validation-transport.mjs";
 
 const execute = promisify(execFile), zeros = "0".repeat(40);
+const successfulCI = f => ({status: "SUCCEEDED", source_commit: f.source, source_tree: f.tree, workflow_path: ".github/workflows/ci.yml", workflow_id: 7,
+  required_job: "test", run_event: "push", head_branch: `codex/validation-ready-${f.source}`, validation_ref: `refs/heads/codex/validation-ready-${f.source}`, run_id: 11, run_attempt: 1, job_id: 13});
 async function fixture(t) {
   const parent = await realpath(await mkdtemp(path.join(os.tmpdir(), "my-crm-publication-")));
   t.after(() => rm(parent, {recursive: true, force: true}));
@@ -111,9 +114,54 @@ test("legacy complete approval imports its validation seal once and repeated Git
   await f.git("remote", "set-url", "--push", "origin", "https://github.com/synthetic-owner/synthetic-repository.git");
   let exports = 0;
   const attest = async () => {exports++; return {source_commit: f.source, source_tree: f.tree, envelope_sha256: "c".repeat(64), blob_sha: "d".repeat(40), status_context: "my-crm/native-validation"};};
-  const first = await preparePublication({root: f.root, admit: f.admit, attest});
-  const repeated = await preparePublication({root: f.root, admit: async () => {throw new Error("Legacy proof was audited twice");}, attest: async () => {throw new Error("Completed attestation was exported twice");}});
+  const first = await preparePublication({root: f.root, admit: f.admit, attest, requiredCI: async () => successfulCI(f)});
+  const repeated = await preparePublication({root: f.root, admit: async () => {throw new Error("Legacy proof was audited twice");}, attest: async () => {throw new Error("Completed attestation was exported twice");}, requiredCI: async () => successfulCI(f)});
   assert.equal(repeated.prepared_record, first.prepared_record); assert.equal(f.admissions(), 1); assert.equal(exports, 1);
+});
+
+test("production preparation orders original attestation before watched source and requires exact existing CI before any descriptor", async t => {
+  const f = await fixture(t), repository = "synthetic-owner/synthetic-repository", events = [], branch = `codex/validation-ready-${f.source}`;
+  await f.git("remote", "set-url", "--push", "origin", `https://github.com/${repository}.git`);
+  const state = {source: false, ready: false, blob: null, statuses: [], run: {id: 11, run_attempt: 1, workflow_id: 7, path: ".github/workflows/ci.yml", event: "push", head_branch: branch, head_sha: f.source,
+    repository: {full_name: repository}, head_repository: {full_name: repository}, status: "queued", conclusion: null}};
+  const api = async (method, endpoint, body) => {
+    if (endpoint === `repos/${repository}`) return {owner: {id: 17}, protected: false};
+    if (endpoint === "user") return {id: 17};
+    if (endpoint === `repos/${repository}/git/commits/${f.source}`) {
+      if (!state.source) throw Object.assign(Error("Synthetic unpublished object"), {status: 404});
+      return {sha: f.source, tree: {sha: f.tree}};
+    }
+    if (endpoint.endsWith("/git/blobs")) {state.blob = Buffer.from(body.content, "base64");return {sha: gitBlobHash(state.blob)};}
+    if (endpoint.endsWith("/git/trees")) return {sha: "d".repeat(40)};
+    if (endpoint.endsWith("/git/commits")) return {sha: "e".repeat(40)};
+    if (endpoint.endsWith("/git/refs")) return {ref: body.ref, object: {sha: body.sha}};
+    if (endpoint.endsWith(`/statuses/${f.source}`)) {events.push("attestation");const result={...body,creator:{id:17}};state.statuses.push(result);return result;}
+    if (endpoint.endsWith("/actions/workflows/ci.yml")) return {id: 7, name: "ci", path: ".github/workflows/ci.yml", state: "active"};
+    if (endpoint.endsWith(`/git/ref/heads/${branch}`)) {if (!state.ready) throw Object.assign(Error("Synthetic ref absent"), {status:404});return {ref:`refs/heads/${branch}`,object:{type:"commit",sha:f.source}};}
+    if (endpoint.includes("/actions/workflows/7/runs?")) return {total_count: state.ready ? 1 : 0, workflow_runs: state.ready ? [state.run] : []};
+    if (endpoint.includes("/actions/runs/11/jobs?")) return {total_count: 1, jobs: [{id:13,run_id:11,run_attempt:1,head_sha:f.source,head_branch:branch,name:"test",status:"completed",conclusion:"success"}]};
+    throw Error(`Unexpected synthetic GitHub shape: ${method} ${endpoint}`);
+  };
+  const checks = requiredCommands.map(command => ({command, coverage: "EXACT_INPUT_EXECUTION", executions: [{record_sha256:"a".repeat(64),command_sha256:bindingHash(command),input_sha256:"b".repeat(64),executable_sha256:"c".repeat(64),environment_sha256:"d".repeat(64),output_sha256:"e".repeat(64),original_environment:{node:"v22.11.0",platform:"darwin",architecture:"arm64"}}]}));
+  const attest = options => exportNativeValidation({...options, api, collect: async () => checks, pushSource: async args => {
+    assert.deepEqual(args,["push","origin",`${f.source}:refs/heads/codex/validation-source-${f.source}`]);events.push("unwatched");await f.git("push",f.remote,args[2]);state.source=true;
+  }});
+  const requiredCI = options => admitRequiredCI({...options, api, pushSource: async args => {
+    assert.equal(state.statuses.length,1);assert.equal(JSON.parse(state.blob).checks.length,3);events.push("watched");await f.git("push",f.remote,args[2]);state.ready=true;
+  }});
+  await assert.rejects(preparePublication({root:f.root,admit:f.admit,attest,requiredCI}), error => error.code === "MYCRM_CI_PENDING");
+  assert.deepEqual(events,["unwatched","attestation","watched"]);
+  const directory=path.join(f.root,".git/oracle/publication-prepared");
+  const files=await readdir(directory);
+  assert.equal(files.filter(name=>/^[a-f0-9]{64}-[a-f0-9]{64}\.json$/.test(name)).length,0);
+  state.run.status="completed";state.run.conclusion="success";
+  const prepared=await preparePublication({root:f.root,admit:f.admit,attest:async()=>{throw Error("Attestation repeated");},requiredCI});
+  const record=(await readPreparedPublication(prepared.prepared_record,{root:f.root})).record;assert.equal(record.required_ci.status,"SUCCEEDED");assert.equal(record.required_ci.source_commit,f.source);
+  assert.deepEqual(events,["unwatched","attestation","watched"]);assert.equal(await f.git("ls-remote",f.remote,"refs/heads/main"),`${f.before}\trefs/heads/main`);
+  const calls=[];await publishPrepared(prepared.prepared_record,{root:f.root,run:async args=>calls.push(args)});assert.deepEqual(calls,[["push","origin",`${f.source}:refs/heads/main`]]);
+  const legacy={...record};delete legacy.required_ci;delete legacy.record_sha256;legacy.record_sha256=bindingHash(legacy);
+  const oldFile=path.join(directory,`${path.basename(prepared.prepared_record).slice(0,64)}-${legacy.record_sha256}.json`);await writeFile(oldFile,JSON.stringify(legacy));
+  await assert.rejects(readPreparedPublication(oldFile,{root:f.root}),/required CI admission/);
 });
 
 test("equivalent later complete approval preserves the original prepared decision and receipt", async t => {

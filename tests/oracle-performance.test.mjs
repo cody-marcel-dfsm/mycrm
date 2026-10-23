@@ -63,6 +63,7 @@ const emit=()=>{
     return;
   }
   const evidence=proposal?null:JSON.parse(fs.readFileSync(path.join(path.dirname(out),'evidence.json')));
+  const recovered=process.env.ORACLE_RECOVERY_MARKER && !fs.existsSync(process.env.ORACLE_RECOVERY_MARKER);
   const response={verdict:process.env.ORACLE_INCOMPLETE?null:'APPROVED',review_status:process.env.ORACLE_INCOMPLETE?'INCOMPLETE':'COMPLETE',api_version_assessment:{impact:'NONE',request_kind:'NOT_REQUIRED',requested_change:null,request_quote:null,request_evidence:null},summary:'Synthetic candidate assessed.',authentication_impact:false,owner_approval_status:'NOT_REQUIRED',warning:null,findings:[],protected_deployment_effects:[],deployment_effect_dispositions:[],unreviewed:process.env.ORACLE_INCOMPLETE?['synthetic remaining scope']:[],reused_coverage:[],reused_validations:[],validations:[],resolutions:[],scope_dispositions:[],synthesis:null,coverage:(evidence?.review_context.required_paths??[]).map(name=>({path:name,dependencies:[name],dependency_rationale:'Synthetic isolated dependency.',assessment:'Synthetic path assessed.',criteria:['Synthetic acceptance criteria.'],evidence:['Synthetic source inspection.'],finding_ids:[]}))};
   if(!proposal && process.env.ORACLE_MISSING_DEPLOYMENT) { response.authentication_impact=true; response.owner_approval_status='MISSING'; response.protected_deployment_effects=[{id:'SYNTHETIC-PERMISSION',category:'PERMISSION_AUTHORITY',description:'Synthetic exact permission authority effect.',affected_paths:[process.env.ORACLE_EFFECT_PATH||'candidate.txt'],authority:null}]; }
   const proof=evidence?.review_context.validation_proofs.find(item=>item.eligible);
@@ -91,8 +92,8 @@ const emit=()=>{
   }
   if(!proposal && process.env.ORACLE_REUSE_COVERAGE) { response.reused_coverage=(evidence.review_context.eligible_coverage??[]).map(item=>item.path); response.coverage=response.coverage.filter(item=>!response.reused_coverage.includes(item.path)); }
   if(proof && !process.env.ORACLE_OMIT_VALIDATION) response.validations=[{id:'native-check',evidence:proof.evidence,command:JSON.stringify(nativeRecord.command),dependencies:evidence.staged_files,dependency_rationale:'Synthetic complete candidate closure.',assessment:'Native passing execution and output checked.'}];
-  if(!proposal && process.env.ORACLE_SOURCE_FINDING) { response.verdict='REJECTED'; response.findings=[{id:'SYNTHETIC-EXIT-1',severity:'medium',code:'SYNTHETIC_EXIT_FINDING',message:'Synthetic source finding.',path:'candidate.txt',reproduction:'Synthetic input.',required_behavior:'Synthetic required behavior.',affected_paths:['candidate.txt'],acceptance_checks:['Synthetic acceptance.'],origin:'initial',missed_finding_reason:null}]; }
-  if(!proposal && process.env.ORACLE_ABSENT_DEPENDENCY && response.coverage.length) response.coverage[0].dependencies.push('absent-source.mjs');
+  if(!proposal && process.env.ORACLE_SOURCE_FINDING && !recovered) { response.verdict='REJECTED'; response.findings=[{id:'SYNTHETIC-EXIT-1',severity:'medium',code:'SYNTHETIC_EXIT_FINDING',message:'Synthetic source finding.',path:'candidate.txt',reproduction:'Synthetic input.',required_behavior:'Synthetic required behavior.',affected_paths:['candidate.txt'],acceptance_checks:['Synthetic acceptance.'],origin:'initial',missed_finding_reason:null}]; }
+  if(!proposal && process.env.ORACLE_ABSENT_DEPENDENCY && !recovered && (!process.env.ORACLE_ABSENT_DEPENDENCY_COHORT || evidence.cohort.id===process.env.ORACLE_ABSENT_DEPENDENCY_COHORT) && response.coverage.length) response.coverage[0].dependencies.push('absent-source.mjs');
   if(!proposal && process.env.ORACLE_EXPLICIT_SELF) for(const item of response.coverage) item.dependencies=['AGENTS.md'];
   if(!proposal && process.env.ORACLE_CONTRADICTORY_FINDING && response.findings.length) response.findings[0].code=evidence.cohort.id;
   if(!proposal && process.env.ORACLE_OBSERVED_PATH) { response.review_status='INCOMPLETE'; response.verdict=null; response.findings[0].path=process.env.ORACLE_OBSERVED_PATH; response.findings[0].affected_paths=[process.env.ORACLE_OBSERVED_PATH]; response.unreviewed=[process.env.ORACLE_OBSERVED_PATH]; }
@@ -460,6 +461,8 @@ test("unsuccessful reviewer completion retains valid output, original process an
     assert.equal(original.execution_status, "ERROR"); assert.equal(original.verdict, null); assert.equal(original.coverage.length, 0);
     assert.equal(original.observed_assessment.response.verdict, "REJECTED");
     assert.equal(original.observed_assessment.findings[0].id, "SYNTHETIC-EXIT-1");
+    const children = await nativeCohortObservations({root: repo, directory: path.join(repo, ".git/oracle"), validation: original.native_cohort_reports});
+    assert.ok(children.every(item => item.reuse_completion.candidate === false && /unfinished|process failed/.test(item.reuse_completion.reason)));
     assert.ok(original.observed_assessment.coverage.length > 0);
     if (failure === "ORACLE_EXIT_AFTER_OUTPUT") assert.deepEqual(original.observed_assessment.execution.cohort_exit_codes.map((item) => item.exit_code), [9, 9, 9]);
     const responseFile = original.observed_assessment.response_evidence.value.slice(1);
@@ -713,6 +716,28 @@ test("deterministic preparation reuses identical content and rejects corrupt cac
   const recoveredA = await preparedEvidence(root, {input: "a"}, prepare);
   const recoveredB = await preparedEvidence(root, {input: "b"}, prepare);
   assert.equal(Number(!recoveredA.reused) + Number(!recoveredB.reused), 1);
+});
+
+test("complete current-policy native child observations survive aggregate ERROR and require fresh independent reuse", async t => {
+  const {repo, root, env, prepare, git} = await fixture(t); await prepare();
+  const marker = path.join(root, "synthetic-recovery-marker"); await writeFile(marker, "unrecovered");
+  const configured = {...env, ORACLE_RECOVERY_MARKER: marker, ORACLE_SOURCE_FINDING: "1", ORACLE_ABSENT_DEPENDENCY: "1", ORACLE_ABSENT_DEPENDENCY_COHORT: "verification-recovery", ORACLE_REUSE_COVERAGE: "1", ORACLE_RESOLVE_OBSERVED: "1", ORACLE_OMIT_VALIDATION: "1"};
+  await mkdir(path.join(repo, "tests")); await writeFile(path.join(repo, "tests/synthetic.mjs"), "export const synthetic = true;\n"); await git("add", "tests/synthetic.mjs");
+  await assert.rejects(command(repo, ["review"], configured), /dependency is absent/);
+  const directory = path.join(repo, ".git/oracle"), seriesFile = path.join(directory, "series", `${await git("rev-parse", "HEAD")}.json`);
+  const failed = JSON.parse(await readFile(seriesFile)).rounds.at(-1), original = JSON.stringify(failed);
+  const observed = await nativeCohortObservations({root: repo, directory, validation: failed.native_cohort_reports});
+  assert.ok(observed.every(item => item.reuse_completion.candidate && item.coverage.length === 0 && item.execution_status === "ERROR" && item.reported_verdict === "REJECTED"));
+  assert.ok(observed.every(item => item.reuse_completion.response_file_sha256 === item.response_evidence.sha256));
+  await rm(marker);
+  await command(repo, ["review"], configured);
+  const series = JSON.parse(await readFile(seriesFile)), latest = series.rounds.at(-1);
+  assert.equal(JSON.stringify(series.rounds[0]), original); assert.equal(latest.verdict, "APPROVED");
+  assert.ok(latest.response.reused_coverage.includes("candidate.txt")); assert.ok(!latest.response.reused_coverage.includes("tests/synthetic.mjs"));
+  const reused = latest.coverage.find(item => item.path === "candidate.txt");
+  assert.equal(reused.origin.aggregate_status, "ERROR"); assert.equal(reused.origin.child_verdict, "REJECTED"); assert.equal(reused.independent_reuse_verification_required, true);
+  assert.ok(latest.invalidated.some(item => item.id === "tests/synthetic.mjs" && /dependency witness/.test(item.reason)));
+  assert.equal(latest.response.resolutions.find(item => item.id === "SYNTHETIC-EXIT-1").status, "RESOLVED");
 });
 
 test("aggregate ERROR retains native cohort findings for independent current dispositions", async t => {

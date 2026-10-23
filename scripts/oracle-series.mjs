@@ -85,6 +85,11 @@ function cohortDiagnostic(value) {
   return /^Cohort [A-Za-z0-9_-]+ (?:omitted required coverage:|has unfinished assessment$|execution failed:|bound inputs changed during assessment$|candidate or plan binding differs$|omitted cross-area integration assessment$|has no formal assessment$|completed without a verdict$)/.test(value);
 }
 
+function semanticSourceDiagnostic(value) {
+  return cohortDiagnostic(value) || /^(?:Current governing-input reconciliation: |Exact-candidate required-command composition: )/.test(value)
+    || /^Execution coverage for the changed audit in .+ against .+ remains unfinished\.$/.test(value);
+}
+
 // Legacy unreviewed strings mix whole filenames with semantic diagnostics.
 // Typed source fields and recorded inventories remain authoritative, including
 // absent/deleted names. A slash inside a sentence never creates source identity.
@@ -103,7 +108,10 @@ export async function observationSourcePaths({directory, base, series = null, wi
   const findings = new Map(), external = new Set(), known = new Set(), names = new Set(), typed = new Set(), inventory = new Set();
   for (const round of series.rounds) {
     for (const name of round.snapshot.external_paths ?? []) external.add(name);
-    for (const [name, hash] of Object.entries(round.snapshot.files)) {known.add(name); if (hash !== null) inventory.add(name);}
+    for (const [name, hash] of Object.entries(round.snapshot.files)) {
+      known.add(name);
+      if (hash !== null || !semanticSourceDiagnostic(name)) inventory.add(name);
+    }
     for (const name of round.snapshot.source_paths ?? []) inventory.add(name);
     for (const item of [...round.coverage ?? [], ...round.validations ?? [], ...round.observed_assessment?.coverage ?? [], ...round.observed_assessment?.validations ?? []]) {
       if (item.path) typed.add(item.path);
@@ -371,6 +379,56 @@ export async function prepareSeries({directory, candidate, inputs, files, fileFa
       eligibleCoverage.push({...item, input_sha256: witness(snapshot, item.dependencies)});
       if (origin !== previous || additiveOwner) recovered.push({path: item.path, from_round: origin.round, original_tree: origin.snapshot.tree, additive_owner_evidence: additiveOwner, policy_provenance: original.policyProof});
     }
+  }
+  // Native child custody and completion are assessed independently of an
+  // aggregate ERROR. Current reuse still requires the next approver's explicit
+  // reused_coverage decision; the original ERROR/REJECTED facts stay intact.
+  const cohortReuse = new Map(), unfinishedCohortPaths = new Set();
+  for (const observation of cohortAssessments) {
+    for (const name of observation.unreviewed) if (Object.hasOwn(snapshot.files, name)) {cohortReuse.delete(name); unfinishedCohortPaths.add(name);}
+    const completion = observation.reuse_completion;
+    const origin = series.rounds.find(round => round.snapshot.tree === observation.observed_tree && round.native_cohort_reports?.some(report =>
+      report.value === observation.response_evidence.value && report.sha256 === observation.response_evidence.sha256));
+    if (!completion?.candidate || !origin || completion.reviewer_policy_sha256 !== origin.snapshot.context.reviewer_policy_sha256
+        || completion.reviewer_policy_version !== origin.snapshot.context.reviewer_policy_version) {
+      invalidated.push({kind: "coverage-source", id: observation.id, reason: !completion?.candidate ? completion?.reason ?? "Native child completion is unavailable" : !origin ? "Native completed child input origin is unavailable" : "Native child policy differs from its recorded original input context"});
+      continue;
+    }
+    for (const reported of observation.reported_coverage ?? []) {
+      let item;
+      try {item = bindItem(reported, origin.snapshot, reported.path);} catch (error) {
+        invalidated.push({kind: "coverage", id: reported.path, reason: `Completed child dependency witness is unavailable: ${error.message}`}); continue;
+      }
+      const original = await comparable(origin), sourceContext = {...original.context};
+      if (sourceContext.owner == null && context.owner != null) sourceContext.owner = context.owner;
+      const changedInputs = changedDependencies(origin.snapshot, snapshot, item.dependencies);
+      const changedContext = [...new Set([...Object.keys(sourceContext), ...Object.keys(context)])].filter(name => bindingHash(sourceContext[name] ?? null) !== bindingHash(context[name] ?? null));
+      const policyApplicability = changedContext.length === 1 && changedContext[0] === "reviewer_policy_sha256"
+        && /^[a-f0-9]{64}$/.test(context.reviewer_policy_sha256 ?? "") && sourceContext.reviewer_policy_version === context.reviewer_policy_version;
+      if (changedInputs.length || changedContext.length && !policyApplicability || observation.unreviewed.includes(item.path)) {
+        invalidated.push({kind: "coverage", id: item.path, origin: observation.id, changed_dependencies: changedInputs, changed_context: changedContext,
+          reason: changedContext.length ? `Completed child review context changed: ${changedContext.join(", ")}` : changedInputs.length ? `Completed child consumed dependencies changed: ${changedInputs.join(", ")}` : "Independent child reported unfinished path assessment"});
+        continue;
+      }
+      cohortReuse.set(item.path, {...item, input_sha256: witness(snapshot, item.dependencies),
+        origin: {kind: "NATIVE_COMPLETED_CHILD", id: observation.id, original_round: origin.round, original_tree: origin.snapshot.tree,
+          aggregate_status: observation.execution_status, child_status: observation.reported_review_status, child_verdict: observation.reported_verdict,
+          response_evidence: observation.response_evidence, native_manifest_sha256: observation.native_manifest_sha256, ...completion},
+        independent_reuse_verification_required: true,
+        ...(policyApplicability ? {policy_applicability: {original_sha256: sourceContext.reviewer_policy_sha256, current_sha256: context.reviewer_policy_sha256,
+          status: "FRESH_INDEPENDENT_CURRENT_CRITERIA_VERIFICATION_REQUIRED"}} : {})});
+      unfinishedCohortPaths.delete(item.path);
+    }
+  }
+  for (const name of unfinishedCohortPaths) {
+    const index = eligibleCoverage.findIndex(item => item.path === name); if (index !== -1) eligibleCoverage.splice(index, 1);
+    invalidated.push({kind: "coverage", id: name, reason: "A newer independent child explicitly reported unfinished path assessment"});
+  }
+  for (const [name, item] of cohortReuse) {
+    const existing = eligibleCoverage.findIndex(entry => entry.path === name);
+    if (existing === -1) eligibleCoverage.push(item); else eligibleCoverage[existing] = item;
+    recovered.push({path: name, from_round: item.origin.original_round, original_tree: item.origin.original_tree,
+      native_child: item.origin.id, independent_reuse_verification_required: true});
   }
   const eligibleValidation = [];
   for (const {item, round: origin} of retainedObservations(series, "validations")) {

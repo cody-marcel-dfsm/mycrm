@@ -245,6 +245,14 @@ function verify(record, filename, directory) {
       || !Array.isArray(record.command_tracking?.changelists) || record.command_tracking.changelists.some(item => !oid.test(item.commit_sha ?? "") || !oid.test(item.tree_sha ?? ""))) {
     throw new Error("Prepared publication proof is malformed, changed or bound to another candidate");
   }
+  if (record.validation_transport && (record.required_ci?.status !== "SUCCEEDED" || record.required_ci.source_commit !== record.source_commit
+      || record.required_ci.source_tree !== record.source_tree || record.required_ci.workflow_path !== ".github/workflows/ci.yml"
+      || record.required_ci.required_job !== "test" || typeof record.required_ci.head_branch !== "string" || !record.required_ci.head_branch
+      || record.required_ci.validation_ref !== `refs/heads/${record.required_ci.head_branch}`
+      || !(record.required_ci.run_event === "pull_request" || record.required_ci.run_event === "push" && ["main", `codex/validation-ready-${record.source_commit}`].includes(record.required_ci.head_branch))
+      || [record.required_ci.workflow_id, record.required_ci.run_id, record.required_ci.run_attempt, record.required_ci.job_id].some(value => !Number.isSafeInteger(value) || value < 1))) {
+    throw new Error("Prepared GitHub publication lacks successful exact-source required CI admission");
+  }
   return record;
 }
 
@@ -256,7 +264,7 @@ export async function readPreparedPublication(filename, {root = process.cwd()} =
   return {record, filename: absolute, sha256: hash(bytes)};
 }
 
-export async function preparePublication({root = process.cwd(), reference = "HEAD", remote = "origin", target = "refs/heads/main", remoteBefore, admit, attest} = {}) {
+export async function preparePublication({root = process.cwd(), reference = "HEAD", remote = "origin", target = "refs/heads/main", remoteBefore, admit, attest, requiredCI, retryCI} = {}) {
   const current = await layout(root, true);
   if (!publicationRef(target) || !/^[A-Za-z0-9][A-Za-z0-9_.-]*$/.test(remote)) throw new Error("Publication preparation requires an exact product ref and configured remote name");
   const source_commit = await git(current.root, ["rev-parse", "--verify", "--end-of-options", `${reference}^{commit}`]);
@@ -291,10 +299,18 @@ export async function preparePublication({root = process.cwd(), reference = "HEA
   if (decision.status !== "APPROVED" || decision.technical_receipt_sha256 !== admission.technical_receipt_sha256) throw new Error("Publication preparation requires the latest native candidate approval");
   const github = remoteUrl.match(/^(?:https:\/\/github\.com\/|git@github\.com:)([A-Za-z0-9_.-]+\/[A-Za-z0-9_.-]+?)(?:\.git)?$/);
   const validation_transport = github ? await validationTransport(current, {repository: github[1], sourceCommit: source_commit, sourceTree: source_tree, remote, admission, attest}) : null;
+  const required_ci = github ? await (requiredCI ?? (await import("./validation-transport.mjs")).admitRequiredCI)({root: current.root, repository: github[1], sourceCommit: source_commit, sourceTree: source_tree, remote, retryFailed: retryCI}) : null;
+  if (github && required_ci?.status !== "SUCCEEDED") {
+    const observed = {schema: "my-crm.required-ci-observation/v1", source_commit, source_tree, observed_at: new Date().toISOString(), result: required_ci};
+    const observation = `${hash(canonical(observed))}.required-ci.json`;
+    await writeFile(path.join(current.directory, observation), `${JSON.stringify(observed)}\n`, {flag: "wx", mode: 0o600});
+    await replacePointer(path.join(current.directory, `${source_commit}-${source_tree}.required-ci`), observation);
+    throw Object.assign(new Error(`Required exact-source CI test is ${required_ci?.status ?? "MISSING"}: ${required_ci?.reason ?? "no successful admission"}`), {code: `MYCRM_CI_${required_ci?.status ?? "MISSING"}`});
+  }
   const history = await git(current.root, ["log", "--reverse", "--format=%H %T", actualRemote === zeros ? source_commit : `${actualRemote}..${source_commit}`]);
   const changelists = history ? history.split("\n").map(line => {const [commit_sha, tree_sha] = line.split(" "); return {commit_sha, tree_sha, validated_in_candidate: source_commit};}) : [];
   const record = {schema: "my-crm.publication-prepared/v1", repository_root: current.root, source_commit, source_tree, remote_name: remote,
-    remote_url_sha256: hash(remoteUrl), target_ref: target, remote_before: actualRemote, admission, validation_transport, decision_sha256: decision.record_sha256,
+    remote_url_sha256: hash(remoteUrl), target_ref: target, remote_before: actualRemote, admission, validation_transport, required_ci, decision_sha256: decision.record_sha256,
     command_tracking: {disposition: "VALIDATION_COMPLETE", changelists, technical_receipt_sha256: admission.technical_receipt_sha256}};
   record.record_sha256 = digest(record);
   const filename = path.join(current.directory, `${tupleHash(record)}-${record.record_sha256}.json`), bytes = `${JSON.stringify(record, null, 2)}\n`;
@@ -338,9 +354,14 @@ export async function publishPrepared(filename, {root = process.cwd(), run = (ar
 
 async function main() {
   const [command, ...args] = process.argv.slice(2);
-  if (command === "prepare") {const [reference, remote, target, remoteBefore] = args; console.log(JSON.stringify(await preparePublication({reference, remote, target, remoteBefore})));}
+  if (command === "prepare") {
+    const [reference, remote, target, remoteBefore, retryFlag, run, attempt, reason] = args;
+    if (args.length > 4 && (retryFlag !== "--retry-ci" || args.length !== 8)) throw new Error("CI retry requires --retry-ci <run-id> <attempt> <recovery-reason>");
+    const retryCI = retryFlag ? {run_id: Number(run), run_attempt: Number(attempt), reason} : undefined;
+    console.log(JSON.stringify(await preparePublication({reference, remote, target, remoteBefore, retryCI})));
+  }
   else if (command === "pre-push") {let input = ""; for await (const chunk of process.stdin) input += chunk; await admitPreparedPush(input, {remote: args[0], remoteUrl: args[1]});}
   else if (command === "publish" && args[0] === "--prepared" && args.length === 2) console.log(JSON.stringify(await publishPrepared(args[1])));
   else throw new Error("Usage: publication-checkpoint.mjs prepare [sourceSHA] [remote] [target-ref] [remote-before]|publish --prepared <record>|pre-push <remote> <url>");
 }
-if (process.argv[1] && path.resolve(process.argv[1]) === fileURLToPath(import.meta.url)) main().catch(error => {console.error(`MYCRM_PUBLICATION=BLOCKED ${error.message}`); process.exitCode = 1;});
+if (process.argv[1] && path.resolve(process.argv[1]) === fileURLToPath(import.meta.url)) main().catch(error => {console.error(`MYCRM_PUBLICATION=${/^MYCRM_CI_(?:MISSING|PENDING|FAILED)$/.test(error.code ?? "") ? error.code.slice(6) : "BLOCKED"} ${error.message}`); process.exitCode = 1;});

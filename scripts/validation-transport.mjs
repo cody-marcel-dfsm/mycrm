@@ -12,6 +12,8 @@ const hash = value => createHash("sha256").update(value).digest("hex");
 export const gitBlobHash = bytes => createHash("sha1").update(`blob ${bytes.length}\0`).update(bytes).digest("hex");
 export const requiredCommands = Object.freeze([["npm", "run", "build"], ["npm", "test"], ["npm", "run", "check:release"]]);
 export const validationContext = "my-crm/native-validation";
+export const requiredCIWorkflow = ".github/workflows/ci.yml";
+export const requiredCIJob = "test";
 const contract = {required_commands: requiredCommands, execution_contract: "accept-original-supported-native-execution", additional_platform_executions: []};
 export const validationContractHash = hash(canonical(contract));
 const commandKey = command => hash(canonical(command));
@@ -105,7 +107,7 @@ export async function githubRequest(method, endpoint, body) {
     child.stderr.on("data", value => errors.push(value)); child.once("error", reject); child.stdin.on("error", reject);
     child.once("close", code => {
       if (code !== 0 || size > 4 * 1024 * 1024) {const status = Buffer.concat(errors).toString().match(/\b(?:4\d\d|5\d\d)\b/)?.[0]; const error = new Error(`GitHub validation transport request failed (${status ?? code})`); error.status = status ? Number(status) : null; reject(error);}
-      else try {resolve(JSON.parse(Buffer.concat(output).toString()));} catch (error) {reject(error);}
+      else try {const bytes = Buffer.concat(output).toString(); resolve(bytes.trim() ? JSON.parse(bytes) : null);} catch (error) {reject(error);}
     });
     child.stdin.end(body === undefined ? undefined : JSON.stringify(body));
   });
@@ -241,6 +243,69 @@ export async function exportNativeValidation({root = process.cwd(), repository, 
   const status = await api("POST", `repos/${repository}/statuses/${sourceCommit}`, {state: "success", context: validationContext, description, target_url});
   if (status.creator?.id !== metadata.owner.id || status.state !== "success") throw new Error("GitHub status issuer differs from the validated owner");
   return {source_commit: sourceCommit, source_tree: sourceTree, envelope_sha256: hash(bytes), blob_sha: blob.sha, status_context: validationContext};
+}
+
+// The source upload above is deliberately unwatched. Only after the trusted
+// exact-source command attestation exists may preparation trigger the existing
+// repository workflow. Its required job completes validation before main push.
+export async function admitRequiredCI({root = process.cwd(), repository, sourceCommit, sourceTree, remote = "origin", api = githubRequest,
+  pushSource = async args => git(root, args), retryFailed} = {}) {
+  if (!/^[A-Za-z0-9_.-]+\/[A-Za-z0-9_.-]+$/.test(repository ?? "") || !oid.test(sourceCommit ?? "") || !oid.test(sourceTree ?? "")) throw new Error("Required CI admission needs the exact repository/source/tree");
+  const workflow = await api("GET", `repos/${repository}/actions/workflows/ci.yml`);
+  if (!Number.isSafeInteger(workflow.id) || workflow.id < 1 || workflow.path !== requiredCIWorkflow || workflow.state !== "active") throw new Error("Required CI workflow identity or enabled state differs");
+  const branch = `codex/validation-ready-${sourceCommit}`, ref = `refs/heads/${branch}`;
+  const identity = {source_commit: sourceCommit, source_tree: sourceTree, workflow_path: requiredCIWorkflow, workflow_id: workflow.id, required_job: requiredCIJob};
+  const lookup = async () => {
+    const response = await api("GET", `repos/${repository}/actions/workflows/${workflow.id}/runs?head_sha=${sourceCommit}&per_page=100`);
+    if (!Array.isArray(response.workflow_runs) || response.total_count !== response.workflow_runs.length) throw new Error("Required CI run response is malformed or incomplete");
+    const runs = response.workflow_runs.filter(run => run.event === "pull_request" || run.event === "push" && ["main", branch].includes(run.head_branch));
+    const valid = run => Number.isSafeInteger(run.id) && run.id > 0 && Number.isSafeInteger(run.run_attempt) && run.run_attempt > 0
+      && run.workflow_id === workflow.id && run.path === requiredCIWorkflow && run.head_sha === sourceCommit
+      && typeof run.head_branch === "string" && run.head_branch.length > 0 && run.head_branch.length <= 1024 && !/[\x00-\x20\x7f]/.test(run.head_branch)
+      && run.repository?.full_name?.toLowerCase() === repository.toLowerCase() && run.head_repository?.full_name?.toLowerCase() === repository.toLowerCase();
+    if (runs.some(run => !valid(run))) throw new Error("Required CI run has a different source, repository or workflow identity");
+    const results = [];
+    for (const run of runs.sort((a, b) => b.id - a.id || b.run_attempt - a.run_attempt)) {
+      const observed = {...identity, run_id: run.id, run_attempt: run.run_attempt, run_event: run.event, head_branch: run.head_branch, validation_ref: `refs/heads/${run.head_branch}`};
+      if (run.status !== "completed") {
+        if (!["queued", "in_progress", "requested", "waiting", "pending"].includes(run.status) || run.conclusion !== null) throw new Error("Required CI pending run state is malformed");
+        results.push({...observed, status: "PENDING", reason: run.status}); continue;
+      }
+      if (run.conclusion !== "success") {results.push({...observed, status: "FAILED", reason: run.conclusion ?? "missing conclusion"}); continue;}
+      const jobs = await api("GET", `repos/${repository}/actions/runs/${run.id}/jobs?filter=latest&per_page=100`);
+      if (!Array.isArray(jobs.jobs) || jobs.total_count !== jobs.jobs.length) throw new Error("Required CI job response is malformed or incomplete");
+      const selected = jobs.jobs.filter(job => job.name === requiredCIJob);
+      if (selected.length !== 1) {results.push({...observed, status: "MISSING", reason: "Unique required test job is absent"}); continue;}
+      const job = selected[0];
+      if (!Number.isSafeInteger(job.id) || job.id < 1 || job.run_id !== run.id || job.head_sha !== sourceCommit || job.head_branch !== run.head_branch
+          || job.run_attempt !== run.run_attempt) throw new Error("Required CI test job has a different run, attempt or source identity");
+      if (job.status !== "completed") {
+        if (!["queued", "in_progress", "waiting"].includes(job.status) || job.conclusion !== null) throw new Error("Required CI pending job state is malformed");
+        results.push({...observed, job_id: job.id, status: "PENDING", reason: job.status}); continue;
+      }
+      if (job.conclusion !== "success") {results.push({...observed, job_id: job.id, status: "FAILED", reason: job.conclusion ?? "missing conclusion"}); continue;}
+      return {...observed, job_id: job.id, status: "SUCCEEDED", prior_failed_runs: results.filter(item => item.status === "FAILED")};
+    }
+    return results.find(item => item.status === "PENDING") ?? results[0] ?? null;
+  };
+  // Existing PR/main/validation results are admitted before any ref mutation.
+  // Identical source and workflow inputs already establish the required job.
+  let result = await lookup();
+  if (!result) {
+    let existing;
+    try {existing = await api("GET", `repos/${repository}/git/ref/heads/${branch}`);} catch (error) {if (error.status !== 404) throw error;}
+    if (existing) {
+      if (existing.ref !== ref || existing.object?.type !== "commit" || existing.object.sha !== sourceCommit) throw new Error("Required CI validation ref differs from the fixed source");
+    } else await pushSource(["push", remote, `${sourceCommit}:${ref}`]);
+    result = await lookup() ?? {...identity, validation_ref: ref, status: "MISSING", reason: "Exact-source required workflow has not appeared"};
+  }
+  if (retryFailed !== undefined) {
+    if (result.status !== "FAILED" || result.run_id !== retryFailed.run_id || result.run_attempt !== retryFailed.run_attempt || result.run_attempt !== 1
+        || typeof retryFailed.reason !== "string" || !retryFailed.reason.trim() || retryFailed.reason.length > 2048) throw new Error("Required CI retry needs the exact first failed attempt and a recorded recovery reason");
+    await api("POST", `repos/${repository}/actions/runs/${result.run_id}/rerun-failed-jobs`);
+    return {...result, status: "PENDING", reason: "Controlled failed-job retry requested", retry_requested: true, recovery_reason: retryFailed.reason, prior_failed_runs: [result]};
+  }
+  return result;
 }
 
 export async function importNativeValidation({repository, sourceCommit, sourceTree, api = githubRequest} = {}) {

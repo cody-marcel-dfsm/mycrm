@@ -8,7 +8,7 @@ import process from "node:process";
 import {fileURLToPath} from "node:url";
 import {promisify} from "node:util";
 import test from "node:test";
-import {collectNativeChecks, exportNativeValidation, importNativeValidation, gitBlobHash, historicalInputComparisons, nativeCoverageIntake, requiredCommands, validationContext} from "../scripts/validation-transport.mjs";
+import {collectNativeChecks, exportNativeValidation, importNativeValidation, gitBlobHash, historicalInputComparisons, nativeCoverageIntake, requiredCommands, validationContext, admitRequiredCI} from "../scripts/validation-transport.mjs";
 import {bindingHash, evidenceBinding} from "../scripts/oracle-inputs.mjs";
 import {validateRelease} from "../scripts/release-validation.mjs";
 import {readValidationProofs, validationDigest} from "../scripts/oracle-validation.mjs";
@@ -18,11 +18,23 @@ const hash = value => createHash("sha256").update(value).digest("hex");
 const checks = () => requiredCommands.map(command => ({command, coverage: "EXACT_INPUT_EXECUTION", executions: [{record_sha256: "c".repeat(64), command_sha256: hash(JSON.stringify(command)),
   input_sha256: "d".repeat(64), executable_sha256: "e".repeat(64), environment_sha256: "f".repeat(64), output_sha256: "1".repeat(64), original_environment: {node: "v22.11.0", platform: "darwin", architecture: "arm64"}}]}));
 function service({unpublished = false, actor = 17} = {}) {
-  const state = {calls: [], owner: {id: 17}, actor: {id: actor}, statuses: [], blob: null, exists: !unpublished};
+  const branch = `codex/validation-ready-${source}`;
+  const state = {calls: [], owner: {id: 17}, actor: {id: actor}, statuses: [], blob: null, exists: !unpublished, ready: false,
+    workflow: {id: 7, name: "ci", path: ".github/workflows/ci.yml", state: "active"},
+    runs: [{id: 11, workflow_id: 7, path: ".github/workflows/ci.yml", head_sha: source, head_branch: branch, event: "push", run_attempt: 1, status: "completed", conclusion: "success", repository: {full_name: repository}, head_repository: {full_name: repository}}],
+    jobs: [{id: 13, run_id: 11, run_attempt: 1, head_sha: source, head_branch: branch, name: "test", status: "completed", conclusion: "success"}]};
   const api = async (method, endpoint, body) => {
     state.calls.push({method, endpoint, body});
     if (endpoint === `repos/${repository}`) return {owner: state.owner};
     if (endpoint === "user") return state.actor;
+    if (endpoint === `repos/${repository}/actions/workflows/ci.yml`) return state.workflow;
+    if (endpoint === `repos/${repository}/git/ref/heads/${branch}`) {
+      if (!state.ready) throw Object.assign(new Error("Synthetic validation ref absent"), {status: 404});
+      return {ref: `refs/heads/${branch}`, object: {type: "commit", sha: source}};
+    }
+    if (endpoint.includes(`/actions/workflows/${state.workflow.id}/runs?`)) return {total_count: state.runs.length, workflow_runs: state.runs};
+    if (endpoint.endsWith("/rerun-failed-jobs") && method === "POST") {state.runs[0].run_attempt++; state.runs[0].status = "queued"; state.runs[0].conclusion = null; return null;}
+    if (endpoint.includes("/actions/runs/") && endpoint.includes("/jobs?")) return {total_count: state.jobs.length, jobs: state.jobs};
     if (endpoint === `repos/${repository}/git/commits/${source}` && method === "GET") {
       if (!state.exists) throw Object.assign(new Error("Synthetic source object absent"), {status: 404});
       return {sha: source, tree: {sha: tree}};
@@ -63,6 +75,77 @@ test("unpublished source is uploaded during validation preparation before status
   const prepared = f.state.calls.findIndex(item => item.method === "GIT_SOURCE_PREPARATION"), status = f.state.calls.findIndex(item => item.endpoint?.endsWith(`/statuses/${source}`));
   assert.ok(prepared >= 0 && status > prepared);
   assert.ok(f.state.calls.some(item => item.body?.ref?.startsWith("refs/heads/codex/validation-evidence-")), "Immutable blob has no durable reachable evidence ref");
+});
+
+test("required CI watches the exact source after native attestation and reuses the existing test job without command replay", async () => {
+  const f = await exported({unpublished: true}), pushes = [], completed = f.state.runs; f.state.runs = [];
+  const admit = () => admitRequiredCI({repository, sourceCommit: source, sourceTree: tree, api: f.api, pushSource: async args => {
+    assert.equal(f.state.statuses[0].state, "success", "Watched ref appeared before original validation attestation");
+    assert.deepEqual(args, ["push", "origin", `${source}:refs/heads/codex/validation-ready-${source}`]);
+    pushes.push(args); f.state.calls.push({method: "GIT_WATCHED_PREPARATION"}); f.state.ready = true; f.state.runs = completed;
+  }});
+  const admitted = await admit(); assert.equal(admitted.status, "SUCCEEDED"); assert.equal(admitted.source_commit, source); assert.equal(admitted.required_job, "test");
+  assert.deepEqual(await admit(), admitted); assert.equal(pushes.length, 1);
+  const firstUpload = f.state.calls.findIndex(item => item.method === "GIT_SOURCE_PREPARATION"), status = f.state.calls.findIndex(item => item.endpoint?.endsWith(`/statuses/${source}`)), watched = f.state.calls.findIndex(item => item.method === "GIT_WATCHED_PREPARATION");
+  assert.ok(firstUpload < status && status < watched);
+  const prior = await importNativeValidation({repository, sourceCommit: source, sourceTree: tree, api: f.api}), executed = [];
+  await validateRelease({nativeEvidence: false, priorCoverage: prior, execute: async args => executed.push(args)}); assert.deepEqual(executed, []);
+});
+
+test("required CI reuses prior PR and main successes and pending runs before ref lookup or mutation", async () => {
+  for (const event of ["pull_request", "push"]) for (const status of ["success", "pending"]) {
+    const f = service(), branch = event === "push" ? "main" : "synthetic-feature";
+    Object.assign(f.state.runs[0], {event, head_branch: branch, ...(status === "pending" ? {status: "queued", conclusion: null} : {})});
+    f.state.jobs[0].head_branch = branch;
+    const invoke = () => admitRequiredCI({repository, sourceCommit: source, sourceTree: tree, api: f.api, pushSource: async () => {throw Error("Compatible CI triggered duplicate work");}});
+    assert.equal((await invoke()).status, status === "success" ? "SUCCEEDED" : "PENDING");
+    assert.equal((await invoke()).status, status === "success" ? "SUCCEEDED" : "PENDING");
+    assert.ok(!f.state.calls.some(item => item.endpoint.includes("/git/ref/")), "Existing CI admission looked up a new watched ref");
+  }
+  const f = service(); f.state.runs.unshift({...f.state.runs[0], id: 12, status: "completed", conclusion: "failure"});
+  const admitted = await admitRequiredCI({repository, sourceCommit: source, sourceTree: tree, api: f.api});
+  assert.equal(admitted.status, "SUCCEEDED"); assert.equal(admitted.run_id, 11); assert.equal(admitted.prior_failed_runs[0].run_id, 12);
+});
+
+test("failed CI preserves its original observation and permits one exact reason-bound recovery retry", async () => {
+  const f = service(); f.state.runs[0].conclusion = "failure";
+  const options = {repository, sourceCommit: source, sourceTree: tree, api: f.api, pushSource: async () => {throw Error("Failed CI created another watched ref");}};
+  const failed = await admitRequiredCI(options); assert.equal(failed.status, "FAILED");
+  assert.ok(!f.state.calls.some(item => item.method === "POST"));
+  for (const retryFailed of [{run_id: 12, run_attempt: 1, reason: "Synthetic recovered input"}, {run_id: 11, run_attempt: 1, reason: ""}]) await assert.rejects(admitRequiredCI({...options, retryFailed}), /exact first failed attempt/);
+  const retried = await admitRequiredCI({...options, retryFailed: {run_id: 11, run_attempt: 1, reason: "Synthetic external input recovered"}});
+  assert.equal(retried.status, "PENDING"); assert.equal(retried.prior_failed_runs[0].status, "FAILED"); assert.equal(retried.prior_failed_runs[0].reason, "failure");
+  assert.equal((await admitRequiredCI(options)).run_attempt, 2); assert.equal(f.state.calls.filter(item => item.method === "POST").length, 1);
+  Object.assign(f.state.runs[0], {status: "completed", conclusion: "failure"});
+  await assert.rejects(admitRequiredCI({...options, retryFailed: {run_id: 11, run_attempt: 2, reason: "Another synthetic reason"}}), /exact first failed attempt/);
+});
+
+test("required exact-source CI preserves missing pending and failure states and rejects wrong native GitHub identities", async () => {
+  for (const mutation of ["missing", "pending", "failure", "missing-job", "duplicate-job", "pending-job", "failed-job", "wrong-head", "wrong-repository", "wrong-head-repository", "wrong-workflow", "wrong-workflow-path", "disabled-workflow", "wrong-job-head", "wrong-job-run", "wrong-job-attempt", "wrong-job-branch", "malformed-job-state"]) {
+    const f = service(); f.state.ready = true;
+    if (mutation === "missing") f.state.runs = [];
+    if (mutation === "pending") Object.assign(f.state.runs[0], {status: "in_progress", conclusion: null});
+    if (mutation === "failure") f.state.runs[0].conclusion = "failure";
+    if (mutation === "missing-job") f.state.jobs = [];
+    if (mutation === "duplicate-job") f.state.jobs.push({...f.state.jobs[0], id: 14});
+    if (mutation === "pending-job") Object.assign(f.state.jobs[0], {status: "in_progress", conclusion: null});
+    if (mutation === "failed-job") f.state.jobs[0].conclusion = "cancelled";
+    if (mutation === "wrong-head") f.state.runs[0].head_sha = "9".repeat(40);
+    if (mutation === "wrong-repository") f.state.runs[0].repository = {full_name: "synthetic-other/my-crm"};
+    if (mutation === "wrong-head-repository") f.state.runs[0].head_repository = {full_name: "synthetic-other/my-crm"};
+    if (mutation === "wrong-workflow") f.state.runs[0].workflow_id = 8;
+    if (mutation === "wrong-workflow-path") f.state.workflow.path = ".github/workflows/other.yml";
+    if (mutation === "disabled-workflow") f.state.workflow.state = "disabled_manually";
+    if (mutation === "wrong-job-head") f.state.jobs[0].head_sha = "9".repeat(40);
+    if (mutation === "wrong-job-run") f.state.jobs[0].run_id = 12;
+    if (mutation === "wrong-job-attempt") f.state.jobs[0].run_attempt = 2;
+    if (mutation === "wrong-job-branch") f.state.jobs[0].head_branch = "main";
+    if (mutation === "malformed-job-state") Object.assign(f.state.jobs[0], {status: "unexpected", conclusion: null});
+    const invoke = () => admitRequiredCI({repository, sourceCommit: source, sourceTree: tree, api: f.api, pushSource: async () => {throw Error("Existing fixed validation ref was pushed again");}});
+    const expected = {missing: "MISSING", pending: "PENDING", failure: "FAILED", "missing-job": "MISSING", "duplicate-job": "MISSING", "pending-job": "PENDING", "failed-job": "FAILED"}[mutation];
+    if (expected) assert.equal((await invoke()).status, expected, mutation);
+    else await assert.rejects(invoke(), /identity|different|differs|malformed/, mutation);
+  }
 });
 
 test("wrong actor, altered blob, changed source/tree/command contract and failed status invalidate coverage", async () => {

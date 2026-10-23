@@ -182,7 +182,18 @@ The remote is `https://github.com/cody-marcel-dfsm/mycrm.git`.
 For this GitHub remote, preparation verifies original native command proofs and
 exports only an owner-authenticated sanitized immutable command envelope plus
 exact-source status. This completes source/evidence ref and status work during
-validation. CI accepts the truthful original environment and exact command
+validation. Preparation first reuses a compatible exact-source PR, main or
+validation run of the existing `ci.yml` workflow's `test` job, binding repository,
+workflow and run attempt. It observes an existing pending run. When compatible
+CI is absent, preparation creates the watched
+`codex/validation-ready-<sourceSHA>` ref after the attestation exists. Missing,
+pending, failed or mismatched CI emits no publication descriptor. Observe the
+existing run and resume preparation with its completed result; retain original
+clocks and prior command evidence. A recovered failed input permits one controlled
+retry of the exact first failed attempt with
+`--retry-ci <run-id> <attempt> "<recovery reason>"` appended to preparation;
+retain the original failure and reason in its immutable private observation.
+CI accepts the truthful original environment and exact command
 coverage; it executes missing/invalidated checks and imposes additional platform
 execution only when an explicit required-check contract calls for it. A native
 baseline-plus-focused claim needs the exact current private coverage manifest
