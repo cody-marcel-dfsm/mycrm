@@ -90,7 +90,10 @@ export async function collectNativeChecks({root, sourceCommit, sourceTree, admis
     if (!filename.startsWith(`${path.resolve(root, "Vault/tmp")}${path.sep}`) || !filename.endsWith(".json")) continue;
     let manifest; try {manifest = JSON.parse(await readFile(filename));} catch {continue;}
     if (manifest.schema !== "my-crm.required-command-coverage/v1") continue;
-    if (hash(await readFile(filename)) !== evidence.sha256 || manifest.source_commit !== sourceCommit || manifest.source_tree !== sourceTree || !Array.isArray(manifest.checks)) throw new Error("Focused required-command manifest changed or names another candidate");
+    if (hash(await readFile(filename)) !== evidence.sha256 || !Array.isArray(manifest.checks)) throw new Error("Focused required-command manifest changed or is malformed");
+    // Native continuation retains original evidence. Historical manifests are
+    // immutable supporting facts, never current command-coverage authority.
+    if (manifest.source_commit !== sourceCommit || manifest.source_tree !== sourceTree) continue;
     const assessed = [...receipt.coverage ?? [], ...receipt.reused_coverage ?? []].some(item => item.criteria?.includes("required-command-coverage") && item.evidence?.includes(evidence.value));
     if (!assessed) throw new Error("Focused command coverage lacks an explicit exact-candidate independent assessment");
     for (const check of manifest.checks) {

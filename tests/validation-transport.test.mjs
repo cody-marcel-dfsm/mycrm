@@ -144,6 +144,14 @@ test("export verifies actual native originals and composes only independently as
   assert.equal(original.input_sha256, bindingHash(baseline.record.before));
   assert.equal(original.record_sha256, baseline.record.record_sha256);
   assert.equal(original.output_sha256, baseline.record.output_sha256);
+  const historicalPath = path.join(root, "Vault/tmp/required-command-coverage-original.json");
+  const source = baseline.record.review_provenance.before.base_commit;
+  await writeFile(historicalPath, JSON.stringify({schema: "my-crm.required-command-coverage/v1", source_commit: source, source_tree: await git("rev-parse", `${source}^{tree}`), checks: []}));
+  const historical = await evidenceBinding(root, `@${historicalPath}`);
+  assert.equal((await collectNativeChecks(await receipt(originals, coverage, [manifest, historical]))).length, 3);
+  await assert.rejects(collectNativeChecks(await receipt(originals, coverage, [historical])), /coverage missing/);
+  await writeFile(historicalPath, "{}\n");
+  await assert.rejects(collectNativeChecks(await receipt(originals, coverage, [manifest, historical])), /manifest changed/);
   await writeFile(baseline.record.output_file, "Synthetic altered original output\n");
   await assert.rejects(collectNativeChecks(await receipt(originals, coverage, [manifest])), /output is missing or changed/);
 });
