@@ -98,6 +98,7 @@ const emit=()=>{
   if(!proposal && process.env.ORACLE_CONTRADICTORY_FINDING && response.findings.length) response.findings[0].code=evidence.cohort.id;
   if(!proposal && process.env.ORACLE_OBSERVED_PATH) { response.review_status='INCOMPLETE'; response.verdict=null; response.findings[0].path=process.env.ORACLE_OBSERVED_PATH; response.findings[0].affected_paths=[process.env.ORACLE_OBSERVED_PATH]; response.unreviewed=[process.env.ORACLE_OBSERVED_PATH]; }
   if(!proposal && process.env.ORACLE_RESOLVE_OBSERVED) { const findings=[...evidence.review_context.prior_findings,...evidence.review_context.observed_assessments.flatMap(item=>item.findings)]; response.resolutions=[...new Set(findings.map(item=>item.id))].map(id=>({id,status:response.findings.some(item=>item.id===id)?'OPEN':'RESOLVED',evidence:'Independently assessed synthetic current source and verified disposition.'})); }
+  if(!proposal && process.env.ORACLE_RESOLVE_ONE_VERSION) response.resolutions=response.resolutions.slice(0,1);
   if(!proposal && process.env.ORACLE_DISPOSITION_SCOPE) response.scope_dispositions=evidence.review_context.unavailable_sources.map(item=>({path:item.path,disposition:'UNAVAILABLE',evidence:'Independent current scope disposition; no external source read or invented original facts.'}));
   if(!proposal && captureThis && process.env.ORACLE_RETARGET_MIDDLE) { fs.unlinkSync(process.env.ORACLE_RETARGET_MIDDLE); fs.symlinkSync(process.env.ORACLE_MIDDLE_TARGET,process.env.ORACLE_RETARGET_MIDDLE); }
   if(!proposal && process.env.ORACLE_TAMPER_PROOF_OUTPUT && proof) fs.writeFileSync(nativeRecord.output_file,'changed nested output during review');
@@ -809,11 +810,22 @@ test("actual explicit-source cohort output reaches exact receipt and native veri
   await assert.rejects(command(repo, ["verify-index"], env), /stale|differ|changed/);
 });
 
-test("contradictory native cohort finding identities retain ERROR", async t => {
+test("contradictory native cohort finding identities retain ERROR and distinct original versions require independent disposition", async t => {
   const {repo, env, prepare} = await fixture(t); await prepare();
   await assert.rejects(command(repo, ["review"], {...env, ORACLE_SOURCE_FINDING: "1", ORACLE_CONTRADICTORY_FINDING: "1"}), /Conflicting findings identity/);
-  await assert.rejects(command(repo, ["review"], {...env, ORACLE_RESOLVE_OBSERVED: "1"}), /identity contradicts/);
-  await assert.rejects(readFile(path.join(repo, ".git/oracle/approval.json")), {code: "ENOENT"});
+  const directory = path.join(repo, ".git/oracle"), active = JSON.parse(await readFile(path.join(directory, "active-review.json")));
+  const outcomeFile = path.join(directory, "runs", active.id, "outcome.json"), original = await readFile(outcomeFile);
+  await assert.rejects(readFile(path.join(directory, "approval.json")), {code: "ENOENT"});
+  await assert.rejects(command(repo, ["review"], {...env, ORACLE_RESOLVE_OBSERVED: "1", ORACLE_RESOLVE_ONE_VERSION: "1", ORACLE_OMIT_VALIDATION: "1"}), /explicit resolution evidence/);
+  await command(repo, ["review"], {...env, ORACLE_RESOLVE_OBSERVED: "1", ORACLE_OMIT_VALIDATION: "1"});
+  assert.deepEqual(await readFile(outcomeFile), original);
+  const receipt = JSON.parse(await readFile(path.join(directory, "approval.json")));
+  const series = JSON.parse(await readFile(path.join(directory, "series", `${receipt.base_commit}.json`))), observations = series.rounds.at(-1).observed_cohorts;
+  const versions = observations.flatMap(item => item.finding_identity_versions);
+  assert.equal(versions.length, 3); assert.equal(new Set(versions.map(item => item.qualified_id)).size, 3);
+  assert.ok(versions.every(item => item.original_id === "SYNTHETIC-EXIT-1"));
+  assert.ok(observations.filter(item => item.reported_findings.length).every(item => item.reported_findings[0].id === "SYNTHETIC-EXIT-1" && item.execution_status === "ERROR"));
+  assert.ok(versions.every(item => receipt.resolutions.some(resolution => resolution.id === item.qualified_id && resolution.status === "RESOLVED")));
 });
 
 test("live gates bind all inputs, emit owner verifier JSON, and retain phase diagnostics", async (t) => {

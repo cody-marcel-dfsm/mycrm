@@ -270,19 +270,37 @@ test("real Git publication uses the effective native hook and no heavy validator
   await cp(new URL("../.githooks/pre-push", import.meta.url), path.join(f.root, ".githooks/pre-push"));
   await chmod(path.join(f.root, ".githooks/pre-push"), 0o755);
   await cp(new URL("../scripts/publication-checkpoint.mjs", import.meta.url), path.join(f.root, "scripts/publication-checkpoint.mjs"));
-  for (const name of ["oracle-deployment.mjs", "oracle-review.mjs", "oracle-validation.mjs", "shipment-state.mjs", "release-validation.mjs"]) await writeFile(path.join(f.root, "scripts", name), "throw new Error('Heavy validation is forbidden during prepared Git publication');\n");
+  for (const name of ["oracle-deployment.mjs", "oracle-review.mjs", "oracle-validation.mjs", "shipment-state.mjs", "release-validation.mjs", "validation-transport.mjs"]) await writeFile(path.join(f.root, "scripts", name), "throw new Error('Heavy validation is forbidden during prepared Git publication');\n");
   await f.git("config", "core.hooksPath", ".githooks");
   assert.equal(await f.git("config", "--get", "core.hooksPath"), ".githooks");
-  const prepared = await preparePublication({root: f.root, admit: f.admit});
+  const github = "https://github.com/synthetic-owner/synthetic-repository.git";
+  await f.git("remote", "set-url", "--push", "origin", github);
+  const prepared = await preparePublication({root: f.root, admit: f.admit,
+    attest: async () => ({source_commit: f.source, source_tree: f.tree, envelope_sha256: "c".repeat(64), blob_sha: "d".repeat(40), status_context: "my-crm/native-validation"}),
+    requiredCI: async () => successfulCI(f)});
+  assert.equal((await readPreparedPublication(prepared.prepared_record, {root: f.root})).record.required_ci.status, "SUCCEEDED");
+  // Route the fixture transport into its bare repository while forwarding the
+  // configured GitHub identity to the unchanged production pre-push hook.
+  const route = path.join(f.root, ".git/publication-route"), bin = path.join(f.root, ".git/publication-traps");
+  await mkdir(route); await mkdir(bin);
+  const invoked = path.join(bin, "github-api-called");
+  await writeFile(path.join(bin, "gh"), `#!${process.execPath}\nrequire('node:fs').writeFileSync(${JSON.stringify(invoked)},'unexpected API call');process.exit(79);\n`, {mode: 0o755});
+  await writeFile(path.join(route, "pre-push"), `#!${process.execPath}\nconst{spawnSync}=require('node:child_process');const r=spawnSync(${JSON.stringify(path.join(f.root, ".githooks/pre-push"))},['origin',${JSON.stringify(github)}],{stdio:'inherit'});process.exit(r.status??1);\n`, {mode: 0o755});
   await writeFile(path.join(f.root, "source.txt"), "synthetic concurrent source arrival\n"); await f.git("add", "."); await f.git("commit", "-m", "Synthetic concurrent author commit");
   await writeFile(path.join(f.root, "unfinished.txt"), "synthetic unfinished arrival\n");
-  const started = performance.now(); await publishPrepared(prepared.prepared_record, {root: f.root});
+  const started = performance.now(); await publishPrepared(prepared.prepared_record, {root: f.root, run: async args => {
+    assert.deepEqual(args, ["push", "origin", `${f.source}:refs/heads/main`]);
+    await execute("git", ["-c", `url.${f.remote}.insteadOf=${github}`, "-c", `core.hooksPath=${route}`, ...args],
+      {cwd: f.root, env: {...process.env, PATH: `${bin}${path.delimiter}${process.env.PATH}`}});
+  }});
+  await assert.rejects(readFile(invoked), {code: "ENOENT"});
+  assert.equal(await f.git("remote", "get-url", "--push", "origin"), github);
   const elapsed = performance.now() - started;
   assert.ok(elapsed < 10000, `Actual Git push exceeded ten seconds: ${elapsed}ms`);
   assert.equal((await execute("git", ["rev-parse", "refs/heads/main"], {cwd: f.remote})).stdout.trim(), f.source);
   assert.notEqual(await f.git("rev-parse", "HEAD"), f.source);
   assert.match(await f.git("status", "--porcelain=v1"), /unfinished.txt/);
-  console.log(`MYCRM_SYNTHETIC_PUBLICATION_MS=${Math.round(elapsed)} effective_hook=.githooks/pre-push`);
+  console.log(`MYCRM_SYNTHETIC_PUBLICATION_MS=${Math.round(elapsed)} effective_hook=.githooks/pre-push configured_remote=github transport=local-bare github_api_calls=0`);
 });
 
 test("every required release command participates in native evidence discovery; fresh CI executes every check", async () => {

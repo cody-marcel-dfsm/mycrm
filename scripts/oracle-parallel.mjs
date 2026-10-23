@@ -327,7 +327,7 @@ export async function nativeCohortObservations({root, directory, validation = []
       reported_review_status: response.review_status, reported_verdict: response.verdict, observed_tree: plan.candidate_tree,
       response_evidence: binding, original_response_sha256: bindingHash(response), native_manifest_sha256: manifestBinding.sha256,
       artifact_custody_sha256: custody, native_bindings: nativeBindings, execution: process, custody_intact: true,
-      coverage: [], reported_coverage: response.coverage, findings: response.findings, unreviewed: response.unreviewed,
+      coverage: [], reported_coverage: response.coverage, findings: response.findings, reported_findings: response.findings, unreviewed: response.unreviewed,
       reuse_completion: {candidate: completeChild && knownPolicy, reason: !completeChild ? "Independent child assessment is unfinished or its process failed" : !knownPolicy ? "Original effective policy or trusted role identity is unknown" : "Complete independent child observations require exact current dependency/context checks and fresh independent reuse verification",
         reviewer_policy_sha256: original.inputs.reviewer_policy_sha256 ?? null, reviewer_policy_version: original.inputs.reviewer_policy_version ?? null,
         trusted_role_sha256: reviewer.role_instruction_sha256 ?? null, reviewer_metadata_sha256: original.reviewer_metadata_sha256,
@@ -337,10 +337,16 @@ export async function nativeCohortObservations({root, directory, validation = []
     observations.push(observation);
   }
   const identities = new Map();
-  for (const observation of observations) for (const finding of observation.findings) {
-    const prior = identities.get(finding.id);
-    if (prior && (prior.code !== finding.code || prior.path !== finding.path)) throw new Error("Native cohort finding identity contradicts an intact original report");
-    identities.set(finding.id, finding);
+  for (const observation of observations) for (const finding of observation.reported_findings) {
+    const versions = identities.get(finding.id) ?? new Set(); versions.add(bindingHash({code: finding.code, path: finding.path})); identities.set(finding.id, versions);
+  }
+  for (const observation of observations) {
+    observation.finding_identity_versions = observation.reported_findings.filter(finding => identities.get(finding.id).size > 1).map(finding => ({
+      original_id: finding.id, qualified_id: `${finding.id}-${bindingHash({code: finding.code, path: finding.path}).slice(0, 16)}`,
+      code: finding.code, path: finding.path, original_response_sha256: observation.original_response_sha256,
+      reason: "Distinct literal finding identities reused one original ID; fresh independent disposition is required for every qualified version"}));
+    observation.findings = observation.reported_findings.map(finding => ({...finding,
+      id: observation.finding_identity_versions.find(version => version.original_id === finding.id && version.code === finding.code && version.path === finding.path)?.qualified_id ?? finding.id}));
   }
   return observations;
 }

@@ -396,7 +396,14 @@ export async function prepareSeries({directory, candidate, inputs, files, fileFa
     }
     for (const reported of observation.reported_coverage ?? []) {
       let item;
-      try {item = bindItem(reported, origin.snapshot, reported.path);} catch (error) {
+      try {
+        const finding_ids = reported.finding_ids?.map(id => {
+          const versions = observation.finding_identity_versions?.filter(version => version.original_id === id) ?? [];
+          if (versions.length > 1) throw new Error("Original coverage finding reference has multiple qualified versions");
+          return versions[0]?.qualified_id ?? id;
+        });
+        item = bindItem({...reported, finding_ids}, origin.snapshot, reported.path);
+      } catch (error) {
         invalidated.push({kind: "coverage", id: reported.path, reason: `Completed child dependency witness is unavailable: ${error.message}`}); continue;
       }
       const original = await comparable(origin), sourceContext = {...original.context};
