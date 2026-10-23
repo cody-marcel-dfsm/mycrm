@@ -66,10 +66,11 @@ const emit=()=>{
   const response={verdict:process.env.ORACLE_INCOMPLETE?null:'APPROVED',review_status:process.env.ORACLE_INCOMPLETE?'INCOMPLETE':'COMPLETE',api_version_assessment:{impact:'NONE',request_kind:'NOT_REQUIRED',requested_change:null,request_quote:null,request_evidence:null},summary:'Synthetic candidate assessed.',authentication_impact:false,owner_approval_status:'NOT_REQUIRED',warning:null,findings:[],protected_deployment_effects:[],deployment_effect_dispositions:[],unreviewed:process.env.ORACLE_INCOMPLETE?['synthetic remaining scope']:[],reused_coverage:[],reused_validations:[],validations:[],resolutions:[],scope_dispositions:[],synthesis:null,coverage:(evidence?.review_context.required_paths??[]).map(name=>({path:name,dependencies:[name],dependency_rationale:'Synthetic isolated dependency.',assessment:'Synthetic path assessed.',criteria:['Synthetic acceptance criteria.'],evidence:['Synthetic source inspection.'],finding_ids:[]}))};
   if(!proposal && process.env.ORACLE_MISSING_DEPLOYMENT) { response.authentication_impact=true; response.owner_approval_status='MISSING'; response.protected_deployment_effects=[{id:'SYNTHETIC-PERMISSION',category:'PERMISSION_AUTHORITY',description:'Synthetic exact permission authority effect.',affected_paths:[process.env.ORACLE_EFFECT_PATH||'candidate.txt'],authority:null}]; }
   const proof=evidence?.review_context.validation_proofs.find(item=>item.eligible);
+  const nativeRecord=proof?JSON.parse(fs.readFileSync(proof.evidence.slice(1),'utf8')):null;
   if(!proposal && captureThis && proof && process.env.ORACLE_PROOF_DAMAGE_READY && fs.existsSync(process.env.ORACLE_PROOF_DAMAGE_READY)) {
     fs.unlinkSync(process.env.ORACLE_PROOF_DAMAGE_READY);
     fs.writeFileSync(process.env.ORACLE_PROOF_MOVE_SOURCE,'changed authored source during assessment');
-    const record=proof.evidence.slice(1), output=proof.record.output_file, damage=process.env.ORACLE_PROOF_DAMAGE;
+    const record=proof.evidence.slice(1), output=nativeRecord.output_file, damage=process.env.ORACLE_PROOF_DAMAGE;
     if(damage==='record') fs.appendFileSync(record,' altered');
     if(damage==='output') fs.writeFileSync(output,'altered original output');
     if(damage==='missing-output') fs.unlinkSync(output);
@@ -89,7 +90,7 @@ const emit=()=>{
     }
   }
   if(!proposal && process.env.ORACLE_REUSE_COVERAGE) { response.reused_coverage=(evidence.review_context.eligible_coverage??[]).map(item=>item.path); response.coverage=response.coverage.filter(item=>!response.reused_coverage.includes(item.path)); }
-  if(proof && !process.env.ORACLE_OMIT_VALIDATION) response.validations=[{id:'native-check',evidence:proof.evidence,command:JSON.stringify(proof.record.command),dependencies:evidence.staged_files,dependency_rationale:'Synthetic complete candidate closure.',assessment:'Native passing execution and output checked.'}];
+  if(proof && !process.env.ORACLE_OMIT_VALIDATION) response.validations=[{id:'native-check',evidence:proof.evidence,command:JSON.stringify(nativeRecord.command),dependencies:evidence.staged_files,dependency_rationale:'Synthetic complete candidate closure.',assessment:'Native passing execution and output checked.'}];
   if(!proposal && process.env.ORACLE_SOURCE_FINDING) { response.verdict='REJECTED'; response.findings=[{id:'SYNTHETIC-EXIT-1',severity:'medium',code:'SYNTHETIC_EXIT_FINDING',message:'Synthetic source finding.',path:'candidate.txt',reproduction:'Synthetic input.',required_behavior:'Synthetic required behavior.',affected_paths:['candidate.txt'],acceptance_checks:['Synthetic acceptance.'],origin:'initial',missed_finding_reason:null}]; }
   if(!proposal && process.env.ORACLE_ABSENT_DEPENDENCY && response.coverage.length) response.coverage[0].dependencies.push('absent-source.mjs');
   if(!proposal && process.env.ORACLE_EXPLICIT_SELF) for(const item of response.coverage) item.dependencies=['AGENTS.md'];
@@ -98,7 +99,7 @@ const emit=()=>{
   if(!proposal && process.env.ORACLE_RESOLVE_OBSERVED) { const findings=[...evidence.review_context.prior_findings,...evidence.review_context.observed_assessments.flatMap(item=>item.findings)]; response.resolutions=[...new Set(findings.map(item=>item.id))].map(id=>({id,status:response.findings.some(item=>item.id===id)?'OPEN':'RESOLVED',evidence:'Independently assessed synthetic current source and verified disposition.'})); }
   if(!proposal && process.env.ORACLE_DISPOSITION_SCOPE) response.scope_dispositions=evidence.review_context.unavailable_sources.map(item=>({path:item.path,disposition:'UNAVAILABLE',evidence:'Independent current scope disposition; no external source read or invented original facts.'}));
   if(!proposal && captureThis && process.env.ORACLE_RETARGET_MIDDLE) { fs.unlinkSync(process.env.ORACLE_RETARGET_MIDDLE); fs.symlinkSync(process.env.ORACLE_MIDDLE_TARGET,process.env.ORACLE_RETARGET_MIDDLE); }
-  if(!proposal && process.env.ORACLE_TAMPER_PROOF_OUTPUT && proof) fs.writeFileSync(proof.record.output_file,'changed nested output during review');
+  if(!proposal && process.env.ORACLE_TAMPER_PROOF_OUTPUT && proof) fs.writeFileSync(nativeRecord.output_file,'changed nested output during review');
   if(!proposal && process.env.ORACLE_CHMOD_PROOF_SOURCE) fs.chmodSync(path.join(process.cwd(),'candidate.txt'),0o755);
   if(proposal || !process.env.ORACLE_NO_OUTPUT) fs.writeFileSync(out,proposal?'Synthetic proposal.\\nAPI_VERSION_ASSESSMENT={"impact":"NONE","request_kind":"NOT_REQUIRED","requested_change":null,"request_quote":null,"request_evidence":null}\\nAUTHENTICATION_IMPACT=NONE\\nOWNER_APPROVAL_STATUS=NOT_REQUIRED\\nORACLE_VERDICT=APPROVED\\n':process.env.ORACLE_MALFORMED?'{}':JSON.stringify(evidence?.cohort?{cohort_id:evidence.cohort.id,candidate_commit:evidence.cohort.candidate_commit,candidate_tree:evidence.cohort.candidate_tree,input_binding_sha256:evidence.cohort.input_binding_sha256,plan_sha256:evidence.cohort.plan_sha256,reviewer_settings_sha256:evidence.cohort.reviewer_settings_sha256,cross_area_assessment:'Synthetic cross-area entrypoint, consumer, dependency, publication and recovery trace.',response}:response));
   if(!proposal && process.env.ORACLE_BREAK_DIAGNOSTICS) fs.mkdirSync(path.join(path.dirname(out),'reviewer.stdout.log'));
@@ -900,6 +901,35 @@ test("incomplete assessment retains a resumable round and never publishes approv
   await assert.rejects(command(repo, ["verify-index"], env), /history is malformed or changed/);
 });
 
+test("missing exact command intake waits idempotently and queued native evidence resumes one source lifecycle", async t => {
+  const {repo,root,env,prepare,git}=await fixture(t); await prepare();
+  const old=await git("rev-parse","HEAD"),oldTree=await git("rev-parse","HEAD^{tree}");
+  await writeFile(path.join(repo,"package.json"),JSON.stringify({name:"synthetic-intake",scripts:{build:"node -e \"process.stdout.write('synthetic build')\"",test:"node -e \"process.stdout.write('synthetic test')\"","check:release":"node -e \"process.stdout.write('synthetic package')\""}}));
+  await git("add",".");await git("-c","user.name=Synthetic","-c","user.email=synthetic@example.invalid","commit","-qm","Synthetic committed candidate");
+  const calls=path.join(root,"intake-model-calls.jsonl"),runEnv={...env,ORACLE_OMIT_VALIDATION:"1",ORACLE_CALLS:calls};
+  const commands=[["npm","run","build"],["npm","test"],["npm","run","check:release"]],proofs=[];
+  for(const item of commands){const captured=await command(repo,["validate","--",...item],runEnv),reference=captured.stdout.match(/ORACLE_VALIDATION_EVIDENCE=(.+)/)[1];proofs.push({reference,record:JSON.parse(await readFile(reference.slice(1)))});}
+  const manifest={schema:"my-crm.required-command-coverage/v1",source_commit:old,source_tree:oldTree,checks:commands.map((item,index)=>({command:item,executions:[proofs[index].record.record_sha256]}))};
+  const stale=path.join(repo,"Vault/tmp/stale-command-intake.json"),exact=path.join(repo,"Vault/tmp/exact-command-intake.json");await writeFile(stale,JSON.stringify(manifest));
+  const args=["--validation",`@${stale}`,...proofs.flatMap(item=>["--validation",item.reference])],first=runningReview(repo,runEnv,args);t.after(()=>first.child.kill("SIGTERM"));
+  const owner=path.join(repo,".git/oracle");await waitFor(path.join(owner,"controllers/00000000.json"));
+  const controller=JSON.parse(await readFile(path.join(owner,"controllers/00000000.json"))),progressFile=path.join(owner,"controllers",controller.id,"progress.json");let progress;
+  for(let i=0;i<1000;i++){try{progress=JSON.parse(await readFile(progressFile));}catch(e){if(e.code!=="ENOENT")throw e;}if(progress?.phase==="WAITING_FOR_EVIDENCE")break;await new Promise(resolve=>setTimeout(resolve,20));}
+  assert.equal(progress?.phase,"WAITING_FOR_EVIDENCE",first.output());
+  const runs=(await readdir(path.join(owner,"runs"))).sort(),identity=progress.intake_identity_sha256;
+  const duplicate=runningReview(repo,runEnv,args);t.after(()=>duplicate.child.kill("SIGTERM"));
+  await new Promise(resolve=>setTimeout(resolve,500));
+  assert.deepEqual((await readdir(path.join(owner,"runs"))).sort(),runs);
+  assert.equal(JSON.parse(await readFile(progressFile)).intake_identity_sha256,identity);
+  await assert.rejects(readFile(calls),{code:"ENOENT"});
+  manifest.source_commit=await git("rev-parse","HEAD");manifest.source_tree=await git("rev-parse","HEAD^{tree}");await writeFile(exact,JSON.stringify(manifest));
+  const resumed=runningReview(repo,runEnv,["--validation",`@${exact}`]);t.after(()=>resumed.child.kill("SIGTERM"));
+  const results=await Promise.all([first.done,duplicate.done,resumed.done]);for(const result of results)assert.equal(result.code,0,result.stderr);
+  assert.equal((await readFile(calls,"utf8")).trim().split("\n").length,3);
+  const nativeRuns=await Promise.all(runs.map(async name=>{try{return JSON.parse(await readFile(path.join(owner,"runs",name,"outcome.json")));}catch{return null;}}));
+  assert.ok(nativeRuns.some(item=>item?.outcome==="INCOMPLETE"&&item.reviewer_invoked===false));
+});
+
 test("native validation captures original command and inputs, supports proof reuse, and rejects changed output", async (t) => {
   const {repo, env, prepare} = await fixture(t); await prepare();
   const reuseEnv = {...env, ORACLE_OMIT_VALIDATION: "1"};
@@ -1538,6 +1568,15 @@ test("committed-range review checkpoints exact source and unchanged shipment exe
   const called = [], fail = (step) => async () => { called.push(step); throw new Error(`Unexpected ${step}`); };
   const result = await runShipment({root: repo, prepare: fail("prepare"), validate: fail("validate"), deliver: fail("deliver")});
   assert.equal(result.action, "NO_CHANGES"); assert.deepEqual(called, []);
+  await command(repo, ["review", "--validation", "Synthetic compatible additional proof"], {...env, ORACLE_REUSE_COVERAGE: "1"});
+  const sameSource = await readValidatedCheckpoint(repo), sameSourceBytes = await readFile(path.join(repo, ".git/oracle/shipment-validated.json"));
+  assert.equal(sameSource.record.last_validated_commit, head);
+  assert.notEqual(sameSource.record.receipt_sha256, checkpoint.record.receipt_sha256);
+  const capturedDelivery = await recordDeliveredCommit({root: repo, admission, installation: {pluginId: "my-crm@synthetic", release: {content_sha256: "a".repeat(64)}}});
+  assert.equal(capturedDelivery.validated_checkpoint_sha256, checkpoint.record.checkpoint_sha256);
+  assert.deepEqual(await readFile(path.join(repo, ".git/oracle/shipment-validated.json")), sameSourceBytes);
+  const retained = JSON.parse(await readFile(path.join(repo, ".git/oracle/validated-checkpoints/by-receipt", `${admission.technical_receipt_sha256}.json`)));
+  assert.deepEqual(retained, checkpoint.record);
   await writeFile(path.join(repo, "candidate.txt"), "Synthetic next arrived commit\n"); await git("add", ".");
   await git("-c", "user.name=Synthetic", "-c", "user.email=synthetic@example.invalid", "commit", "-qm", "Synthetic next source");
   const pending = await shipmentPlan({root: repo}); assert.equal(pending.action, "VALIDATE"); assert.equal(pending.validation_base, head); assert.equal(pending.commits.length, 1);

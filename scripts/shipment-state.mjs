@@ -4,7 +4,7 @@ import path from "node:path";
 import process from "node:process";
 import {fileURLToPath} from "node:url";
 import {readFile, readdir} from "node:fs/promises";
-import {atomicJson, bindingHash, contentHash, pathCustody, metadataDirectory, readMetadataFile, assertPublishedInvocation, captureInputs, assertInputsMatch} from "./oracle-inputs.mjs";
+import {atomicJson, bindingHash, contentHash, pathCustody, metadataDirectory, readMetadataFile, writeMetadataFile, assertPublishedInvocation, captureInputs, assertInputsMatch} from "./oracle-inputs.mjs";
 import {activeReviewController, observeReviewController} from "./oracle-lifecycle.mjs";
 import {verifyParallelArtifacts} from "./oracle-parallel.mjs";
 
@@ -21,6 +21,14 @@ async function store(root) {
 async function optionalJson(filename, owner) {
   try { return JSON.parse(await readMetadataFile(filename, "utf8", {root: owner})); }
   catch (error) { if (error.code === "ENOENT") return null; throw error; }
+}
+async function preserveValidatedCheckpoint(owner, directory, record) {
+  const bytes = `${JSON.stringify(record, null, 2)}\n`;
+  for (const filename of [path.join(directory, "validated-checkpoints", `${record.checkpoint_sha256}.json`), path.join(directory, "validated-checkpoints", "by-receipt", `${record.receipt_sha256}.json`)]) {
+    await metadataDirectory(owner, path.dirname(filename));
+    try {await writeMetadataFile(filename, bytes, {flag: "wx", mode: 0o600}, {root: owner});}
+    catch (error) {if (error.code !== "EEXIST" || await readMetadataFile(filename, "utf8", {root: owner}) !== bytes) throw error;}
+  }
 }
 async function exactSource(root, commit, tree) {
   if (await git(root, ["branch", "--show-current"]) !== "main" || await git(root, ["rev-parse", "HEAD"]) !== commit || await git(root, ["rev-parse", "HEAD^{tree}"]) !== tree || await git(root, ["status", "--porcelain=v1", "--untracked-files=all"])) {
@@ -128,14 +136,12 @@ export async function recordValidatedCommit({root = process.cwd(), receipt, befo
   const record = {schema: "my-crm.shipment-validated/v1", last_validated_commit: receipt.candidate_commit, tree: receipt.reviewed_tree, receipt_sha256: receipt.receipt_sha256, reviewed_base: receipt.base_commit};
   if (previous) {
     record.previous_checkpoint_sha256 = previous.record.checkpoint_sha256;
-    const filename = path.join(directory, "validated-checkpoints", `${previous.record.checkpoint_sha256}.json`), bytes = `${JSON.stringify(previous.record, null, 2)}\n`;
-    const {writeMetadataFile} = await import("./oracle-inputs.mjs");
-    await metadataDirectory(owner, path.dirname(filename));
-    try {await writeMetadataFile(filename, bytes, {flag: "wx", mode: 0o600}, {root: owner});} catch (error) {if (error.code !== "EEXIST" || await readMetadataFile(filename, "utf8", {root: owner}) !== bytes) throw error;}
+    await preserveValidatedCheckpoint(owner, directory, previous.record);
   }
   record.checkpoint_sha256 = checkpointDigest(record);
   await exactSource(root, receipt.candidate_commit, receipt.reviewed_tree);
   await beforePublish();
+  await preserveValidatedCheckpoint(owner, directory, record);
   await atomicJson(path.join(directory, "committed-receipts", `${receipt.candidate_commit}.json`), record, {root: owner});
   await exactSource(root, receipt.candidate_commit, receipt.reviewed_tree);
   await assertPublishedInvocation(receipt.invocation, directory, owner);
@@ -185,8 +191,9 @@ export async function shipmentPlan({root = process.cwd(), publishedRef = "refs/r
 export async function recordDeliveredCommit({root = process.cwd(), admission, installation}) {
   const {owner, directory} = await store(root);
   const source = admission?.source_commit, reviewed = admission?.reviewed_source_commit ?? source;
-  if (!commitHash.test(source ?? "") || !commitHash.test(reviewed ?? "")) throw new Error("Delivery requires exact validated admission and successful supported installation evidence");
-  const captured = await optionalJson(path.join(directory, "committed-receipts", `${reviewed}.json`), owner);
+  if (!commitHash.test(source ?? "") || !commitHash.test(reviewed ?? "") || !digestHash.test(admission?.technical_receipt_sha256 ?? "")) throw new Error("Delivery requires exact validated admission and successful supported installation evidence");
+  const captured = await optionalJson(path.join(directory, "validated-checkpoints", "by-receipt", `${admission.technical_receipt_sha256}.json`), owner)
+    ?? await optionalJson(path.join(directory, "committed-receipts", `${reviewed}.json`), owner);
   const checkpoint = captured ? await admittedCheckpoint({root, owner, directory, record: captured}) : null;
   if (!checkpoint || admission?.status !== "ADMITTED" || reviewed !== checkpoint.record.last_validated_commit || admission.target_tree !== checkpoint.record.tree || admission.technical_receipt_sha256 !== checkpoint.record.receipt_sha256 || !digestHash.test(installation?.release?.content_sha256 ?? "") || !installation?.pluginId) throw new Error("Delivery requires exact validated admission and successful supported installation evidence");
   if (!await publicationSourceMatches(root, reviewed, source) || await git(root, ["rev-parse", `${source}^{tree}`]) !== checkpoint.record.tree) throw new Error("Published source differs from its exact validated candidate");
