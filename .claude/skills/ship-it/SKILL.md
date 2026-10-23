@@ -201,10 +201,12 @@ Completed validation seals exact-CL command/source/effect coverage. Same-CL
 preparation consumes that seal; perform one legacy import audit only when no
 reusable seal exists. A later explicit completed rejection or detected governing
 criteria invalidation revokes candidate readiness through compact native metadata.
-Genuine later admitted whole-candidate IN_PROGRESS, INCOMPLETE and ERROR retain
-their original attempt records and require reconciliation before publication.
-Superseded attempts and unrelated commits/proposals preserve the later or fixed
-source checkpoint. Attempt supersession custody stays separate from readiness.
+IN_PROGRESS, INCOMPLETE and ERROR attempts retain their literal outcome and
+preserve an existing complete checkpoint whose source, inputs and required
+coverage remain applicable. Explicit same-candidate defects or concrete
+source/coverage/criteria invalidations revoke readiness through candidate-specific
+metadata with the exact reason. Superseded attempts and unrelated commits or
+proposals preserve the applicable fixed-source checkpoint.
 
 Use `npm run install:reviewed` for supported native installation. Preserve
 immutable historical receipts alongside committed review checkpoints. Ordinary

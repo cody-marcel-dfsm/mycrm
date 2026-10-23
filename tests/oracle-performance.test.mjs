@@ -2017,7 +2017,7 @@ test("same committed source reopens changed governing criteria and failed invoca
   const current = await readFile(authority); await writeFile(authority, Buffer.concat([current, Buffer.from("\nSynthetic failed-attempt criterion.\n")]));
   await assert.rejects(command(repo, ["review"], {...env, ORACLE_NO_OUTPUT: "1"}), /ORACLE_PROCESS=ERROR/);
   const decisionFile = path.join(repo, ".git/oracle/publication-prepared", `${source}-${first.record.tree}.decision`);
-  assert.equal(JSON.parse(await readFile(decisionFile)).status, "ERROR");
+  assert.equal(JSON.parse(await readFile(decisionFile)).status, "INVALIDATED_CRITERIA");
   await writeFile(authority, current);
   assert.equal((await shipmentPlan({root: repo})).action, "VALIDATE");
   await command(repo, ["review"], env);

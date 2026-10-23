@@ -93,6 +93,13 @@ export async function recordPublicationDecision({root = process.cwd(), sourceCom
     if (active.decision_id !== expectedDecisionId) return record;
   }
   await replacePointer(attempt, bytes);
+  if (["IN_PROGRESS", "INCOMPLETE", "ERROR"].includes(status)) {
+    let prior; try { prior = await readDecision(current, sourceCommit, sourceTree); } catch (error) { if (error.code !== "ENOENT") throw error; }
+    // Raw attempts retain their own immutable outcome. Explicit candidate
+    // defects/criteria invalidation remain separate from still-applicable
+    // complete coverage, so a process failure supplies no replacement verdict.
+    if (prior && ["APPROVED", "REJECTED", "INVALIDATED_CRITERIA"].includes(prior.status)) return record;
+  }
   if (!ifAbsent) await replacePointer(pointer, bytes);
   return record;
 }

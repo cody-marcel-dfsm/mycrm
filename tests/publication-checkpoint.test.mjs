@@ -70,11 +70,17 @@ test("ordinary review refs need no private publication proof", async t => {
   await admitPreparedPush(`main ${f.source} refs/heads/codex/review ${zeros}\n`, {root: f.root, remote: "origin", remoteUrl: f.remote});
 });
 
-test("latest admitted whole-candidate outcomes and criteria invalidation revoke prepared publication", async t => {
+test("applicable complete coverage survives raw attempts; explicit rejection and criteria invalidation revoke publication", async t => {
   const f = await fixture(t); let prepared = await preparePublication({root: f.root, admit: f.admit});
   const binding = {root: f.root, sourceCommit: f.source, sourceTree: f.tree};
   const tuple = `fixed-source ${f.source} refs/heads/main ${f.before}\n`;
-  for (const status of ["IN_PROGRESS", "INCOMPLETE", "ERROR", "REJECTED", "INVALIDATED_CRITERIA"]) {
+  for (const status of ["IN_PROGRESS", "INCOMPLETE", "ERROR"]) {
+    const original = await recordPublicationDecision({...binding, status});
+    assert.equal(original.status, status);
+    await readPreparedPublication(prepared.prepared_record, {root: f.root});
+    await admitPreparedPush(tuple, {root: f.root, remote: "origin", remoteUrl: f.remote});
+  }
+  for (const status of ["REJECTED", "INVALIDATED_CRITERIA"]) {
     await recordPublicationDecision({...binding, status});
     let calls = 0;
     await assert.rejects(publishPrepared(prepared.prepared_record, {root: f.root, run: async () => {calls++;}}), /later native candidate decision/);
