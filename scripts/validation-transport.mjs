@@ -61,6 +61,40 @@ export async function historicalInputComparisons({root, record, current}) {
   }));
 }
 
+export async function nativeCoverageIntake({root, sourceCommit, sourceTree, validation, proofs}) {
+  const {readMetadataFile} = await import("./oracle-inputs.mjs");
+  const manifests = [];
+  for (const evidence of validation) {
+    if (evidence.kind !== "file") continue;
+    const filename = path.resolve(root, evidence.value.replace(/^@/, ""));
+    if (!filename.startsWith(`${path.resolve(root, "Vault/tmp")}${path.sep}`) || !filename.endsWith(".json")) continue;
+    const bytes = await readMetadataFile(filename, {}, {root});
+    if (hash(bytes) !== evidence.sha256) throw new Error("Required-command intake evidence changed");
+    let manifest; try {manifest = JSON.parse(bytes);} catch {continue;}
+    if (manifest.schema === "my-crm.required-command-coverage/v1") manifests.push({evidence, manifest});
+  }
+  if (!manifests.length) return {status: "NOT_REQUESTED"};
+  const exact = manifests.filter(item => item.manifest.source_commit === sourceCommit && item.manifest.source_tree === sourceTree), gaps = [];
+  let selected = null;
+  for (const item of exact) {
+    const missing = [];
+    for (const command of requiredCommands) {
+      const checks = Array.isArray(item.manifest.checks) ? item.manifest.checks.filter(check => canonical(check.command) === canonical(command)) : [];
+      const records = checks.length === 1 && Array.isArray(checks[0].executions) ? checks[0].executions.map(id => proofs.find(proof => proof.record.record_sha256 === id)?.record) : [];
+      if (!records.length || records.some(record => !record || record.outcome !== "PASSED" || record.exit_code !== 0 || record.signal || record.error || canonical(record.before) !== canonical(record.after))
+          || !records.some(record => canonical(record.command) === canonical(command))) missing.push(command.join(" "));
+    }
+    if (!missing.length) {selected = item; break;}
+    gaps.push({manifest: item.evidence.value, missing_original_passing_commands: missing});
+  }
+  if (!exact.length) gaps.push({reason: "No supplied required-command manifest binds the captured commit and tree"});
+  const result = {status: selected ? "READY_FOR_INDEPENDENT_ASSESSMENT" : "INCOMPLETE", source_commit: sourceCommit, source_tree: sourceTree,
+    manifests: manifests.map(item => ({value: item.evidence.value, sha256: item.evidence.sha256, source_commit: item.manifest.source_commit, source_tree: item.manifest.source_tree})),
+    original_records: proofs.map(proof => proof.record.record_sha256).sort(), selected_manifest: selected?.evidence ?? null, gaps: selected ? [] : gaps,
+    grants_command_coverage: false, grants_approval: false};
+  return {...result, identity_sha256: hash(canonical(result))};
+}
+
 // gh owns existing credentials. Structured JSON travels on stdin, never shell
 // text or command-line token arguments; no response logs are published.
 export async function githubRequest(method, endpoint, body) {

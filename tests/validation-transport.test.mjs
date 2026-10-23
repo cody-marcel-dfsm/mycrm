@@ -8,7 +8,7 @@ import process from "node:process";
 import {fileURLToPath} from "node:url";
 import {promisify} from "node:util";
 import test from "node:test";
-import {collectNativeChecks, exportNativeValidation, importNativeValidation, gitBlobHash, historicalInputComparisons, requiredCommands, validationContext} from "../scripts/validation-transport.mjs";
+import {collectNativeChecks, exportNativeValidation, importNativeValidation, gitBlobHash, historicalInputComparisons, nativeCoverageIntake, requiredCommands, validationContext} from "../scripts/validation-transport.mjs";
 import {bindingHash, evidenceBinding} from "../scripts/oracle-inputs.mjs";
 import {validateRelease} from "../scripts/release-validation.mjs";
 import {readValidationProofs, validationDigest} from "../scripts/oracle-validation.mjs";
@@ -216,4 +216,17 @@ test("historical identity audit distinguishes source/private absence and refuses
   const compared = await historicalInputComparisons({root, record, current: {}});
   assert.deepEqual(compared.map(item => [item.path, item.current_state]), [["/outside-owner.txt", "UNAVAILABLE"], ["Vault/actual", "PRIVATE_INPUT_BYTES"], ["Vault/link", "UNAVAILABLE"], ["Vault/missing", "PRIVATE_INPUT_ABSENT"], ["deleted.mjs", "SOURCE_TREE_ABSENT"]]);
   assert.equal(compared.find(item => item.path === "Vault/actual").changed, false);
+});
+
+test("native intake binds exact candidate and actual original commands without granting assessment", async t => {
+  const root = await realpath(await mkdtemp(path.join(os.tmpdir(), "my-crm-intake-")));
+  t.after(() => rm(root, {recursive: true, force: true}));
+  const filename = path.join(root, "Vault/tmp/command-coverage.json"); await mkdir(path.dirname(filename), {recursive: true});
+  const proofs = requiredCommands.map((command,index) => ({record: {record_sha256: String(index+1).repeat(64), command, outcome: "PASSED", exit_code: 0, signal: null, error: null, before: {files: {"source.mjs":"original"}}, after: {files: {"source.mjs":"original"}}}}));
+  const manifest = {schema:"my-crm.required-command-coverage/v1", source_commit: source, source_tree:tree, checks:requiredCommands.map((command,index)=>({command,executions:[proofs[index].record.record_sha256]}))};
+  const intake = async () => {await writeFile(filename,JSON.stringify(manifest));return nativeCoverageIntake({root,sourceCommit:source,sourceTree:tree,validation:[await evidenceBinding(root,`@${filename}`)],proofs});};
+  const ready = await intake(); assert.equal(ready.status,"READY_FOR_INDEPENDENT_ASSESSMENT"); assert.equal(ready.grants_approval,false); assert.equal(ready.grants_command_coverage,false);
+  manifest.source_tree="c".repeat(40); const missing=await intake(); assert.equal(missing.status,"INCOMPLETE"); assert.equal((await intake()).identity_sha256,missing.identity_sha256);
+  manifest.source_tree=tree; proofs[1].record.outcome="FAILED"; assert.equal((await intake()).status,"INCOMPLETE");
+  proofs[1].record.outcome="PASSED"; proofs[1].record.after.files["source.mjs"]="changed"; assert.equal((await intake()).status,"INCOMPLETE");
 });

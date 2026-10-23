@@ -13,6 +13,7 @@ import {findCommandValidation, recordCommandCoverage, commandArtifactBinding} fr
 import Ajv from "ajv";
 import {recordValidatedCommit, readValidatedCheckpoint, shipmentPlan} from "./shipment-state.mjs";
 import {runParallelReview, verifyParallelArtifacts, nativeCohortObservations, createNativeCohortAudit} from "./oracle-parallel.mjs";
+import {nativeCoverageIntake} from "./validation-transport.mjs";
 import {withReviewController, activeReviewController} from "./oracle-lifecycle.mjs";
 import {recordPublicationDecision, sealPublicationValidation, terminalAdmissionComplete} from "./publication-checkpoint.mjs";
 import {archiveTechnicalReceipt, committedReceipt, deploymentHistoryForReview, deploymentPlan, publicationPlanFromValidatedReceipt, pendingDeploymentEffects, authorizationDigest, validateDeploymentAssessment, validateDeploymentDispositions, verifyNewEffectAuthorities, verifyDeploymentAuthorization} from "./oracle-deployment.mjs";
@@ -359,9 +360,15 @@ async function review(args = [], {run, phase, producer = null, verifyProducer = 
   const settings = await phase("model_selection_ms", async () => inputs.reviewer_settings);
   const {model, reasoning_effort: effort} = settings;
   const reviewerRecord = await recordReviewer(run, settings, responseSchema);
+  const validationProofs = await phase("validation_proofs_ms", () => readValidationProofs({root: process.cwd(), directory, validation: inputs.validation}));
+  const intake = await nativeCoverageIntake({root: process.cwd(), sourceCommit: candidate.commit ?? null, sourceTree: candidate.tree, validation: inputs.validation, proofs: validationProofs});
+  if (intake.status !== "NOT_REQUESTED") await atomicJson(path.join(run, "command-coverage-intake.json"), intake);
+  if (intake.status === "INCOMPLETE") {
+    console.log(`ORACLE_REVIEW=INCOMPLETE_INTAKE identity=${intake.identity_sha256}`);
+    return {review_status: "INCOMPLETE", verdict: null, candidate_commit: candidate.commit ?? null, command_coverage_intake: intake};
+  }
   const series = await phase("series_ms", async () => {
     const facts = await candidateFiles(candidate);
-    const validationProofs = await readValidationProofs({root: process.cwd(), directory, validation: inputs.validation});
     return prepareSeries({directory, candidate, inputs, ...facts, environment: environmentHash(), environmentProvenance: fullEnvironmentHash(), validationProofs, proposalRecord, inheritedInvalidations: inherited.invalidated, cohortAssessments});
   });
   const prepared = await phase("preparation_ms", () => preparedEvidence(directory, {inputs, ...reviewerRecord}, async () => ({inputs, ...reviewerRecord, proposal: proposalRecord, staged_files: candidate.files, diff: await git(candidate.commit ? ["diff", "--binary", "--no-ext-diff", candidate.base, candidate.commit] : ["diff", "--cached", "--binary", "--no-ext-diff"]), validation_evidence: validationEvidence, owner_approval_evidence: ownerApprovalEvidence})));
@@ -941,6 +948,14 @@ async function continuousReview(args, controller) {
       await nativeCohortObservations({root: process.cwd(), directory, retained: observed.cohorts, audit: cohortAudit});
     };
     await recheckAttemptEvidence();
+    // Intake requests can arrive during original-proof auditing. Merge them at
+    // the worker boundary instead of dispatching a known obsolete evidence set.
+    const intakeArguments = reviewArguments(await controller.pendingArguments());
+    for (const item of intakeArguments.validationEvidence) evidence.add(item);
+    if (intakeArguments.ownerApprovalEvidence !== null) {
+      if (owner !== null && owner !== intakeArguments.ownerApprovalEvidence) throw new Error("Attached review supplied conflicting exact owner authority");
+      owner = intakeArguments.ownerApprovalEvidence;
+    }
     const currentArgs = [...evidence].flatMap((item) => ["--validation", item]);
     if (owner !== null) currentArgs.push("--owner-approval", owner);
     await controller.progress({phase: "ASSESSING", candidate_commit: before, attempt: ++attempt});
@@ -971,6 +986,24 @@ async function continuousReview(args, controller) {
       continue;
     }
     if (failure) throw failure;
+    if (result?.command_coverage_intake?.status === "INCOMPLETE") {
+      await controller.progress({phase: "WAITING_FOR_EVIDENCE", candidate_commit: before, attempt, intake_identity_sha256: result.command_coverage_intake.identity_sha256,
+        gaps: result.command_coverage_intake.gaps});
+      for (;;) {
+        if (controller.cancelled()) throw new Error("Native review controller cancelled while awaiting exact command evidence");
+        const queued = reviewArguments(await controller.pendingArguments());
+        let changed = false;
+        for (const item of queued.validationEvidence) {changed ||= !evidence.has(item); evidence.add(item);}
+        if (queued.ownerApprovalEvidence !== null) {
+          if (owner !== null && owner !== queued.ownerApprovalEvidence) throw new Error("Attached review supplied conflicting exact owner authority");
+          changed ||= owner !== queued.ownerApprovalEvidence; owner = queued.ownerApprovalEvidence;
+        }
+        if (changed || before !== await git(["rev-parse", "HEAD"])) break;
+        await new Promise(resolve => setTimeout(resolve, 250));
+      }
+      forceReview = true; catchingUp = true; process.exitCode = undefined;
+      continue;
+    }
     const pending = await controller.pendingArguments();
     if (pending.length) {
       const next = reviewArguments(pending);
