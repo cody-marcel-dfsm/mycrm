@@ -351,6 +351,7 @@ export async function admitDeployment({root = process.cwd(), reference = "HEAD"}
 }
 
 export async function admitDeploymentPlan({root = process.cwd(), plan} = {}) {
+  if (plan.receipt.deployment_history_status !== "READY" || !commitPattern.test(plan.receipt.deployment_baseline_commit ?? "") || !hashPattern.test(plan.receipt.deployment_history_sha256 ?? "")) throw new Error("Technical approval retains its deployment-history limitation; publication requires the configured published baseline and complete READY history binding");
   const pending = await pendingDeploymentEffects(plan, root);
   if (pending.length) {
     const {owner, value} = await directory(root);

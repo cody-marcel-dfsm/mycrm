@@ -75,7 +75,10 @@ export async function checkpointSelectionApplicable(root, checkpoint) {
   const authorities = checkpoint.receipt.input_binding.authorities ?? [];
   const canonical = [];
   const walk = async (relative) => {
-    for (const entry of await readdir(path.join(root, relative), {withFileTypes: true})) {
+    let entries;
+    try {entries = await readdir(path.join(root, relative), {withFileTypes: true});}
+    catch (error) {if (error.code === "ENOENT") throw new Error(`Governing authority membership changed; missing ${relative}`); throw error;}
+    for (const entry of entries) {
       if (["tmp", "index"].includes(entry.name)) continue;
       const name = `${relative}/${entry.name}`;
       if (entry.isSymbolicLink()) throw new Error(`Governing authority custody changed: ${name}`);

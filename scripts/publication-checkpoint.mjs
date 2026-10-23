@@ -155,7 +155,18 @@ async function admittedCoverage(current, decision) {
   const coverage = JSON.parse(await boundedRead(path.join(current.directory, `${decision.validation_plan_sha256}.coverage.json`)));
   if (hash(canonical(coverage)) !== decision.validation_plan_sha256 || coverage.schema !== "my-crm.publication-validation-coverage/v1" || coverage.source_commit !== decision.source_commit
       || coverage.source_tree !== decision.source_tree || coverage.technical_receipt_sha256 !== decision.technical_receipt_sha256) throw new Error("Native validated command coverage seal changed");
-  if (coverage.plan) return (await import("./oracle-deployment.mjs")).admitDeploymentPlan({root: current.root, plan: coverage.plan});
+  if (coverage.plan) {
+    // Current governing criteria are a bounded preparation admission. Original
+    // source/output/history proofs stay sealed and are never replayed here.
+    if (coverage.plan.receipt.input_binding?.authorities?.length) {
+      try {await (await import("./shipment-state.mjs")).checkpointSelectionApplicable(current.root, {receipt: coverage.plan.receipt});}
+      catch (error) {
+        if (/Governing authority/.test(error.message)) await recordPublicationDecision({root: current.root, sourceCommit: decision.source_commit, sourceTree: decision.source_tree, status: "INVALIDATED_CRITERIA", invalidationReason: error.message});
+        throw error;
+      }
+    }
+    return (await import("./oracle-deployment.mjs")).admitDeploymentPlan({root: current.root, plan: coverage.plan});
+  }
   if (coverage.admitted?.protected_effects?.length) throw new Error("Protected effect admission requires its sealed native effect plan");
   return coverage.admitted;
 }

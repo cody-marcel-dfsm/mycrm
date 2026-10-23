@@ -1,4 +1,5 @@
 import assert from "node:assert/strict";
+import {createHash} from "node:crypto";
 import {execFile} from "node:child_process";
 import {chmod, cp, mkdir, mkdtemp, readFile, realpath, rm, writeFile} from "node:fs/promises";
 import os from "node:os";
@@ -126,14 +127,33 @@ test("equivalent later complete approval preserves the original prepared decisio
 test("complete review bookkeeping preserves native prepared coverage while a changed consumed proof invalidates it", async t => {
   const f = await fixture(t), binding = {root: f.root, sourceCommit: f.source, sourceTree: f.tree};
   const plan = (receiptHash, output = "original-output") => ({commit: f.source, reviewedCommit: f.source, tree: f.tree, effects: [], plan_sha256: "b".repeat(64),
-    receipt: {receipt_sha256: receiptHash, candidate_commit: f.source, deployment_baseline_commit: f.before,
-      input_binding: {authorities: [{path: "synthetic-authority", sha256: "c".repeat(64)}], validation: [{sha256: output}]}, coverage: [{path: "source.txt", dependencies: ["source.txt"], criteria: ["synthetic-required-check"], assessment: `review ${receiptHash}`}], reused_coverage: []}});
+    receipt: {receipt_sha256: receiptHash, candidate_commit: f.source, deployment_baseline_commit: f.before, deployment_history_status: "READY", deployment_history_sha256: "f".repeat(64),
+      input_binding: {authorities: [], validation: [{sha256: output}]}, coverage: [{path: "source.txt", dependencies: ["source.txt"], criteria: ["synthetic-required-check"], assessment: `review ${receiptHash}`}], reused_coverage: []}});
   await recordPublicationDecision({...binding, status: "APPROVED", receipt: "a".repeat(64), validationPlan: plan("a".repeat(64))});
   const first = await preparePublication({root: f.root});
   await recordPublicationDecision({...binding, status: "APPROVED", receipt: "d".repeat(64), validationPlan: plan("d".repeat(64))});
   assert.equal((await preparePublication({root: f.root})).prepared_record, first.prepared_record);
   await recordPublicationDecision({...binding, status: "APPROVED", receipt: "e".repeat(64), validationPlan: plan("e".repeat(64), "changed-output")});
   await assert.rejects(readPreparedPublication(first.prepared_record, {root: f.root}), /later native candidate decision/);
+});
+
+test("direct sealed preparation checks governing applicability and preserves technical approval with unavailable history", async t => {
+  const f = await fixture(t), binding = {root: f.root, sourceCommit: f.source, sourceTree: f.tree};
+  await mkdir(path.join(f.root, "Vault/docs"), {recursive: true}); const authority = path.join(f.root, "Vault/docs/CONSTITUTION.md");
+  const original = "Synthetic original governing criterion.\n"; await writeFile(authority, original);
+  const plan = (receiptHash, content, history = "READY") => ({commit: f.source, reviewedCommit: f.source, tree: f.tree, effects: [], plan_sha256: "b".repeat(64),
+    receipt: {receipt_sha256: receiptHash, candidate_commit: f.source, deployment_baseline_commit: history === "READY" ? f.before : null,
+      deployment_history_status: history, deployment_history_sha256: "f".repeat(64), input_binding: {authorities: [{path: "Vault/docs/CONSTITUTION.md", sha256: createHash("sha256").update(content).digest("hex")}]}}});
+  await recordPublicationDecision({...binding, status: "APPROVED", receipt: "a".repeat(64), validationPlan: plan("a".repeat(64), original)});
+  const first = await preparePublication({root: f.root});
+  const changed = "Synthetic changed governing criterion.\n"; await writeFile(authority, changed);
+  await assert.rejects(preparePublication({root: f.root}), /Governing authority changed/);
+  await assert.rejects(readPreparedPublication(first.prepared_record, {root: f.root}), /later native candidate decision/);
+  await recordPublicationDecision({...binding, status: "APPROVED", receipt: "c".repeat(64), validationPlan: plan("c".repeat(64), changed, "UNAVAILABLE")});
+  await assert.rejects(preparePublication({root: f.root}), /complete READY history binding/);
+  await recordPublicationDecision({...binding, status: "APPROVED", receipt: "d".repeat(64), validationPlan: plan("d".repeat(64), changed)});
+  const renewed = await preparePublication({root: f.root});
+  await publishPrepared(renewed.prepared_record, {root: f.root, run: async () => {}});
 });
 
 test("unrelated candidate decisions and proposal changes preserve fixed-source admission; changed markers fail closed", async t => {
