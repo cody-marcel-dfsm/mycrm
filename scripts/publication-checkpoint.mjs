@@ -195,11 +195,11 @@ export async function preparePublication({root = process.cwd(), reference = "HEA
     // Repeated same-CL preparation consumes that seal without proof traversal.
     if (admit) {
       admission = await admit({root: current.root, reference: source_commit});
-      decision = await recordPublicationDecision({root: current.root, sourceCommit: source_commit, sourceTree: source_tree, status: "APPROVED", receipt: admission.technical_receipt_sha256, admitted: admission, decisionId: `imported:${admission.technical_receipt_sha256}`, ifAbsent: !decision, expectedReadinessSha: decision?.record_sha256});
+      decision = await recordPublicationDecision({root: current.root, sourceCommit: source_commit, sourceTree: source_tree, status: "APPROVED", receipt: admission.technical_receipt_sha256, admitted: admission, decisionId: decision?.decision_id ?? `imported:${admission.technical_receipt_sha256}`, ifAbsent: !decision, expectedReadinessSha: decision?.record_sha256});
     } else {
       const native = await import("./oracle-deployment.mjs"), plan = await native.deploymentPlan({root: current.root, reference: source_commit});
       admission = await native.admitDeploymentPlan({root: current.root, plan});
-      decision = await sealPublicationValidation({root: current.root, sourceCommit: source_commit, sourceTree: source_tree, receipt: admission.technical_receipt_sha256, plan, decisionId: `imported:${admission.technical_receipt_sha256}`, ifAbsent: !decision, expectedReadinessSha: decision?.record_sha256});
+      decision = await sealPublicationValidation({root: current.root, sourceCommit: source_commit, sourceTree: source_tree, receipt: admission.technical_receipt_sha256, plan, decisionId: decision?.decision_id ?? `imported:${admission.technical_receipt_sha256}`, ifAbsent: !decision, expectedReadinessSha: decision?.record_sha256});
     }
   }
   if (admission.status !== "ADMITTED" || admission.source_commit !== source_commit || admission.target_tree !== source_tree) throw new Error("Publication preparation requires complete exact-source validation and effect admission");
