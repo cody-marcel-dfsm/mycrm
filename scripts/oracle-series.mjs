@@ -86,8 +86,12 @@ function cohortDiagnostic(value) {
 }
 
 function semanticSourceDiagnostic(value) {
-  return cohortDiagnostic(value) || /^(?:Current governing-input reconciliation: |Exact-candidate required-command composition: )/.test(value)
-    || /^Execution coverage for the changed audit in .+ against .+ remains unfinished\.$/.test(value);
+  return cohortDiagnostic(value) || /^(?:Current governing-input reconciliation: |Exact-candidate required-command composition: |Execution coverage for )/.test(value);
+}
+
+function boundLegacyAbsence(snapshot, name) {
+  const facts = snapshot.file_facts?.[name];
+  return facts?.metadata === null && facts.ancestors?.some(item => item.metadata?.type === "directory");
 }
 
 // Legacy unreviewed strings mix whole filenames with semantic diagnostics.
@@ -105,12 +109,15 @@ export async function observationSourcePaths({directory, base, series = null, wi
     catch (error) { if (error.code !== "ENOENT") throw error; series = {schema: "my-crm.oracle-series/v1", base_commit: base, series_id: "supporting-only", rounds: []}; }
     series = await augmentedSeries(directory, base, series);
   }
-  const findings = new Map(), external = new Set(), known = new Set(), names = new Set(), typed = new Set(), inventory = new Set();
+  const findings = new Map(), external = new Set(), known = new Set(), names = new Set(), typed = new Set(), inventory = new Set(), ambiguous = new Map();
   for (const round of series.rounds) {
     for (const name of round.snapshot.external_paths ?? []) external.add(name);
     for (const [name, hash] of Object.entries(round.snapshot.files)) {
       known.add(name);
-      if (hash !== null || !semanticSourceDiagnostic(name)) inventory.add(name);
+      if (hash !== null || !semanticSourceDiagnostic(name) && (legacySourceName(name) || boundLegacyAbsence(round.snapshot, name))) inventory.add(name);
+      else if (hash === null) ambiguous.set(name, {path: name, original_round: round.round,
+        original_role: semanticSourceDiagnostic(name) ? "SEMANTIC_DIAGNOSTIC" : "AMBIGUOUS_LEGACY_NULL_INPUT",
+        reason: "An own-null key without explicit typed source provenance or a bound existing-parent absence witness supplies context only; independent current source adoption is required."});
     }
     for (const name of round.snapshot.source_paths ?? []) inventory.add(name);
     for (const item of [...round.coverage ?? [], ...round.validations ?? [], ...round.observed_assessment?.coverage ?? [], ...round.observed_assessment?.validations ?? []]) {
@@ -137,7 +144,7 @@ export async function observationSourcePaths({directory, base, series = null, wi
     if (inventory.has(name) || typed.has(name) || legacySourceName(name)) names.add(name);
   }
   const paths = [...names].filter((name) => !external.has(name) && (inventory.has(name) || typed.has(name) || legacySourceName(name))).sort();
-  return withBindingState ? {paths, established: paths.filter((name) => known.has(name))} : paths;
+  return withBindingState ? {paths, established: paths.filter((name) => known.has(name)), ambiguous: [...ambiguous.values()].filter(item => !paths.includes(item.path))} : paths;
 }
 
 export async function inheritObservedEvidence({directory, base, requestedEvidence = [], root = directory, cohortAudit}) {
@@ -312,7 +319,7 @@ export async function prepareSeries({directory, candidate, inputs, files, fileFa
   // continuity and show scope changes explicitly for independent reassessment.
   const snapshot = reviewSnapshot({candidate, inputs, files, fileFacts, environment});
   if (environmentProvenance) snapshot.environment_provenance_sha256 = environmentProvenance;
-  const {paths: observedPaths, established} = await observationSourcePaths({series, withBindingState: true});
+  const {paths: observedPaths, established, ambiguous: ambiguousSources} = await observationSourcePaths({series, withBindingState: true});
   const observedSources = inputs.observed_sources ?? await observedSourceBindings(root, observedPaths, {allowUnavailable: observedPaths.filter((name) => !established.includes(name))});
   const unavailableSources = observedSources.filter((item) => item.availability === "UNAVAILABLE");
   if (observedSources.length) {
@@ -547,7 +554,7 @@ export async function prepareSeries({directory, candidate, inputs, files, fileFa
     changed_since_previous: changed, proposal_scope_changed: Boolean(previous && previous.snapshot.proposal_sha256 !== inputs.proposal_sha256),
     previous_proposal: previous?.proposal_record?.proposal ?? null, current_proposal: proposalRecord?.proposal ?? null,
     pending_changed_paths: pendingChanged, initial_assessment_complete: initialAssessmentComplete,
-    path_dispositions: pathDispositions, supporting_coverage: supportingCoverage, navigation_coverage: navigationCoverage, observed_assessments: observedAssessments, observed_cohorts: cohortAssessments, unavailable_sources: unavailableSources,
+    path_dispositions: pathDispositions, supporting_coverage: supportingCoverage, navigation_coverage: navigationCoverage, observed_assessments: observedAssessments, observed_cohorts: cohortAssessments, unavailable_sources: unavailableSources, ambiguous_source_context: ambiguousSources,
     last_complete_verdict: series.rounds.findLast((round) => round.review_status === "COMPLETE")?.verdict ?? null,
     latest_repair_plan: previous?.repair_plan ?? null,
     prior_findings: previous?.findings ?? [], eligible_coverage: eligibleCoverage, eligible_validations: eligibleValidation, invalidated,

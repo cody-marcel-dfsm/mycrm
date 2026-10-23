@@ -65,6 +65,13 @@ function boundedPayload(value, evidence, primary) {
       return [version.original_sha256, Number(location[1]), Number(location[2])];
     });
   }
+  if (serializedPayloadBytes(value) > payloadLimit) {
+    value.retained_collections = {...value.retained_collections,
+      eligible_coverage: collection(context.eligible_coverage ?? [], "/review_context/eligible_coverage")};
+    value.review_context.eligible_coverage = value.review_context.eligible_coverage.map(item => ({path: item.path,
+      input_sha256: item.input_sha256, original_sha256: item.original_sha256, original_reference: item.original_reference,
+      independent_current_applicability_required: true}));
+  }
   if (serializedPayloadBytes(value) > payloadLimit) throw new Error(`Cohort payload exceeds its bound after retained collection projection: ${serializedPayloadBytes(value)} bytes`);
   return value;
 }
@@ -90,9 +97,14 @@ export function partitionPayload(plan, cohort, evidence) {
   const findingIndex = (item, pointer) => ({id: item.id, severity: item.severity, code: item.code,
     path: item.path, origin: item.origin, required_behavior: String(item.required_behavior ?? "").slice(0, 300),
     original_sha256: bindingHash(item), original_reference: original(pointer)});
-  const summarize = (items) => items.filter((item) => names.has(item.path)).map((item) => ({path: item.path,
+  const summarize = (items, pointer) => items.flatMap((item, index) => names.has(item.path) ? [{path: item.path,
     input_sha256: item.input_sha256 ?? null, dependencies: item.dependencies,
-    origin: item.origin ?? item.round ?? null, assessment: String(item.assessment ?? item.reason ?? "").slice(0, 700)}));
+    origin: typeof item.origin === "object" && item.origin ? {kind: item.origin.kind, id: item.origin.id, original_round: item.origin.original_round,
+      original_tree: item.origin.original_tree, aggregate_status: item.origin.aggregate_status, child_status: item.origin.child_status, child_verdict: item.origin.child_verdict} : item.origin ?? item.round ?? null,
+    assessment: String(item.assessment ?? item.reason ?? "").slice(0, 700),
+    independent_current_applicability_required: true, policy_applicability: item.policy_applicability ?? null,
+    original_sha256: bindingHash(item), original_reference: original(`${pointer}/${index}`)}] : []);
+
   const value = {cohort: {...cohort, candidate_commit: plan.candidate_commit, candidate_tree: plan.candidate_tree,
     input_binding_sha256: plan.input_binding_sha256, plan_sha256: plan.plan_sha256},
     inputs: {authorities: (evidence.inputs.authorities ?? []).map((item, index) => ({path: item.path, sha256: item.sha256,
@@ -102,8 +114,11 @@ export function partitionPayload(plan, cohort, evidence) {
       authority_manifest_reference: {file: "../../evidence.json", pointer: "/inputs/authorities"}, candidate_commit: plan.candidate_commit,
       reviewed_tree: plan.candidate_tree, owner: evidence.inputs.owner},
     staged_files: evidence.staged_files,
-    review_context: {required_paths: cohort.required_paths, eligible_coverage: summarize(context.eligible_coverage ?? []),
-      supporting_coverage: summarize(context.supporting_coverage ?? []),
+    review_context: {required_paths: cohort.required_paths, eligible_coverage: summarize(context.eligible_coverage ?? [], "/review_context/eligible_coverage"),
+      supporting_coverage: summarize(context.supporting_coverage ?? [], "/review_context/supporting_coverage"),
+      ambiguous_source_context: primary ? {count: (context.ambiguous_source_context ?? []).length,
+        original_sha256: bindingHash(context.ambiguous_source_context ?? []), original_reference: original("/review_context/ambiguous_source_context"),
+        source_eligibility: "CONTEXT_ONLY_REQUIRES_INDEPENDENT_CURRENT_ADOPTION"} : null,
       prior_findings: primary ? context.prior_findings.map((item, index) => findingIndex(item, `/review_context/prior_findings/${index}`)) : [],
       finding_history: primary ? context.finding_history.map((item, index) => ({id: item.id, code: item.code, path: item.path,
         last_status: item.last_status, last_round: item.last_round, original_sha256: bindingHash(item),

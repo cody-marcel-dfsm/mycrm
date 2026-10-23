@@ -1031,7 +1031,8 @@ test("selected Git input batching preserves filtered bytes, quoted names, all in
   await writeFile(path.join(repo, "missing.txt"), "synthetic indexed missing bytes"); await git("add", "--", "missing.txt"); await rm(path.join(repo, "missing.txt"));
   const quote = value => `'${value.replaceAll("'", "'\\''")}'`;
   const actualGit = (await execute("which", ["git"])).stdout.trim(), bin = path.join(root, "count-git"), log = path.join(root, "git-processes.log");
-  await mkdir(bin); await writeFile(path.join(bin, "git"), `#!/bin/sh\nprintf '%s\\n' "$*" >> ${quote(log)}\nexec ${quote(actualGit)} "$@"\n`); await chmod(path.join(bin, "git"), 0o755);
+  const mutation = path.join(root, "mutate-index-on-inventory");
+  await mkdir(bin); await writeFile(path.join(bin, "git"), `#!/bin/sh\nprintf '%s\\n' "$*" >> ${quote(log)}\nif [ "$*" = 'ls-files --stage' ] && [ -f ${quote(mutation)} ]; then\n  ${quote(actualGit)} "$@"\n  result=$?\n  rm ${quote(mutation)}\n  ${quote(actualGit)} update-index --chmod=+x -- batch-0.txt\n  exit "$result"\nfi\nexec ${quote(actualGit)} "$@"\n`); await chmod(path.join(bin, "git"), 0o755);
   for (const quotePath of ["true", "false"]) {
     await git("config", "core.quotePath", quotePath);
     const started = performance.now(), expected = {files: {}, selected_index: {}};
@@ -1046,6 +1047,26 @@ test("selected Git input batching preserves filtered bytes, quoted names, all in
     assert.deepEqual((await readFile(log, "utf8")).trim().split("\n").sort(), ["hash-object --stdin-paths", "ls-files --stage"]);
     assert.match(current.snapshot.selected_index["indexed-link.txt"], /^120000 /); assert.equal(current.snapshot.selected_index["conflict.txt"].split("\n").length, 3);
     console.log(`MYCRM_SELECTED_INPUT_BATCH_COMPARISON=${JSON.stringify({files: names.length, quote_path: quotePath, previous_git_processes: names.length * 2 + 1, current_git_processes: 2, previous_ms: priorMs, current_ms: current.elapsed_ms})}`);
+    const auditEnv = {...process.env, CODEX_THREAD_ID: "", CODEX_SELECTED_MODEL: "synthetic-test-model", CODEX_SELECTED_REASONING_EFFORT: "high", PATH: `${bin}${path.delimiter}${process.env.PATH}`};
+    await writeFile(path.join(repo, "missing.txt"), "synthetic indexed missing bytes");
+    const captured = await command(repo, ["validate", ...[...names, "missing.txt"].flatMap(name => ["--input", name]), "--", process.execPath, "-e", "console.log('Synthetic exact selected inputs')"], auditEnv);
+    const reference = captured.stdout.match(/ORACLE_VALIDATION_EVIDENCE=(.+)/)[1].trim();
+    const auditSource = `import {readValidationProofs} from ${JSON.stringify(module)}; import {evidenceBinding} from ${JSON.stringify(new URL("../scripts/oracle-inputs.mjs", import.meta.url).href)};const started=performance.now();const proofs=await readValidationProofs({root:process.cwd(),directory:process.cwd()+'/.git/oracle',validation:[await evidenceBinding(process.cwd(),${JSON.stringify(reference)})]});console.log(JSON.stringify({eligible:proofs[0].eligible,reason:proofs[0].reason,elapsed_ms:performance.now()-started}));`;
+    await rm(log, {force: true});
+    const audited = JSON.parse((await execute(process.execPath, ["--input-type=module", "-e", auditSource], {cwd: repo, env: auditEnv})).stdout);
+    assert.equal(audited.eligible, true, audited.reason);
+    const launches = (await readFile(log, "utf8")).trim().split("\n");
+    assert.equal(launches.filter(line => line === "ls-files --stage").length, 2); assert.equal(launches.length, 4);
+    assert.ok(!launches.some(line => line.startsWith("ls-files --stage -- ")), "Native proof audit launched a selected index Git process per path");
+    console.log(`MYCRM_SELECTED_INDEX_AUDIT=${JSON.stringify({selected_inputs: names.length + 1, quote_path: quotePath, git_processes: launches.length, index_inventory_processes: 2, elapsed_ms: audited.elapsed_ms})}`);
+    await rm(path.join(repo, "missing.txt"));
+    const absent = JSON.parse((await execute(process.execPath, ["--input-type=module", "-e", auditSource], {cwd: repo, env: auditEnv})).stdout);
+    assert.equal(absent.eligible, false); assert.match(absent.reason, /mode\/type/);
+    await writeFile(path.join(repo, "missing.txt"), "synthetic indexed missing bytes");
+    await writeFile(mutation, "Synthetic staged-mode movement after initial inventory");
+    await assert.rejects(execute(process.execPath, ["--input-type=module", "-e", auditSource], {cwd: repo, env: auditEnv}), /index batch-0.txt/);
+    await git("update-index", "--chmod=-x", "--", "batch-0.txt");
+    await rm(path.join(repo, "missing.txt"));
   }
   await assert.rejects(selectedGitInputs(repo, ["absent.txt"]), /hash-object|could not open|No such file/);
 });

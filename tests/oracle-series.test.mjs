@@ -334,12 +334,16 @@ test("retained filename-bearing diagnostics remain criteria while typed current/
 
 test("legacy own null source keys retain ignored whitespace absence obligations without finding or coverage provenance", async t => {
   const {prepare, options} = await fixture(t), root = path.join(options.directory, "source"); await mkdir(root);
+  await mkdir(path.join(root, "ignored directory"));
   const name = "ignored directory/absent-helper.mjs", diagnostics = [
     "Current governing-input reconciliation: Vault/docs/design.md advanced; fresh preparation must assess its delta.",
     "Exact-candidate required-command composition: both supplied manifests bind earlier commits / trees.",
-    "Execution coverage for the changed audit in tests/audit.test.mjs against scripts/audit.mjs remains unfinished."
+    "Execution coverage for the changed audit in tests/audit.test.mjs against scripts/audit.mjs remains unfinished.",
+    "Execution coverage for a previously unseen helper in tests/new.test.mjs against scripts/new.mjs needs fresh applicability.",
+    "Unseen review commentary about tests/another.test.mjs and scripts/another.mjs."
   ];
-  const attempted = await prepare({root, files: {...options.files, [name]: null}});
+  const absence = (await observedSourceBindings(root, [name]))[0];
+  const attempted = await prepare({root, files: {...options.files, [name]: null}, fileFacts: {[name]: {metadata: absence.metadata, ancestors: absence.ancestors}}});
   delete attempted.snapshot.source_paths;
   Object.assign(attempted.snapshot.files, Object.fromEntries(diagnostics.map(value => [value, null])));
   attempted.snapshot.observed_source_paths = [name, ...diagnostics];
@@ -348,7 +352,7 @@ test("legacy own null source keys retain ignored whitespace absence obligations 
   const current = await prepare({root}), observed = await observationSourcePaths({series: current.series, withBindingState: true});
   assert.ok(observed.paths.includes(name)); assert.ok(observed.established.includes(name));
   assert.ok(current.public.required_paths.includes(name)); assert.equal(current.snapshot.files[name], null);
-  for (const diagnostic of diagnostics) { assert.ok(!observed.paths.includes(diagnostic)); assert.ok(!current.public.required_paths.includes(diagnostic)); }
+  for (const diagnostic of diagnostics) { assert.ok(!observed.paths.includes(diagnostic)); assert.ok(!current.public.required_paths.includes(diagnostic)); assert.ok(current.public.ambiguous_source_context.some(item => item.path === diagnostic)); }
   const fresh = response({coverage: current.public.required_paths.map(value => coverage(value))});
   assert.throws(() => assessRound(current, {...fresh, coverage: fresh.coverage.filter(item => item.path !== name)}, []), /lacks coverage/);
   assert.doesNotThrow(() => assessRound(current, fresh, []));
@@ -359,7 +363,7 @@ test("legacy own null source keys retain ignored whitespace absence obligations 
   const manifest = JSON.parse(await readFile(packet.reference.path)); assert.equal(manifest.items[0].path, name);
   assert.ok(manifest.items[0].versions.every(version => version.state === "ABSENT"));
   const before = await observedSourceBindings(root, [name]);
-  await mkdir(path.join(root, "ignored directory")); await writeFile(path.join(root, name), "export const synthetic = true;\n");
+  await writeFile(path.join(root, name), "export const synthetic = true;\n");
   const after = await observedSourceBindings(root, [name]);
   assert.throws(() => assertInputsMatch({observed_sources: before}, {observed_sources: after}), /inputs drifted/);
 });

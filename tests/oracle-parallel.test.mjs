@@ -38,6 +38,23 @@ test("parallel plan bounds each payload and preserves exact candidate and mandat
   }
 });
 
+test("eligible native reuse candidates preserve every exact original while serialized navigation stays bounded", () => {
+  const e = evidence();
+  e.review_context.required_paths = Array.from({length: 51}, (_, index) => `src/helper-${index}.mjs`);
+  e.review_context.eligible_coverage = e.review_context.required_paths.map((name, index) => ({path: name, input_sha256: String(index).padStart(64, "a"),
+    dependencies: Array.from({length: 80}, (_, n) => `src/dependency-${n}.mjs`), assessment: "Retained actual assessment. ".repeat(1000),
+    origin: {kind: "NATIVE_COMPLETED_CHILD", id: "synthetic-native-child", original_tree: candidate.tree, aggregate_status: "ERROR", child_status: "COMPLETE", child_verdict: "REJECTED", custody: "original private custody ".repeat(10000)},
+    policy_applicability: {status: "FRESH_INDEPENDENT_CURRENT_CRITERIA_VERIFICATION_REQUIRED"}}));
+  const original = JSON.stringify(e), plan = cohortPlan({candidate, inputs, context: e.review_context}), cohort = plan.cohorts.find(item => item.id === "implementation-consumers");
+  const payload = partitionPayload(plan, cohort, e);
+  assert.ok(Buffer.byteLength(`${JSON.stringify(payload, null, 2)}\n`) <= payloadLimit);
+  assert.equal(payload.review_context.eligible_coverage.length, 51); assert.equal(JSON.stringify(e), original);
+  for (const [index, item] of payload.review_context.eligible_coverage.entries()) {
+    assert.equal(item.path, e.review_context.required_paths[index]); assert.equal(item.original_reference.pointer, `/review_context/eligible_coverage/${index}`);
+    assert.equal(item.original_sha256, bindingHash(e.review_context.eligible_coverage[index])); assert.equal(item.independent_current_applicability_required, true);
+  }
+});
+
 test("cohort navigation keeps actual prior-attempt and cumulative pending deltas distinct", () => {
   const e = evidence(); e.review_context.changed_since_previous = [names[1]]; e.review_context.pending_changed_paths = [...names];
   const plan = cohortPlan({candidate, inputs, context: e.review_context});

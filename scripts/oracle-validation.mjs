@@ -27,17 +27,8 @@ function indexedPath(value) {
   return Buffer.from(bytes).toString("utf8");
 }
 
-export async function selectedGitInputs(root, names, {missing = []} = {}) {
-  if (!names.length && !missing.length) return {files: {}, selected_index: {}};
-  const [hashes, index] = await Promise.all([
-    names.length ? new Promise((resolve, reject) => {
-      const child = execFile("git", ["hash-object", "--stdin-paths"], {cwd: root, encoding: "utf8", maxBuffer: 16 * 1024 * 1024}, (error, stdout) => error ? reject(error) : resolve(stdout));
-      child.stdin.on("error", reject); child.stdin.end(`${names.map(gitPath).join("\n")}\n`);
-    }) : Promise.resolve(""),
-    execute("git", ["ls-files", "--stage"], {cwd: root, maxBuffer: 16 * 1024 * 1024}).then(result => result.stdout),
-  ]);
-  const values = names.length ? hashes.trim().split("\n") : [];
-  if (values.length !== names.length || values.some(value => !/^[a-f0-9]{40}(?:[a-f0-9]{24})?$/.test(value))) throw new Error("Selected Git input hash inventory is incomplete");
+async function indexEntries(root) {
+  const index = (await execute("git", ["ls-files", "--stage"], {cwd: root, maxBuffer: 16 * 1024 * 1024})).stdout;
   const entries = new Map();
   for (const line of index.split("\n").filter(Boolean)) {
     const separator = line.indexOf("\t");
@@ -45,8 +36,22 @@ export async function selectedGitInputs(root, names, {missing = []} = {}) {
     const name = indexedPath(line.slice(separator + 1));
     entries.set(name, [...entries.get(name) ?? [], line]);
   }
+  return new Map([...entries].map(([name, lines]) => [name, lines.join("\n").trim()]));
+}
+
+export async function selectedGitInputs(root, names, {missing = []} = {}) {
+  if (!names.length && !missing.length) return {files: {}, selected_index: {}};
+  const [hashes, entries] = await Promise.all([
+    names.length ? new Promise((resolve, reject) => {
+      const child = execFile("git", ["hash-object", "--stdin-paths"], {cwd: root, encoding: "utf8", maxBuffer: 16 * 1024 * 1024}, (error, stdout) => error ? reject(error) : resolve(stdout));
+      child.stdin.on("error", reject); child.stdin.end(`${names.map(gitPath).join("\n")}\n`);
+    }) : Promise.resolve(""),
+    indexEntries(root),
+  ]);
+  const values = names.length ? hashes.trim().split("\n") : [];
+  if (values.length !== names.length || values.some(value => !/^[a-f0-9]{40}(?:[a-f0-9]{24})?$/.test(value))) throw new Error("Selected Git input hash inventory is incomplete");
   return {files: Object.fromEntries([...names.map((name, position) => [name, values[position]]), ...missing.map(name => [name, null])]),
-    selected_index: Object.fromEntries([...names, ...missing].map(name => [name, (entries.get(name) ?? []).join("\n").trim()]))};
+    selected_index: Object.fromEntries([...names, ...missing].map(name => [name, entries.get(name) ?? ""]))};
 }
 
 export async function fileMetadata(root, names) {
@@ -116,8 +121,11 @@ export async function readValidationProofs({root, directory, validation, checkCu
     return metadataHashes.get(metadata);
   };
   const executableFor = (program, cwd) => memo(executables, JSON.stringify([program, cwd]), () => executableBinding(program, environment, cwd));
-  const inspectIndex = async name => (await execute("git", ["ls-files", "--stage", "--", name], {cwd: root})).stdout.trim();
-  const indexFor = name => memo(indexes, name, () => inspectIndex(name));
+  let initialIndex;
+  const indexFor = name => memo(indexes, name, async () => {
+    initialIndex ??= indexEntries(root);
+    return (await initialIndex).get(name) ?? "";
+  });
   const membership = async () => (await execute("git", ["ls-files", "--cached", "--stage", "--others", "--exclude-standard", "-z"], {cwd: root, maxBuffer: 16 * 1024 * 1024})).stdout;
   const initialMembership = checkCurrentExecutable && validation.length ? await membership() : null;
   const canonicalDirectory = await metadataDirectory(path.dirname(directory), directory, {create: false});
@@ -177,7 +185,8 @@ export async function readValidationProofs({root, directory, validation, checkCu
       const [program, cwd] = JSON.parse(key);
       if (bindingHash(await initial) !== bindingHash(await executableBinding(program, process.env, cwd))) changed(`executable ${program}`);
     }
-    for (const [name, initial] of indexes) if (await initial !== await inspectIndex(name)) changed(`index ${name}`);
+    const finalIndex = indexes.size ? await indexEntries(root) : null;
+    for (const [name, initial] of indexes) if (await initial !== (finalIndex.get(name) ?? "")) changed(`index ${name}`);
     for (const proof of proofs) if (proof.current_provenance.environment !== environmentHash(process.env, proof.record.environment_inputs ?? [])) changed("functional environment");
     if (initialMembership !== null && initialMembership !== await membership()) changed("Git source membership/index");
   }
