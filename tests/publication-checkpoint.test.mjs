@@ -114,6 +114,15 @@ test("legacy complete approval imports its validation seal once and repeated Git
   assert.equal(repeated.prepared_record, first.prepared_record); assert.equal(f.admissions(), 1); assert.equal(exports, 1);
 });
 
+test("equivalent later complete approval preserves the original prepared decision and receipt", async t => {
+  const f = await fixture(t), first = await preparePublication({root: f.root, admit: f.admit});
+  const prior = (await readPreparedPublication(first.prepared_record, {root: f.root})).record;
+  await recordPublicationDecision({root: f.root, sourceCommit: f.source, sourceTree: f.tree, status: "APPROVED", receipt: prior.admission.technical_receipt_sha256, decisionId: "synthetic-later-equivalent-decision"});
+  const repeated = await preparePublication({root: f.root, admit: async () => {throw new Error("Equivalent complete coverage was audited twice");}});
+  assert.equal(repeated.prepared_record, first.prepared_record);
+  assert.equal((await readPreparedPublication(first.prepared_record, {root: f.root})).record.decision_sha256, prior.decision_sha256);
+});
+
 test("unrelated candidate decisions and proposal changes preserve fixed-source admission; changed markers fail closed", async t => {
   const f = await fixture(t), prepared = await preparePublication({root: f.root, admit: f.admit});
   await writeFile(path.join(f.root, "source.txt"), "synthetic later author\n"); await f.git("add", "."); await f.git("commit", "-m", "Synthetic unrelated candidate");

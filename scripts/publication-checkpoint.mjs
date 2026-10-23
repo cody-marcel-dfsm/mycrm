@@ -51,6 +51,18 @@ async function replacePointer(filename, bytes) {
 
 const decisionName = (directory, commit, tree) => path.join(directory, `${commit}-${tree}.decision`);
 const attemptName = (directory, commit, tree) => path.join(directory, `${commit}-${tree}.attempt`);
+function coverageIdentity(coverage) {
+  if (coverage.plan) {
+    const {receipt, effects, commit, tree, reviewedCommit} = coverage.plan;
+    const observations = [...receipt.coverage ?? [], ...receipt.reused_coverage ?? []].map(item => ({path: item.path,
+      dependencies: [...item.dependencies ?? []].sort(), criteria: [...item.criteria ?? []].sort()})).sort((a, b) => canonical(a).localeCompare(canonical(b)));
+    return canonical({commit, tree, reviewedCommit, inputs: receipt.input_binding, observations,
+      api_version_assessment: receipt.api_version_assessment, authentication_impact: receipt.authentication_impact,
+      effects: effects.map(item => ({key: item.receipt.receipt_sha256 === receipt.receipt_sha256 ? `current:${item.effect.id}` : item.key, effect: item.effect})),
+      baseline: receipt.deployment_baseline_commit});
+  }
+  return canonical(coverage.admitted);
+}
 async function readDecision(current, sourceCommit, sourceTree, filename = decisionName(current.directory, sourceCommit, sourceTree)) {
   const record = JSON.parse(await boundedRead(filename));
   if (record.schema !== "my-crm.publication-decision/v1" || record.purpose !== "product-publication" || record.record_sha256 !== digest(record)
@@ -95,6 +107,15 @@ export async function recordPublicationDecision({root = process.cwd(), sourceCom
     if (active.decision_id !== expectedDecisionId) return record;
   }
   await replacePointer(attempt, bytes);
+  if (status === "APPROVED") {
+    let prior; try {prior = await readDecision(current, sourceCommit, sourceTree);} catch (error) {if (error.code !== "ENOENT") throw error;}
+    if (prior?.status === "APPROVED" && prior.validation_plan_sha256 && validationPlanHash) {
+      const previous = JSON.parse(await boundedRead(path.join(current.directory, `${prior.validation_plan_sha256}.coverage.json`)));
+      const next = JSON.parse(await boundedRead(path.join(current.directory, `${validationPlanHash}.coverage.json`)));
+      if (hash(canonical(previous)) !== prior.validation_plan_sha256) throw new Error("Original validated coverage seal changed");
+      if (coverageIdentity(previous) === coverageIdentity(next)) return prior;
+    } else if (prior?.status === "APPROVED" && !validationPlanHash && prior.technical_receipt_sha256 === receipt) return prior;
+  }
   if (["IN_PROGRESS", "INCOMPLETE", "ERROR"].includes(status)) {
     let prior; try { prior = await readDecision(current, sourceCommit, sourceTree); } catch (error) { if (error.code !== "ENOENT") throw error; }
     // Raw attempts retain their own immutable outcome. Explicit candidate
