@@ -14,8 +14,8 @@ import Ajv from "ajv";
 import {recordValidatedCommit, readValidatedCheckpoint, shipmentPlan} from "./shipment-state.mjs";
 import {runParallelReview, verifyParallelArtifacts, nativeCohortObservations} from "./oracle-parallel.mjs";
 import {withReviewController} from "./oracle-lifecycle.mjs";
-import {recordPublicationDecision} from "./publication-checkpoint.mjs";
-import {archiveTechnicalReceipt, committedReceipt, deploymentHistoryForReview, deploymentPlan, pendingDeploymentEffects, authorizationDigest, validateDeploymentAssessment, validateDeploymentDispositions, verifyNewEffectAuthorities, verifyDeploymentAuthorization} from "./oracle-deployment.mjs";
+import {recordPublicationDecision, sealPublicationValidation} from "./publication-checkpoint.mjs";
+import {archiveTechnicalReceipt, committedReceipt, deploymentHistoryForReview, deploymentPlan, publicationPlanFromValidatedReceipt, pendingDeploymentEffects, authorizationDigest, validateDeploymentAssessment, validateDeploymentDispositions, verifyNewEffectAuthorities, verifyDeploymentAuthorization} from "./oracle-deployment.mjs";
 
 const execFileAsync = promisify(execFile);
 const TRAILERS = Object.freeze({verdict: "Oracle-Verdict", tree: "Oracle-Reviewed-Tree", receipt: "Oracle-Receipt-SHA256"});
@@ -518,7 +518,10 @@ async function review(args = [], {run, phase, producer = null, verifyProducer = 
   }
   process.stdout.write(`ORACLE_VERDICT=${receipt.verdict} tree=${receipt.reviewed_tree} receipt=${receipt.receipt_sha256}\n`);
   if (receipt.verdict !== "APPROVED") process.exitCode = 1;
-  if (publicationCandidate) await recordPublicationDecision({...publicationCandidate, expectedDecisionId: publicationCandidate.decisionId, status: receipt.verdict, receipt: receipt.receipt_sha256});
+  if (publicationCandidate) {
+    if (receipt.verdict === "APPROVED") await sealPublicationValidation({...publicationCandidate, expectedDecisionId: publicationCandidate.decisionId, receipt: receipt.receipt_sha256, plan: publicationPlanFromValidatedReceipt({receipt, history: deployment.history})});
+    else await recordPublicationDecision({...publicationCandidate, expectedDecisionId: publicationCandidate.decisionId, status: receipt.verdict, receipt: receipt.receipt_sha256});
+  }
   return receipt;
   } catch (error) {
     if (publicationCandidate) await recordPublicationDecision({...publicationCandidate, expectedDecisionId: publicationCandidate.decisionId, status: "ERROR"});

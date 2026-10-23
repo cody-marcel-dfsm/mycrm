@@ -297,6 +297,22 @@ export async function pendingDeploymentEffects(plan, root = process.cwd()) {
   return pending;
 }
 
+export function publicationPlanFromValidatedReceipt({receipt, history, commit = receipt.candidate_commit, reviewedCommit = receipt.candidate_commit} = {}) {
+  if (receipt.verdict !== "APPROVED" || receipt.review_status !== "COMPLETE" || !commitPattern.test(commit ?? "") || !commitPattern.test(receipt.reviewed_tree ?? "")) throw new Error("Publication coverage requires the complete exact-candidate decision");
+  const disposition = new Map(receipt.deployment_effect_dispositions.map(item => [effectKey(item.receipt_sha256, item.effect_id), item]));
+  const effects = [];
+  for (const entry of history) {
+    if (entry.receipt.receipt_sha256 === receipt.receipt_sha256) continue;
+    for (const effect of entry.receipt.protected_deployment_effects) {
+      const key = effectKey(entry.receipt.receipt_sha256, effect.id);
+      if (disposition.get(key)?.disposition === "EFFECTIVE") effects.push({key, effect, receipt: entry.receipt});
+    }
+  }
+  for (const effect of receipt.protected_deployment_effects) effects.push({key: effectKey(receipt.receipt_sha256, effect.id), effect, receipt});
+  const binding = {target_tree: receipt.reviewed_tree, technical_receipt_sha256: receipt.receipt_sha256, baseline_commit: receipt.deployment_baseline_commit, effects: effects.map(({key, effect}) => ({key, effect}))};
+  return {commit, reviewedCommit, tree: receipt.reviewed_tree, receipt, effects, binding, plan_sha256: bindingHash(binding)};
+}
+
 export async function deploymentPlan({root = process.cwd(), reference = "HEAD", requireClean = true} = {}) {
   const traversal = await historyTraversal(root), current = await cachedCommittedReceipt(root, reference, traversal);
   const {owner, value} = traversal.layout;
@@ -310,15 +326,8 @@ export async function deploymentPlan({root = process.cwd(), reference = "HEAD", 
   const history = await historyBetween(root, current.receipt.deployment_baseline_commit, current.commit, traversal.histories, current.receipt, traversal);
   const inherited = history.filter((entry) => entry.receipt.receipt_sha256 !== current.receipt.receipt_sha256);
   validateDeploymentDispositions(current.receipt, inherited);
-  const disposition = new Map(current.receipt.deployment_effect_dispositions.map((item) => [effectKey(item.receipt_sha256, item.effect_id), item]));
-  const effects = [];
-  for (const entry of history) for (const effect of entry.receipt.protected_deployment_effects) {
-    const key = effectKey(entry.receipt.receipt_sha256, effect.id);
-    if (entry.receipt.receipt_sha256 === current.receipt.receipt_sha256 || disposition.get(key)?.disposition === "EFFECTIVE") effects.push({key, effect, receipt: entry.receipt});
-  }
-  const binding = {target_tree: current.tree, technical_receipt_sha256: current.receipt.receipt_sha256, baseline_commit: current.receipt.deployment_baseline_commit, effects: effects.map(({key, effect}) => ({key, effect}))};
   await traversal.verify();
-  return {...current, effects, binding, plan_sha256: bindingHash(binding)};
+  return {...current, ...publicationPlanFromValidatedReceipt({receipt: current.receipt, history, commit: current.commit, reviewedCommit: current.reviewedCommit})};
 }
 
 export function authorizationDigest(record) {
@@ -338,6 +347,10 @@ export async function verifyDeploymentAuthorization(record, plan, root = process
 
 export async function admitDeployment({root = process.cwd(), reference = "HEAD"} = {}) {
   const plan = await deploymentPlan({root, reference});
+  return admitDeploymentPlan({root, plan});
+}
+
+export async function admitDeploymentPlan({root = process.cwd(), plan} = {}) {
   const pending = await pendingDeploymentEffects(plan, root);
   if (pending.length) {
     const {owner, value} = await directory(root);

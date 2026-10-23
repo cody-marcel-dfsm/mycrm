@@ -70,24 +70,31 @@ test("ordinary review refs need no private publication proof", async t => {
   await admitPreparedPush(`main ${f.source} refs/heads/codex/review ${zeros}\n`, {root: f.root, remote: "origin", remoteUrl: f.remote});
 });
 
-test("later whole-candidate rejection, incomplete assessment and errors revoke prepared publication", async t => {
-  const f = await fixture(t), prepared = await preparePublication({root: f.root, admit: f.admit});
+test("latest admitted whole-candidate outcomes and criteria invalidation revoke prepared publication", async t => {
+  const f = await fixture(t); let prepared = await preparePublication({root: f.root, admit: f.admit});
   const binding = {root: f.root, sourceCommit: f.source, sourceTree: f.tree};
   const tuple = `fixed-source ${f.source} refs/heads/main ${f.before}\n`;
-  for (const status of ["IN_PROGRESS", "REJECTED", "INCOMPLETE", "ERROR"]) {
+  for (const status of ["IN_PROGRESS", "INCOMPLETE", "ERROR", "REJECTED", "INVALIDATED_CRITERIA"]) {
     await recordPublicationDecision({...binding, status});
     let calls = 0;
     await assert.rejects(publishPrepared(prepared.prepared_record, {root: f.root, run: async () => {calls++;}}), /later native candidate decision/);
     await assert.rejects(admitPreparedPush(tuple, {root: f.root, remote: "origin", remoteUrl: f.remote}), /later native candidate decision/);
     assert.equal(calls, 0, `${status} allowed mutation`);
     await assert.rejects(preparePublication({root: f.root, admit: f.admit}), /latest native candidate approval/);
+    await recordPublicationDecision({...binding, status: "APPROVED", receipt: "a".repeat(64)});
+    const renewed = await preparePublication({root: f.root, admit: f.admit});
+    assert.notEqual(renewed.prepared_record, prepared.prepared_record);
+    await assert.rejects(readPreparedPublication(prepared.prepared_record, {root: f.root}), /later native candidate decision/);
+    prepared = renewed;
   }
-  await recordPublicationDecision({...binding, status: "APPROVED", receipt: "a".repeat(64)});
-  const renewed = await preparePublication({root: f.root, admit: f.admit});
-  assert.notEqual(renewed.prepared_record, prepared.prepared_record);
-  await assert.rejects(readPreparedPublication(prepared.prepared_record, {root: f.root}), /later native candidate decision/);
   await admitPreparedPush(tuple, {root: f.root, remote: "origin", remoteUrl: f.remote});
-  await readPreparedPublication(renewed.prepared_record, {root: f.root});
+  await readPreparedPublication(prepared.prepared_record, {root: f.root});
+});
+
+test("same-CL preparation consumes sealed validation without repeating deep admission", async t => {
+  const f = await fixture(t), first = await preparePublication({root: f.root, admit: f.admit});
+  const repeated = await preparePublication({root: f.root, admit: async () => {throw new Error("Repeated original-proof audit is forbidden");}});
+  assert.equal(repeated.prepared_record, first.prepared_record); assert.equal(f.admissions(), 1);
 });
 
 test("unrelated candidate decisions and proposal changes preserve fixed-source admission; changed markers fail closed", async t => {

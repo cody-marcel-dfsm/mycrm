@@ -50,39 +50,66 @@ async function replacePointer(filename, bytes) {
 }
 
 const decisionName = (directory, commit, tree) => path.join(directory, `${commit}-${tree}.decision`);
-async function readDecision(current, sourceCommit, sourceTree) {
-  const record = JSON.parse(await boundedRead(decisionName(current.directory, sourceCommit, sourceTree)));
+const attemptName = (directory, commit, tree) => path.join(directory, `${commit}-${tree}.attempt`);
+async function readDecision(current, sourceCommit, sourceTree, filename = decisionName(current.directory, sourceCommit, sourceTree)) {
+  const record = JSON.parse(await boundedRead(filename));
   if (record.schema !== "my-crm.publication-decision/v1" || record.purpose !== "product-publication" || record.record_sha256 !== digest(record)
       || record.repository_root !== current.root || record.source_commit !== sourceCommit || record.source_tree !== sourceTree
       || !["IN_PROGRESS", "APPROVED", "REJECTED", "INVALIDATED_CRITERIA", "INCOMPLETE", "ERROR"].includes(record.status)
       || typeof record.decision_id !== "string" || !record.decision_id
+      || record.validation_plan_sha256 != null && !sha.test(record.validation_plan_sha256)
       || record.status === "APPROVED" && !sha.test(record.technical_receipt_sha256 ?? "")) throw new Error("Native publication decision is malformed or bound to another candidate");
   return record;
 }
 
 // The native review writer advances one bounded candidate-specific decision.
 // Unrelated source commits and proposal attempts never change this identity.
-export async function recordPublicationDecision({root = process.cwd(), sourceCommit, sourceTree, status, receipt = null, decisionId = randomUUID(), ifAbsent = false, expectedDecisionId = null} = {}) {
+export async function recordPublicationDecision({root = process.cwd(), sourceCommit, sourceTree, status, receipt = null, decisionId = randomUUID(), ifAbsent = false, expectedDecisionId = null, validationPlan = null, admitted = null} = {}) {
   if (!oid.test(sourceCommit ?? "") || !oid.test(sourceTree ?? "") || !["IN_PROGRESS", "APPROVED", "REJECTED", "INVALIDATED_CRITERIA", "INCOMPLETE", "ERROR"].includes(status)
       || status === "APPROVED" && !sha.test(receipt ?? "")) throw new Error("Native publication decision requires an exact candidate and outcome");
   const current = await layout(root, true);
+  let validationPlanHash = null;
+  if (validationPlan || admitted) {
+    const coverage = {schema: "my-crm.publication-validation-coverage/v1", source_commit: sourceCommit, source_tree: sourceTree, technical_receipt_sha256: receipt, plan: validationPlan, admitted};
+    if (status !== "APPROVED" || validationPlan && (validationPlan.commit !== sourceCommit || validationPlan.tree !== sourceTree || validationPlan.receipt?.receipt_sha256 !== receipt)
+        || admitted && (admitted.source_commit !== sourceCommit || admitted.target_tree !== sourceTree || admitted.technical_receipt_sha256 !== receipt)) throw new Error("Sealed validation coverage differs from its exact candidate decision");
+    validationPlanHash = hash(canonical(coverage));
+    const coverageFile = path.join(current.directory, `${validationPlanHash}.coverage.json`), coverageBytes = `${JSON.stringify(coverage)}\n`;
+    try {await writeFile(coverageFile, coverageBytes, {flag: "wx", mode: 0o600});} catch (error) {if (error.code !== "EEXIST" || !(await boundedRead(coverageFile)).equals(Buffer.from(coverageBytes))) throw error;}
+  }
   const record = {schema: "my-crm.publication-decision/v1", purpose: "product-publication", repository_root: current.root, source_commit: sourceCommit, source_tree: sourceTree,
-    status, technical_receipt_sha256: receipt, decision_id: decisionId};
+    status, technical_receipt_sha256: receipt, decision_id: decisionId, validation_plan_sha256: validationPlanHash};
   record.record_sha256 = digest(record);
   const filename = path.join(current.directory, `${record.record_sha256}.decision.json`), bytes = `${JSON.stringify(record, null, 2)}\n`;
   try { await writeFile(filename, bytes, {flag: "wx", mode: 0o600}); }
   catch (error) { if (error.code !== "EEXIST" || !(await boundedRead(filename)).equals(Buffer.from(bytes))) throw error; }
   const pointer = decisionName(current.directory, sourceCommit, sourceTree);
+  const attempt = attemptName(current.directory, sourceCommit, sourceTree);
   if (ifAbsent) {
     try { await writeFile(pointer, bytes, {flag: "wx", mode: 0o600}); }
     catch (error) { if (error.code !== "EEXIST") throw error; return readDecision(current, sourceCommit, sourceTree); }
-  } else {
-    // A superseded attempt retains its immutable literal outcome without
-    // replacing the later whole-assessment decision for this same candidate.
-    if (expectedDecisionId && (await readDecision(current, sourceCommit, sourceTree)).decision_id !== expectedDecisionId) return record;
-    await replacePointer(pointer, bytes);
+  } else if (expectedDecisionId) {
+    const active = await readDecision(current, sourceCommit, sourceTree, attempt);
+    if (active.decision_id !== expectedDecisionId) return record;
   }
+  await replacePointer(attempt, bytes);
+  if (!ifAbsent) await replacePointer(pointer, bytes);
   return record;
+}
+
+export async function sealPublicationValidation({root = process.cwd(), sourceCommit, sourceTree, receipt, decisionId, expectedDecisionId, plan, ifAbsent = false} = {}) {
+  const validationPlan = plan ?? await (await import("./oracle-deployment.mjs")).deploymentPlan({root, reference: sourceCommit});
+  return recordPublicationDecision({root, sourceCommit, sourceTree, receipt, decisionId, expectedDecisionId, ifAbsent, status: "APPROVED", validationPlan});
+}
+
+async function admittedCoverage(current, decision) {
+  if (!decision.validation_plan_sha256) return null;
+  const coverage = JSON.parse(await boundedRead(path.join(current.directory, `${decision.validation_plan_sha256}.coverage.json`)));
+  if (hash(canonical(coverage)) !== decision.validation_plan_sha256 || coverage.schema !== "my-crm.publication-validation-coverage/v1" || coverage.source_commit !== decision.source_commit
+      || coverage.source_tree !== decision.source_tree || coverage.technical_receipt_sha256 !== decision.technical_receipt_sha256) throw new Error("Native validated command coverage seal changed");
+  if (coverage.plan) return (await import("./oracle-deployment.mjs")).admitDeploymentPlan({root: current.root, plan: coverage.plan});
+  if (coverage.admitted?.protected_effects?.length) throw new Error("Protected effect admission requires its sealed native effect plan");
+  return coverage.admitted;
 }
 
 export async function publicationDecisionStatus({root = process.cwd(), sourceCommit, sourceTree} = {}) {
@@ -131,15 +158,24 @@ export async function preparePublication({root = process.cwd(), reference = "HEA
     if (target.startsWith("refs/tags/")) throw new Error("Existing release tags cannot be replaced by prepared publication");
     await git(current.root, ["merge-base", "--is-ancestor", actualRemote, source_commit]);
   }
-  const admission = await (admit ?? (await import("./oracle-deployment.mjs")).admitDeployment)({root: current.root, reference: source_commit});
-  if (admission.status !== "ADMITTED" || admission.source_commit !== source_commit || admission.target_tree !== source_tree) throw new Error("Publication preparation requires complete exact-source validation and effect admission");
   let decision;
   try { decision = await readDecision(current, source_commit, source_tree); }
-  catch (error) {
-    if (error.code !== "ENOENT") throw error;
-    // Adopt an existing exact native receipt once when upgrading older state.
-    decision = await recordPublicationDecision({root: current.root, sourceCommit: source_commit, sourceTree: source_tree, status: "APPROVED", receipt: admission.technical_receipt_sha256, decisionId: `adopted:${admission.technical_receipt_sha256}`, ifAbsent: true});
+  catch (error) {if (error.code !== "ENOENT") throw error;}
+  if (decision && decision.status !== "APPROVED") throw new Error("Publication preparation requires the latest native candidate approval");
+  let admission = decision?.status === "APPROVED" ? await admittedCoverage(current, decision) : null;
+  if (!admission) {
+    // One explicit legacy import audit establishes an immutable coverage seal.
+    // Repeated same-CL preparation consumes that seal without proof traversal.
+    if (admit) {
+      admission = await admit({root: current.root, reference: source_commit});
+      decision = await recordPublicationDecision({root: current.root, sourceCommit: source_commit, sourceTree: source_tree, status: "APPROVED", receipt: admission.technical_receipt_sha256, admitted: admission, decisionId: `imported:${admission.technical_receipt_sha256}`, ifAbsent: true});
+    } else {
+      const native = await import("./oracle-deployment.mjs"), plan = await native.deploymentPlan({root: current.root, reference: source_commit});
+      admission = await native.admitDeploymentPlan({root: current.root, plan});
+      decision = await sealPublicationValidation({root: current.root, sourceCommit: source_commit, sourceTree: source_tree, receipt: admission.technical_receipt_sha256, plan, decisionId: `imported:${admission.technical_receipt_sha256}`, ifAbsent: true});
+    }
   }
+  if (admission.status !== "ADMITTED" || admission.source_commit !== source_commit || admission.target_tree !== source_tree) throw new Error("Publication preparation requires complete exact-source validation and effect admission");
   if (decision.status !== "APPROVED" || decision.technical_receipt_sha256 !== admission.technical_receipt_sha256) throw new Error("Publication preparation requires the latest native candidate approval");
   const github = remoteUrl.match(/^(?:https:\/\/github\.com\/|git@github\.com:)([A-Za-z0-9_.-]+\/[A-Za-z0-9_.-]+?)(?:\.git)?$/);
   const validation_transport = github ? await (attest ?? (await import("./validation-transport.mjs")).exportNativeValidation)({root: current.root, repository: github[1], sourceCommit: source_commit, sourceTree: source_tree, remote, admission}) : null;

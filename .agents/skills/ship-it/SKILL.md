@@ -197,6 +197,14 @@ status/history traversal or moving-HEAD check. Concurrent authors may continue.
 The family coordinator dispatches its prepared member pushes in parallel with a
 less-than-ten-second publication target. Complete required CI/status preparation
 before publication; publication never waits for or repeats validation.
+Completed validation seals exact-CL command/source/effect coverage. Same-CL
+preparation consumes that seal; perform one legacy import audit only when no
+reusable seal exists. A later explicit completed rejection or detected governing
+criteria invalidation revokes candidate readiness through compact native metadata.
+Genuine later admitted whole-candidate IN_PROGRESS, INCOMPLETE and ERROR retain
+their original attempt records and require reconciliation before publication.
+Superseded attempts and unrelated commits/proposals preserve the later or fixed
+source checkpoint. Attempt supersession custody stays separate from readiness.
 
 Use `npm run install:reviewed` for supported native installation. Preserve
 immutable historical receipts alongside committed review checkpoints. Ordinary

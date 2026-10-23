@@ -25,9 +25,9 @@ export async function githubRequest(method, endpoint, body) {
     const child = spawn("gh", ["api", endpoint, "--method", method, "-H", "Accept: application/vnd.github+json", ...(body === undefined ? [] : ["--input", "-"])], {stdio: ["pipe", "pipe", "pipe"]});
     const output = [], errors = []; let size = 0;
     child.stdout.on("data", value => {size += value.length; if (size > 4 * 1024 * 1024) child.kill(); else output.push(value);});
-    child.stderr.on("data", value => errors.push(value)); child.once("error", reject);
+    child.stderr.on("data", value => errors.push(value)); child.once("error", reject); child.stdin.on("error", reject);
     child.once("close", code => {
-      if (code !== 0 || size > 4 * 1024 * 1024) {const error = new Error(`GitHub validation transport failed (${code}): ${Buffer.concat(errors).toString().slice(0, 400)}`); error.status = /\b404\b/.test(Buffer.concat(errors).toString()) ? 404 : null; reject(error);}
+      if (code !== 0 || size > 4 * 1024 * 1024) {const status = Buffer.concat(errors).toString().match(/\b(?:4\d\d|5\d\d)\b/)?.[0]; const error = new Error(`GitHub validation transport request failed (${status ?? code})`); error.status = status ? Number(status) : null; reject(error);}
       else try {resolve(JSON.parse(Buffer.concat(output).toString()));} catch (error) {reject(error);}
     });
     child.stdin.end(body === undefined ? undefined : JSON.stringify(body));
