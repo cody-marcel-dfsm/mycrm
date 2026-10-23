@@ -180,6 +180,12 @@ async function readCommittedReceipt(root, reference, traversal) {
     const reviewed = await cachedCommittedReceipt(root, parents[1], traversal);
     return {...reviewed, commit, tree, reviewedCommit: reviewed.reviewedCommit};
   }
+  if (detached) {
+    const {admittedCheckpoint} = await import("./shipment-state.mjs");
+    const admitted = await admittedCheckpoint({root, owner: traversal.layout.owner, directory: traversal.layout.value, record: detached, read: filename => traversal.read(filename, "utf8")});
+    if (!admitted || admitted.record.last_validated_commit !== commit) throw missingHistory("Committed-source receipt awaits complete native terminal admission");
+    detached = admitted.record;
+  }
   const trailers = detached ? {"Oracle-Receipt-SHA256": detached.receipt_sha256} : verifyPublishedCommitTrailers({message, tree});
   const {owner, value} = traversal.layout;
   const filename = path.join(value, "technical-receipts", `${trailers["Oracle-Receipt-SHA256"]}.json`);
@@ -187,6 +193,8 @@ async function readCommittedReceipt(root, reference, traversal) {
   try { original = await traversal.read(filename, "utf8"); }
   catch (error) { if (error.code === "ENOENT") throw missingHistory("Original private historical technical receipt is unavailable", error); throw error; }
   const receipt = verifyReceipt(JSON.parse(original), tree);
+  const {terminalAdmissionComplete} = await import("./publication-checkpoint.mjs");
+  if (!await terminalAdmissionComplete({owner, receipt, read: filename => traversal.read(filename, "utf8")})) throw missingHistory("Committed-source receipt awaits complete native terminal admission");
   if (receipt.receipt_sha256 !== trailers["Oracle-Receipt-SHA256"]) throw new Error("Archived technical receipt identity differs from the reviewed commit stamp");
   const {sha256} = await import("./oracle-review.mjs");
   if (receipt.schema !== "my-crm.oracle-approval/v2" || receipt.review_status !== "COMPLETE" || receipt.reviewer?.role !== "independent-project-oracle" || receipt.reviewer.ephemeral !== true || receipt.reviewer.ignore_user_config !== true || !text(receipt.reviewer.model) || !hashPattern.test(receipt.reviewer.role_instruction_sha256 ?? "") || receipt.reviewer_metadata_sha256 !== sha256(`${JSON.stringify(receipt.reviewer, null, 2)}\n`)) throw new Error("Archived technical receipt lacks original independent reviewer custody");

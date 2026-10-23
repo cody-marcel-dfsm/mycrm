@@ -47,6 +47,11 @@ const proposal=!args.includes('--output-schema');
 if(!proposal && JSON.stringify(JSON.parse(fs.readFileSync(args[args.indexOf('--output-schema')+1]))).includes('"uniqueItems"')) throw new Error('Strict response format does not support uniqueItems');
 if(!proposal && process.env.ORACLE_READY) fs.writeFileSync(process.env.ORACLE_READY,'ready');
 if(!proposal && process.env.ORACLE_CALLS) fs.appendFileSync(process.env.ORACLE_CALLS,JSON.stringify({out,pid:process.pid})+'\\n');
+if(!proposal && captureThis && process.env.ORACLE_TERMINAL_FAILURE) {
+  const owner=path.join(process.cwd(),'.git/oracle');
+  const controller=JSON.parse(fs.readFileSync(path.join(owner,'controllers',fs.readdirSync(path.join(owner,'controllers')).filter(name=>/^\\d{8}\\.json$/.test(name)).sort().at(-1))));
+  fs.chmodSync(path.join(owner,'controllers',controller.id),0o500);
+}
 if(!proposal && process.env.ORACLE_MUTATE) fs.writeFileSync(process.env.ORACLE_MUTATE,'changed during review');
 if(captureThis && process.env.ORACLE_MUTATE_SETTINGS) fs.writeFileSync(process.env.ORACLE_MUTATE_SETTINGS,process.env.ORACLE_SETTINGS_CONTENT);
 const emit=()=>{
@@ -1531,7 +1536,13 @@ test("committed-range review checkpoints exact source and unchanged shipment exe
   await writeFile(path.join(repo, "candidate.txt"), "Synthetic next arrived commit\n"); await git("add", ".");
   await git("-c", "user.name=Synthetic", "-c", "user.email=synthetic@example.invalid", "commit", "-qm", "Synthetic next source");
   const pending = await shipmentPlan({root: repo}); assert.equal(pending.action, "VALIDATE"); assert.equal(pending.validation_base, head); assert.equal(pending.commits.length, 1);
-  await assert.rejects(recordDeliveredCommit({root: repo, admission, installation: {pluginId: "my-crm@synthetic", release: {content_sha256: "a".repeat(64)}}}), /exact validated commit|exact validated admission/);
+  await command(repo, ["review"], {...env, ORACLE_REUSE_COVERAGE: "1"});
+  const newer = await readValidatedCheckpoint(repo), newerBytes = await readFile(path.join(repo, ".git/oracle/shipment-validated.json"));
+  const delivered = await recordDeliveredCommit({root: repo, admission, installation: {pluginId: "my-crm@synthetic", release: {content_sha256: "a".repeat(64)}}});
+  assert.equal(delivered.delivered_commit, head); assert.equal(delivered.validated_checkpoint_sha256, checkpoint.record.checkpoint_sha256);
+  assert.deepEqual(await readFile(path.join(repo, ".git/oracle/shipment-validated.json")), newerBytes);
+  assert.equal((await readValidatedCheckpoint(repo)).record.last_validated_commit, newer.record.last_validated_commit);
+  assert.equal((await shipmentPlan({root: repo})).action, "DELIVER");
 });
 
 test("new proposals retain committed review lineage while current criteria remain independently assessed", async (t) => {
@@ -1560,6 +1571,33 @@ test("new proposals retain committed review lineage while current criteria remai
   assert.deepEqual(series.rounds.slice(0, -1), originalSeries.rounds);
   assert.ok(series.rounds.at(-1).response.coverage.some((item) => item.path === "new-area.txt"));
   assert.ok(series.rounds.at(-1).response.reused_coverage.includes("candidate.txt"));
+});
+
+test("failed controller terminal issuance preserves completed checkpoint and blocks pending direct receipt and preparation", async (t) => {
+  const {repo, root, env, git, prepare} = await fixture(t);
+  const remote = path.join(root, "remote.git"); await execute("git", ["init", "--bare", remote]); await git("remote", "add", "origin", remote); await git("push", "origin", "main");
+  await prepare(); await git("-c", "user.name=Synthetic", "-c", "user.email=synthetic@example.invalid", "commit", "-qm", "Synthetic completed candidate");
+  await command(repo, ["review"], env);
+  const {readValidatedCheckpoint, shipmentPlan} = await import("../scripts/shipment-state.mjs");
+  const {committedReceipt} = await import("../scripts/oracle-deployment.mjs");
+  const {preparePublication, readPreparedPublication} = await import("../scripts/publication-checkpoint.mjs");
+  const completed = await readValidatedCheckpoint(repo), prepared = await preparePublication({root: repo});
+  const original = await readFile(path.join(repo, ".git/oracle/technical-receipts", `${completed.receipt.receipt_sha256}.json`));
+  await writeFile(path.join(repo, "new-area.txt"), "Synthetic newer current candidate\n"); await git("add", ".");
+  await git("-c", "user.name=Synthetic", "-c", "user.email=synthetic@example.invalid", "commit", "-qm", "Synthetic pending terminal candidate");
+  const candidate = await git("rev-parse", "HEAD");
+  await assert.rejects(command(repo, ["review"], {...env, ORACLE_REUSE_COVERAGE: "1", ORACLE_TERMINAL_FAILURE: "controller"}), /EACCES|permission/);
+  const pending = JSON.parse(await readFile(path.join(repo, ".git/oracle/shipment-validated.json")));
+  const pendingReceipt = JSON.parse(await readFile(path.join(repo, ".git/oracle/technical-receipts", `${pending.receipt_sha256}.json`)));
+  await chmod(path.join(repo, ".git/oracle/controllers", pendingReceipt.native_terminal_admission.controller_id), 0o700);
+  assert.deepEqual((await readValidatedCheckpoint(repo)).record, completed.record);
+  assert.equal((await shipmentPlan({root: repo})).action, "VALIDATE");
+  await assert.rejects(committedReceipt(repo, candidate), /complete native terminal admission/);
+  assert.equal((await committedReceipt(repo, completed.record.last_validated_commit)).receipt.receipt_sha256, completed.receipt.receipt_sha256);
+  await assert.rejects(preparePublication({root: repo, reference: candidate}), /latest native candidate approval/);
+  await readPreparedPublication(prepared.prepared_record, {root: repo});
+  assert.deepEqual(await readFile(path.join(repo, ".git/oracle/technical-receipts", `${completed.receipt.receipt_sha256}.json`)), original);
+  assert.equal(pending.last_validated_commit, candidate); assert.equal(pending.previous_checkpoint_sha256, completed.record.checkpoint_sha256);
 });
 
 test("missing checkpoint never approves a clean published candidate and ordinary hooks need no reviewer", async (t) => {
@@ -2056,7 +2094,7 @@ test("current applicability guards publication and every maintainer installation
       return installation;
     }}), /applicable/);
   assert.equal(mutations, 0);
-  await writeFile(authority, current); await git("update-ref", "refs/remotes/origin/main", source);
+  await writeFile(authority, current); await command(repo, ["review"], env); await git("update-ref", "refs/remotes/origin/main", source);
   assert.equal((await installReviewed({plan, admit, install, recordDelivery})).pluginId, installation.pluginId);
   assert.equal((await plan()).action, "NO_CHANGES");
   const unexpected = async () => { throw new Error("Unexpected repeated installation callback"); };

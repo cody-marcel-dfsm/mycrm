@@ -30,11 +30,11 @@ async function layout(root, create = false) {
   return {root, owner, directory};
 }
 
-async function boundedRead(filename) {
+async function boundedRead(filename, maximum = 2 * 1024 * 1024) {
   const handle = await open(filename, constants.O_RDONLY | constants.O_NOFOLLOW | constants.O_NONBLOCK);
   try {
     const metadata = await handle.stat();
-    if (!metadata.isFile() || metadata.size > 2 * 1024 * 1024) throw new Error("Prepared publication proof must be a bounded regular file");
+    if (!metadata.isFile() || metadata.size > maximum) throw new Error("Prepared publication proof must be a bounded regular file");
     return await handle.readFile();
   } finally { await handle.close(); }
 }
@@ -51,6 +51,32 @@ async function replacePointer(filename, bytes) {
 
 const decisionName = (directory, commit, tree) => path.join(directory, `${commit}-${tree}.decision`);
 const attemptName = (directory, commit, tree) => path.join(directory, `${commit}-${tree}.attempt`);
+// A newly issued receipt remains pending until both native terminal writes
+// succeed. Historical receipts retain their original admission contract.
+export async function terminalAdmissionComplete({owner, receipt, read = filename => boundedRead(filename, 16 * 1024 * 1024)}) {
+  const admission = receipt.native_terminal_admission;
+  if (!admission) return true;
+  const uuid = /^[a-f0-9-]{36}$/;
+  if (!uuid.test(admission.invocation_id ?? "") || admission.controller_id !== null && !uuid.test(admission.controller_id ?? "")) throw new Error("Native terminal admission identity is malformed");
+  const load = async (kind, id) => {
+    const directory = path.join(owner, "oracle", kind, id);
+    try {
+      for (const name of [path.dirname(directory), directory]) {const stat = await lstat(name); if (!stat.isDirectory() || stat.isSymbolicLink()) throw new Error("Native terminal admission custody changed");}
+      return JSON.parse(await read(path.join(directory, "outcome.json")));
+    } catch (error) {if (error.code === "ENOENT") return null; throw error;}
+  };
+  const run = await load("runs", admission.invocation_id);
+  if (!run || run.outcome !== "APPROVED") return false;
+  if (run.kind !== "review" || run.receipt_sha256 !== receipt.receipt_sha256 || run.candidate_commit !== receipt.candidate_commit) throw new Error("Native run terminal admission differs from its receipt");
+  if (admission.controller_id === null) return true;
+  const controller = await load("controllers", admission.controller_id);
+  if (!controller) return false;
+  const {sha256, ...value} = controller;
+  if (sha256 !== hash(canonical(value)) || controller.controller_id !== admission.controller_id) throw new Error("Native controller terminal admission changed");
+  if (controller.outcome !== "APPROVED" || controller.error) return false;
+  if (controller.result?.receipt_sha256 !== receipt.receipt_sha256 || controller.result?.candidate_commit !== receipt.candidate_commit) throw new Error("Native controller terminal admission differs from its receipt");
+  return true;
+}
 function coverageIdentity(coverage) {
   if (coverage.plan) {
     const {receipt, effects, commit, tree, reviewedCommit} = coverage.plan;
@@ -63,7 +89,7 @@ function coverageIdentity(coverage) {
   }
   return canonical(coverage.admitted);
 }
-async function readDecision(current, sourceCommit, sourceTree, filename = decisionName(current.directory, sourceCommit, sourceTree)) {
+async function readDecision(current, sourceCommit, sourceTree, filename = decisionName(current.directory, sourceCommit, sourceTree), resolveAdmission = true) {
   const record = JSON.parse(await boundedRead(filename));
   if (record.schema !== "my-crm.publication-decision/v1" || record.purpose !== "product-publication" || record.record_sha256 !== digest(record)
       || record.repository_root !== current.root || record.source_commit !== sourceCommit || record.source_tree !== sourceTree
@@ -71,6 +97,15 @@ async function readDecision(current, sourceCommit, sourceTree, filename = decisi
       || typeof record.decision_id !== "string" || !record.decision_id
       || record.validation_plan_sha256 != null && !sha.test(record.validation_plan_sha256)
       || record.status === "APPROVED" && !sha.test(record.technical_receipt_sha256 ?? "")) throw new Error("Native publication decision is malformed or bound to another candidate");
+  if (resolveAdmission && record.status === "APPROVED" && !await terminalAdmissionComplete({owner: current.owner, receipt: {native_terminal_admission: record.native_terminal_admission, receipt_sha256: record.technical_receipt_sha256, candidate_commit: sourceCommit}})) {
+    if (record.previous_ready_sha256) {
+      if (!sha.test(record.previous_ready_sha256)) throw new Error("Previous native publication readiness identity is malformed");
+      const previous = await readDecision(current, sourceCommit, sourceTree, path.join(current.directory, `${record.previous_ready_sha256}.decision.json`), false);
+      if (previous.status !== "APPROVED" || previous.record_sha256 !== record.previous_ready_sha256 || !await terminalAdmissionComplete({owner: current.owner, receipt: {native_terminal_admission: previous.native_terminal_admission, receipt_sha256: previous.technical_receipt_sha256, candidate_commit: sourceCommit}})) throw new Error("Previous native publication readiness lacks complete terminal admission");
+      return previous;
+    }
+    return {...record, status: "IN_PROGRESS", admission_state: "PENDING_NATIVE_TERMINAL"};
+  }
   return record;
 }
 
@@ -80,6 +115,8 @@ export async function recordPublicationDecision({root = process.cwd(), sourceCom
   if (!oid.test(sourceCommit ?? "") || !oid.test(sourceTree ?? "") || !["IN_PROGRESS", "APPROVED", "REJECTED", "INVALIDATED_CRITERIA", "INCOMPLETE", "ERROR"].includes(status)
       || status === "APPROVED" && !sha.test(receipt ?? "")) throw new Error("Native publication decision requires an exact candidate and outcome");
   const current = await layout(root, true);
+  let previousReady;
+  if (status === "APPROVED") try {const prior = await readDecision(current, sourceCommit, sourceTree); if (prior.status === "APPROVED") previousReady = prior.record_sha256;} catch (error) {if (error.code !== "ENOENT") throw error;}
   let validationPlanHash = null;
   if (validationPlan || admitted) {
     const coverage = {schema: "my-crm.publication-validation-coverage/v1", source_commit: sourceCommit, source_tree: sourceTree, technical_receipt_sha256: receipt, plan: validationPlan, admitted};
@@ -91,7 +128,8 @@ export async function recordPublicationDecision({root = process.cwd(), sourceCom
   }
   const record = {schema: "my-crm.publication-decision/v1", purpose: "product-publication", repository_root: current.root, source_commit: sourceCommit, source_tree: sourceTree,
     status, technical_receipt_sha256: receipt, decision_id: decisionId, validation_plan_sha256: validationPlanHash,
-    ...(invalidationReason === null ? {} : {invalidation_reason: invalidationReason})};
+    ...(invalidationReason === null ? {} : {invalidation_reason: invalidationReason}),
+    ...(validationPlan?.receipt.native_terminal_admission ? {native_terminal_admission: validationPlan.receipt.native_terminal_admission, ...(previousReady ? {previous_ready_sha256: previousReady} : {})} : {})};
   record.record_sha256 = digest(record);
   const filename = path.join(current.directory, `${record.record_sha256}.decision.json`), bytes = `${JSON.stringify(record, null, 2)}\n`;
   try { await writeFile(filename, bytes, {flag: "wx", mode: 0o600}); }
@@ -103,7 +141,7 @@ export async function recordPublicationDecision({root = process.cwd(), sourceCom
     try { await writeFile(pointer, bytes, {flag: "wx", mode: 0o600}); }
     catch (error) { if (error.code !== "EEXIST") throw error; return readDecision(current, sourceCommit, sourceTree); }
   } else if (expectedDecisionId) {
-    const active = await readDecision(current, sourceCommit, sourceTree, attempt);
+    const active = await readDecision(current, sourceCommit, sourceTree, attempt, false);
     if (active.decision_id !== expectedDecisionId) return record;
   }
   await replacePointer(attempt, bytes);

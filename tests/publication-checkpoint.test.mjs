@@ -8,6 +8,7 @@ import {promisify} from "node:util";
 import test from "node:test";
 import {admitPreparedPush, preparePublication, publishPrepared, readPreparedPublication, recordPublicationDecision} from "../scripts/publication-checkpoint.mjs";
 import {validateRelease} from "../scripts/release-validation.mjs";
+import {bindingHash} from "../scripts/oracle-inputs.mjs";
 
 const execute = promisify(execFile), zeros = "0".repeat(40);
 async function fixture(t) {
@@ -154,6 +155,24 @@ test("direct sealed preparation checks governing applicability and preserves tec
   await recordPublicationDecision({...binding, status: "APPROVED", receipt: "d".repeat(64), validationPlan: plan("d".repeat(64), changed)});
   const renewed = await preparePublication({root: f.root});
   await publishPrepared(renewed.prepared_record, {root: f.root, run: async () => {}});
+});
+
+test("a pending same-candidate issuance preserves prior prepared readiness until its own terminals complete", async t => {
+  const f = await fixture(t), binding = {root: f.root, sourceCommit: f.source, sourceTree: f.tree};
+  const first = await preparePublication({root: f.root, admit: f.admit});
+  const admission = {invocation_id: "11111111-1111-4111-8111-111111111111", controller_id: "22222222-2222-4222-8222-222222222222"};
+  const receipt = {receipt_sha256: "c".repeat(64), candidate_commit: f.source, native_terminal_admission: admission, deployment_baseline_commit: f.before, input_binding: {authorities: [], validation: []}};
+  await recordPublicationDecision({...binding, status: "APPROVED", receipt: receipt.receipt_sha256, validationPlan: {commit: f.source, tree: f.tree, receipt, effects: []}});
+  await readPreparedPublication(first.prepared_record, {root: f.root});
+  const owner = path.join(f.root, ".git/oracle"), run = path.join(owner, "runs", admission.invocation_id), controller = path.join(owner, "controllers", admission.controller_id);
+  await mkdir(run, {recursive: true}); await mkdir(controller, {recursive: true});
+  await writeFile(path.join(run, "outcome.json"), JSON.stringify({kind: "review", outcome: "APPROVED", receipt_sha256: receipt.receipt_sha256, candidate_commit: f.source}));
+  await readPreparedPublication(first.prepared_record, {root: f.root});
+  const value = {controller_id: admission.controller_id, outcome: "APPROVED", result: {receipt_sha256: receipt.receipt_sha256, candidate_commit: f.source}, error: null};
+  await writeFile(path.join(controller, "outcome.json"), JSON.stringify({...value, sha256: bindingHash(value)}));
+  await assert.rejects(readPreparedPublication(first.prepared_record, {root: f.root}), /later native candidate decision/);
+  await writeFile(path.join(controller, "outcome.json"), JSON.stringify({...value, sha256: "0".repeat(64)}));
+  await assert.rejects(readPreparedPublication(first.prepared_record, {root: f.root}), /terminal admission changed/);
 });
 
 test("unrelated candidate decisions and proposal changes preserve fixed-source admission; changed markers fail closed", async t => {

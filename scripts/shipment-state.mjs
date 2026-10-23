@@ -98,10 +98,21 @@ export async function checkpointSelectionApplicable(root, checkpoint) {
 export async function readValidatedCheckpoint(root = process.cwd()) {
   const {owner, directory} = await store(root), record = await optionalJson(path.join(directory, "shipment-validated.json"), owner);
   if (!record) return null;
+  return admittedCheckpoint({root, owner, directory, record});
+}
+export async function admittedCheckpoint({root, owner, directory, record, read = filename => readMetadataFile(filename, "utf8", {root: owner}), allowPrevious = true}) {
   if (record.schema !== "my-crm.shipment-validated/v1" || record.checkpoint_sha256 !== checkpointDigest(record) || !commitHash.test(record.last_validated_commit ?? "") || !commitHash.test(record.tree ?? "") || !digestHash.test(record.receipt_sha256 ?? "")) throw new Error("Shipment validation checkpoint is malformed or changed");
   const {verifyReceipt} = await import("./oracle-review.mjs");
-  const receipt = verifyReceipt(JSON.parse(await readMetadataFile(path.join(directory, "technical-receipts", `${record.receipt_sha256}.json`), "utf8", {root: owner})), record.tree);
+  const receipt = verifyReceipt(JSON.parse(await read(path.join(directory, "technical-receipts", `${record.receipt_sha256}.json`))), record.tree);
   if (receipt.review_status !== "COMPLETE" || receipt.candidate_commit !== record.last_validated_commit || receipt.receipt_sha256 !== record.receipt_sha256 || await git(root, ["rev-parse", `${record.last_validated_commit}^{tree}`]) !== record.tree) throw new Error("Shipment checkpoint lacks its exact complete committed-source receipt");
+  const {terminalAdmissionComplete} = await import("./publication-checkpoint.mjs");
+  if (!await terminalAdmissionComplete({owner, receipt, read})) {
+    if (!allowPrevious || !record.previous_checkpoint_sha256) return null;
+    if (!digestHash.test(record.previous_checkpoint_sha256)) throw new Error("Previous shipment checkpoint identity is malformed");
+    const previous = JSON.parse(await read(path.join(directory, "validated-checkpoints", `${record.previous_checkpoint_sha256}.json`)));
+    if (previous.checkpoint_sha256 !== record.previous_checkpoint_sha256) throw new Error("Previous shipment checkpoint identity changed");
+    return admittedCheckpoint({root, owner, directory, record: previous, read, allowPrevious: false});
+  }
   return {record, receipt};
 }
 export async function recordValidatedCommit({root = process.cwd(), receipt, beforePublish = async () => {}}) {
@@ -111,9 +122,17 @@ export async function recordValidatedCommit({root = process.cwd(), receipt, befo
   if (receipt.review_status !== "COMPLETE" || !commitHash.test(receipt.candidate_commit)) throw new Error("Shipment validation requires complete independent committed-source approval");
   await exactSource(root, receipt.candidate_commit, receipt.reviewed_tree);
   const {owner, directory} = await store(root);
+  const previous = await readValidatedCheckpoint(root);
   const archived = JSON.parse(await readMetadataFile(path.join(directory, "technical-receipts", `${receipt.receipt_sha256}.json`), "utf8", {root: owner}));
   if (bindingHash(archived) !== bindingHash(receipt)) throw new Error("Shipment validation requires its original archived technical receipt");
   const record = {schema: "my-crm.shipment-validated/v1", last_validated_commit: receipt.candidate_commit, tree: receipt.reviewed_tree, receipt_sha256: receipt.receipt_sha256, reviewed_base: receipt.base_commit};
+  if (previous) {
+    record.previous_checkpoint_sha256 = previous.record.checkpoint_sha256;
+    const filename = path.join(directory, "validated-checkpoints", `${previous.record.checkpoint_sha256}.json`), bytes = `${JSON.stringify(previous.record, null, 2)}\n`;
+    const {writeMetadataFile} = await import("./oracle-inputs.mjs");
+    await metadataDirectory(owner, path.dirname(filename));
+    try {await writeMetadataFile(filename, bytes, {flag: "wx", mode: 0o600}, {root: owner});} catch (error) {if (error.code !== "EEXIST" || await readMetadataFile(filename, "utf8", {root: owner}) !== bytes) throw error;}
+  }
   record.checkpoint_sha256 = checkpointDigest(record);
   await exactSource(root, receipt.candidate_commit, receipt.reviewed_tree);
   await beforePublish();
@@ -164,15 +183,17 @@ export async function shipmentPlan({root = process.cwd(), publishedRef = "refs/r
   return {action: "VALIDATE", candidate_commit: head, validation_base: baseline, last_validated_commit: checkpoint?.record.last_validated_commit ?? null, approval_state: "PENDING", ...(applicabilityError ? {reason: applicabilityError.message} : {}), commits: (await git(root, ["rev-list", "--reverse", `${baseline}..${head}`])).split("\n").filter(Boolean)};
 }
 export async function recordDeliveredCommit({root = process.cwd(), admission, installation}) {
-  const checkpoint = await readValidatedCheckpoint(root);
-  const head = await git(root, ["rev-parse", "HEAD"]);
-  if (!checkpoint || admission?.status !== "ADMITTED" || (admission.reviewed_source_commit ?? admission.source_commit) !== checkpoint.record.last_validated_commit || admission.source_commit !== head || admission.target_tree !== checkpoint.record.tree || admission.technical_receipt_sha256 !== checkpoint.record.receipt_sha256 || !digestHash.test(installation?.release?.content_sha256 ?? "") || !installation?.pluginId) throw new Error("Delivery requires exact validated admission and successful supported installation evidence");
-  if (!await publicationSourceMatches(root, checkpoint.record.last_validated_commit, head)) throw new Error("Published source differs from its exact validated candidate");
-  await exactSource(root, head, checkpoint.record.tree);
-  await checkpointApplicable(root, checkpoint);
-  if (await git(root, ["rev-parse", "refs/remotes/origin/main"]) !== head) throw new Error("Delivery checkpoint requires the exact validated publication on published main");
   const {owner, directory} = await store(root);
-  const record = {schema: "my-crm.shipment-delivered/v1", delivered_commit: head, reviewed_source_commit: checkpoint.record.last_validated_commit, validated_checkpoint_sha256: checkpoint.record.checkpoint_sha256, artifact_sha256: installation.release.content_sha256, plugin_id: installation.pluginId};
+  const source = admission?.source_commit, reviewed = admission?.reviewed_source_commit ?? source;
+  if (!commitHash.test(source ?? "") || !commitHash.test(reviewed ?? "")) throw new Error("Delivery requires exact validated admission and successful supported installation evidence");
+  const captured = await optionalJson(path.join(directory, "committed-receipts", `${reviewed}.json`), owner);
+  const checkpoint = captured ? await admittedCheckpoint({root, owner, directory, record: captured}) : null;
+  if (!checkpoint || admission?.status !== "ADMITTED" || reviewed !== checkpoint.record.last_validated_commit || admission.target_tree !== checkpoint.record.tree || admission.technical_receipt_sha256 !== checkpoint.record.receipt_sha256 || !digestHash.test(installation?.release?.content_sha256 ?? "") || !installation?.pluginId) throw new Error("Delivery requires exact validated admission and successful supported installation evidence");
+  if (!await publicationSourceMatches(root, reviewed, source) || await git(root, ["rev-parse", `${source}^{tree}`]) !== checkpoint.record.tree) throw new Error("Published source differs from its exact validated candidate");
+  try {await git(root, ["merge-base", "--is-ancestor", source, "refs/remotes/origin/main"]);} catch {throw new Error("Delivery checkpoint requires the exact validated publication on published main");}
+  // The successful installation belongs to its captured admission. Later source
+  // and validation remain independently pending and are never overwritten here.
+  const record = {schema: "my-crm.shipment-delivered/v1", delivered_commit: source, reviewed_source_commit: reviewed, validated_checkpoint_sha256: checkpoint.record.checkpoint_sha256, artifact_sha256: installation.release.content_sha256, plugin_id: installation.pluginId};
   record.checkpoint_sha256 = checkpointDigest(record);
   await atomicJson(path.join(directory, "shipment-delivered.json"), record, {root: owner});
   return record;

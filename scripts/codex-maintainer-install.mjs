@@ -44,7 +44,7 @@ export async function installReviewed({admit = admitDeployment, install = instal
   };
   const result = await install({...options, runCommand: guardedRun});
   if (artifactDigest !== null && result.release.content_sha256 !== artifactDigest) throw new Error("Installed artifact differs from the admitted maintainer artifact");
-  if (selection.action === "DELIVER") await recordDelivery({root: repositoryRoot, admission: await admit({root: repositoryRoot}), installation: result});
+  if (selection.action === "DELIVER") await recordDelivery({root: repositoryRoot, admission: original, installation: result});
   return result;
 }
 

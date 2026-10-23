@@ -13,8 +13,8 @@ import {findCommandValidation, recordCommandCoverage, commandArtifactBinding} fr
 import Ajv from "ajv";
 import {recordValidatedCommit, readValidatedCheckpoint, shipmentPlan} from "./shipment-state.mjs";
 import {runParallelReview, verifyParallelArtifacts, nativeCohortObservations} from "./oracle-parallel.mjs";
-import {withReviewController} from "./oracle-lifecycle.mjs";
-import {recordPublicationDecision, sealPublicationValidation} from "./publication-checkpoint.mjs";
+import {withReviewController, activeReviewController} from "./oracle-lifecycle.mjs";
+import {recordPublicationDecision, sealPublicationValidation, terminalAdmissionComplete} from "./publication-checkpoint.mjs";
 import {archiveTechnicalReceipt, committedReceipt, deploymentHistoryForReview, deploymentPlan, publicationPlanFromValidatedReceipt, pendingDeploymentEffects, authorizationDigest, validateDeploymentAssessment, validateDeploymentDispositions, verifyNewEffectAuthorities, verifyDeploymentAuthorization} from "./oracle-deployment.mjs";
 
 const execFileAsync = promisify(execFile);
@@ -496,6 +496,7 @@ async function review(args = [], {run, phase, producer = null, verifyProducer = 
     process.exitCode = 1; return {...response, input_binding: inputs};
   }
   const receipt = {schema: "my-crm.oracle-approval/v2", ...reviewerRecord, parallel_review_evidence: parallelEvidence, input_binding: inputs, proposal_record_sha256: proposalRecord.record_sha256, repository: "my-crm", invocation: currentInvocation(), reviewed_tree: candidate.tree, base_commit: candidate.base, ...(candidate.commit ? {candidate_commit: candidate.commit, deployment_history_base_commit: candidate.parent} : {}), ...response, deployment_baseline_commit: deployment.baseline, deployment_history_sha256: deployment.sha256, deployment_history_status: deployment.status, recovered_deployment_commits: deployment.recovered_commits, review_series_sha256: completedSeries.sha256, review_series_id: completedSeries.series_id, review_round: series.public.round, validation_evidence: validationEvidence, requested_validation_evidence: requestedValidationEvidence, inherited_validation_evidence: inherited.evidence, owner_approval_evidence: ownerApprovalEvidence};
+  receipt.native_terminal_admission = {invocation_id: currentInvocation().id, controller_id: (await activeReviewController())?.id ?? null};
   receipt.receipt_sha256 = receiptSha256(receipt);
   // The final exact-input check precedes series publication above. Live receipt
   // verification independently rejects source movement after that observation.
@@ -713,6 +714,7 @@ async function reviewProposal(request, args = [], {run, phase}) {
 
 async function verifyLiveReceipt(tree) {
   const receipt = verifyReceipt(await readReceipt(), tree);
+  if (!await terminalAdmissionComplete({owner: path.dirname(await oracleDirectory()), receipt})) throw new Error("Oracle approval awaits complete native terminal admission");
   if (receipt.parallel_review_evidence) await verifyParallelArtifacts(receipt.parallel_review_evidence, {root: path.dirname(await oracleDirectory())});
   await assertPublishedInvocation(receipt.invocation, await oracleDirectory());
   if (receipt.schema !== "my-crm.oracle-approval/v2" || !receipt.input_binding) throw new Error("Legacy Oracle receipt requires a fresh input-bound review; historical commit stamps remain valid");
