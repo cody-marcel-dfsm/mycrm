@@ -74,7 +74,9 @@ export async function terminalAdmissionComplete({owner, receipt, read = filename
   const {sha256, ...value} = controller;
   if (sha256 !== hash(canonical(value)) || controller.controller_id !== admission.controller_id) throw new Error("Native controller terminal admission changed");
   if (controller.outcome !== "APPROVED" || controller.error) return false;
-  if (controller.result?.receipt_sha256 !== receipt.receipt_sha256 || controller.result?.candidate_commit !== receipt.candidate_commit) throw new Error("Native controller terminal admission differs from its receipt");
+  // One controller may retain several completed attempts while later source or
+  // evidence arrives. Only its final selected receipt attains live admission.
+  if (controller.result?.receipt_sha256 !== receipt.receipt_sha256 || controller.result?.candidate_commit !== receipt.candidate_commit) return false;
   return true;
 }
 function coverageIdentity(coverage) {

@@ -171,6 +171,9 @@ test("a pending same-candidate issuance preserves prior prepared readiness until
   const value = {controller_id: admission.controller_id, outcome: "APPROVED", result: {receipt_sha256: receipt.receipt_sha256, candidate_commit: f.source}, error: null};
   await writeFile(path.join(controller, "outcome.json"), JSON.stringify({...value, sha256: bindingHash(value)}));
   await assert.rejects(readPreparedPublication(first.prepared_record, {root: f.root}), /later native candidate decision/);
+  const later = {...value, result: {...value.result, receipt_sha256: "d".repeat(64)}};
+  await writeFile(path.join(controller, "outcome.json"), JSON.stringify({...later, sha256: bindingHash(later)}));
+  await readPreparedPublication(first.prepared_record, {root: f.root});
   await writeFile(path.join(controller, "outcome.json"), JSON.stringify({...value, sha256: "0".repeat(64)}));
   await assert.rejects(readPreparedPublication(first.prepared_record, {root: f.root}), /terminal admission changed/);
 });
