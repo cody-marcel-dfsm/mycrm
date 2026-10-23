@@ -1,5 +1,5 @@
 import assert from "node:assert/strict";
-import {createHash} from "node:crypto";
+import {createHash, randomUUID} from "node:crypto";
 import {execFile} from "node:child_process";
 import {chmod, cp, mkdir, mkdtemp, readFile, realpath, rm, writeFile} from "node:fs/promises";
 import os from "node:os";
@@ -160,7 +160,7 @@ test("direct sealed preparation checks governing applicability and preserves tec
 test("a pending same-candidate issuance preserves prior prepared readiness until its own terminals complete", async t => {
   const f = await fixture(t), binding = {root: f.root, sourceCommit: f.source, sourceTree: f.tree};
   const first = await preparePublication({root: f.root, admit: f.admit});
-  const admission = {invocation_id: "11111111-1111-4111-8111-111111111111", controller_id: "22222222-2222-4222-8222-222222222222"};
+  const admission = {invocation_id: randomUUID(), controller_id: randomUUID()};
   const receipt = {receipt_sha256: "c".repeat(64), candidate_commit: f.source, native_terminal_admission: admission, deployment_baseline_commit: f.before, input_binding: {authorities: [], validation: []}};
   await recordPublicationDecision({...binding, status: "APPROVED", receipt: receipt.receipt_sha256, validationPlan: {commit: f.source, tree: f.tree, receipt, effects: []}});
   await readPreparedPublication(first.prepared_record, {root: f.root});
