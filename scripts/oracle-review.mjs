@@ -492,7 +492,7 @@ async function review(args = [], {run, phase, producer = null, verifyProducer = 
   if (completedSeries.rounds.at(-1).repair_plan) process.stdout.write(`ORACLE_REPAIR_PLAN=${JSON.stringify(completedSeries.rounds.at(-1).repair_plan)}\n`);
   if (response.synthesis) process.stdout.write(`ORACLE_REPAIR_SYNTHESIS=${response.synthesis}\n`);
   if (response.review_status === "INCOMPLETE") {
-    if (publicationCandidate) await recordPublicationDecision({...publicationCandidate, status: "INCOMPLETE"});
+    if (publicationCandidate) await recordPublicationDecision({...publicationCandidate, expectedDecisionId: publicationCandidate.decisionId, status: "INCOMPLETE"});
     process.exitCode = 1; return {...response, input_binding: inputs};
   }
   const receipt = {schema: "my-crm.oracle-approval/v2", ...reviewerRecord, parallel_review_evidence: parallelEvidence, input_binding: inputs, proposal_record_sha256: proposalRecord.record_sha256, repository: "my-crm", invocation: currentInvocation(), reviewed_tree: candidate.tree, base_commit: candidate.base, ...(candidate.commit ? {candidate_commit: candidate.commit, deployment_history_base_commit: candidate.parent} : {}), ...response, deployment_baseline_commit: deployment.baseline, deployment_history_sha256: deployment.sha256, deployment_history_status: deployment.status, recovered_deployment_commits: deployment.recovered_commits, review_series_sha256: completedSeries.sha256, review_series_id: completedSeries.series_id, review_round: series.public.round, validation_evidence: validationEvidence, requested_validation_evidence: requestedValidationEvidence, inherited_validation_evidence: inherited.evidence, owner_approval_evidence: ownerApprovalEvidence};
@@ -518,10 +518,10 @@ async function review(args = [], {run, phase, producer = null, verifyProducer = 
   }
   process.stdout.write(`ORACLE_VERDICT=${receipt.verdict} tree=${receipt.reviewed_tree} receipt=${receipt.receipt_sha256}\n`);
   if (receipt.verdict !== "APPROVED") process.exitCode = 1;
-  if (publicationCandidate) await recordPublicationDecision({...publicationCandidate, status: receipt.verdict, receipt: receipt.receipt_sha256});
+  if (publicationCandidate) await recordPublicationDecision({...publicationCandidate, expectedDecisionId: publicationCandidate.decisionId, status: receipt.verdict, receipt: receipt.receipt_sha256});
   return receipt;
   } catch (error) {
-    if (publicationCandidate) await recordPublicationDecision({...publicationCandidate, status: "ERROR"});
+    if (publicationCandidate) await recordPublicationDecision({...publicationCandidate, expectedDecisionId: publicationCandidate.decisionId, status: "ERROR"});
     throw await withIntegrityPrecedence(error);
   }
 }

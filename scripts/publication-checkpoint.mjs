@@ -54,7 +54,7 @@ async function readDecision(current, sourceCommit, sourceTree) {
   const record = JSON.parse(await boundedRead(decisionName(current.directory, sourceCommit, sourceTree)));
   if (record.schema !== "my-crm.publication-decision/v1" || record.purpose !== "product-publication" || record.record_sha256 !== digest(record)
       || record.repository_root !== current.root || record.source_commit !== sourceCommit || record.source_tree !== sourceTree
-      || !["IN_PROGRESS", "APPROVED", "REJECTED", "INCOMPLETE", "ERROR"].includes(record.status)
+      || !["IN_PROGRESS", "APPROVED", "REJECTED", "INVALIDATED_CRITERIA", "INCOMPLETE", "ERROR"].includes(record.status)
       || typeof record.decision_id !== "string" || !record.decision_id
       || record.status === "APPROVED" && !sha.test(record.technical_receipt_sha256 ?? "")) throw new Error("Native publication decision is malformed or bound to another candidate");
   return record;
@@ -62,8 +62,8 @@ async function readDecision(current, sourceCommit, sourceTree) {
 
 // The native review writer advances one bounded candidate-specific decision.
 // Unrelated source commits and proposal attempts never change this identity.
-export async function recordPublicationDecision({root = process.cwd(), sourceCommit, sourceTree, status, receipt = null, decisionId = randomUUID(), ifAbsent = false} = {}) {
-  if (!oid.test(sourceCommit ?? "") || !oid.test(sourceTree ?? "") || !["IN_PROGRESS", "APPROVED", "REJECTED", "INCOMPLETE", "ERROR"].includes(status)
+export async function recordPublicationDecision({root = process.cwd(), sourceCommit, sourceTree, status, receipt = null, decisionId = randomUUID(), ifAbsent = false, expectedDecisionId = null} = {}) {
+  if (!oid.test(sourceCommit ?? "") || !oid.test(sourceTree ?? "") || !["IN_PROGRESS", "APPROVED", "REJECTED", "INVALIDATED_CRITERIA", "INCOMPLETE", "ERROR"].includes(status)
       || status === "APPROVED" && !sha.test(receipt ?? "")) throw new Error("Native publication decision requires an exact candidate and outcome");
   const current = await layout(root, true);
   const record = {schema: "my-crm.publication-decision/v1", purpose: "product-publication", repository_root: current.root, source_commit: sourceCommit, source_tree: sourceTree,
@@ -73,11 +73,26 @@ export async function recordPublicationDecision({root = process.cwd(), sourceCom
   try { await writeFile(filename, bytes, {flag: "wx", mode: 0o600}); }
   catch (error) { if (error.code !== "EEXIST" || !(await boundedRead(filename)).equals(Buffer.from(bytes))) throw error; }
   const pointer = decisionName(current.directory, sourceCommit, sourceTree);
+  if (["IN_PROGRESS", "INCOMPLETE", "ERROR"].includes(status)) {
+    let prior; try {prior = await readDecision(current, sourceCommit, sourceTree);} catch (error) {if (error.code !== "ENOENT") throw error;}
+    // Preserve the new immutable attempt above. An unfinished or failed
+    // process grants no decision and cannot revoke an earlier complete one.
+    if (prior && ["APPROVED", "REJECTED", "INVALIDATED_CRITERIA"].includes(prior.status)) return prior;
+  }
   if (ifAbsent) {
     try { await writeFile(pointer, bytes, {flag: "wx", mode: 0o600}); }
     catch (error) { if (error.code !== "EEXIST") throw error; return readDecision(current, sourceCommit, sourceTree); }
-  } else await replacePointer(pointer, bytes);
+  } else {
+    // A superseded attempt retains its immutable literal outcome without
+    // replacing the later whole-assessment decision for this same candidate.
+    if (expectedDecisionId && (await readDecision(current, sourceCommit, sourceTree)).decision_id !== expectedDecisionId) return record;
+    await replacePointer(pointer, bytes);
+  }
   return record;
+}
+
+export async function publicationDecisionStatus({root = process.cwd(), sourceCommit, sourceTree} = {}) {
+  try {return await readDecision(await layout(root), sourceCommit, sourceTree);} catch (error) {if (error.code === "ENOENT") return null; throw error;}
 }
 
 async function assertDecision(current, record) {

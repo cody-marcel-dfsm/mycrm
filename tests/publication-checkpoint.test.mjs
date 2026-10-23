@@ -108,6 +108,17 @@ test("unrelated candidate decisions and proposal changes preserve fixed-source a
   await assert.rejects(readPreparedPublication(prepared.prepared_record, {root: f.root}), /ENOENT/);
 });
 
+test("superseded whole-assessment errors retain their outcome without revoking the later decision", async t => {
+  const f = await fixture(t), binding = {root: f.root, sourceCommit: f.source, sourceTree: f.tree};
+  await recordPublicationDecision({...binding, status: "IN_PROGRESS", decisionId: "synthetic-earlier-attempt"});
+  await recordPublicationDecision({...binding, status: "APPROVED", receipt: "a".repeat(64), decisionId: "synthetic-later-attempt"});
+  const prepared = await preparePublication({root: f.root, admit: f.admit});
+  const original = await recordPublicationDecision({...binding, status: "ERROR", decisionId: "synthetic-earlier-attempt", expectedDecisionId: "synthetic-earlier-attempt"});
+  const archived = JSON.parse(await readFile(path.join(f.root, ".git/oracle/publication-prepared", `${original.record_sha256}.decision.json`)));
+  assert.equal(archived.status, "ERROR");
+  await readPreparedPublication(prepared.prepared_record, {root: f.root});
+});
+
 test("real Git publication uses the effective native hook and no heavy validator while authors move", async t => {
   const f = await fixture(t);
   await mkdir(path.join(f.root, ".githooks")); await mkdir(path.join(f.root, "scripts"));
