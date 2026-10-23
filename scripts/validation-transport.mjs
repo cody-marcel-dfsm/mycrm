@@ -88,9 +88,11 @@ export async function collectNativeChecks({root, sourceCommit, sourceTree, admis
     if (evidence.kind !== "file") continue;
     const filename = path.resolve(root, evidence.value.replace(/^@/, ""));
     if (!filename.startsWith(`${path.resolve(root, "Vault/tmp")}${path.sep}`) || !filename.endsWith(".json")) continue;
-    let manifest; try {manifest = JSON.parse(await readFile(filename));} catch {continue;}
+    let bytes; try { bytes = await readFile(filename); } catch { continue; }
+    if (hash(bytes) !== evidence.sha256) throw new Error("Focused required-command manifest changed");
+    let manifest; try { manifest = JSON.parse(bytes); } catch { continue; }
     if (manifest.schema !== "my-crm.required-command-coverage/v1") continue;
-    if (hash(await readFile(filename)) !== evidence.sha256 || !Array.isArray(manifest.checks)) throw new Error("Focused required-command manifest changed or is malformed");
+    if (!Array.isArray(manifest.checks)) throw new Error("Focused required-command manifest is malformed");
     // Native continuation retains original evidence. Historical manifests are
     // immutable supporting facts, never current command-coverage authority.
     if (manifest.source_commit !== sourceCommit || manifest.source_tree !== sourceTree) continue;
