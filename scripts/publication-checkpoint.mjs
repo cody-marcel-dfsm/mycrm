@@ -121,7 +121,8 @@ export async function recordPublicationDecision({root = process.cwd(), sourceCom
   let previousReady, readinessEpoch = null;
   if (status === "APPROVED") try {
     const prior = await readDecision(current, sourceCommit, sourceTree);
-    if (prior.status === "APPROVED") {previousReady = prior.record_sha256; readinessEpoch = prior.readiness_epoch_sha256 ?? null;}
+    readinessEpoch = prior.readiness_epoch_sha256 ?? null;
+    if (prior.status === "APPROVED") previousReady = prior.record_sha256;
     else if (["REJECTED", "INVALIDATED_CRITERIA"].includes(prior.status) && prior.invalidation_reason?.trim()) readinessEpoch = prior.record_sha256;
   } catch (error) {if (error.code !== "ENOENT") throw error;}
   let validationPlanHash = null;

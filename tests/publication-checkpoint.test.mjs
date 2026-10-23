@@ -138,6 +138,10 @@ test("additive completed evidence preserves captured readiness and explicit inva
   await readPreparedPublication(first.prepared_record, {root: f.root});
   await recordPublicationDecision({...binding, status: "INVALIDATED_CRITERIA", invalidationReason: "Original required output was concretely invalidated"});
   await assert.rejects(readPreparedPublication(first.prepared_record, {root: f.root}), /later native candidate decision/);
+  const pending = plan("9".repeat(64), "repaired-output");
+  pending.receipt.native_terminal_admission = {invocation_id: randomUUID(), controller_id: randomUUID()};
+  await recordPublicationDecision({...binding, status: "APPROVED", receipt: "9".repeat(64), validationPlan: pending});
+  await assert.rejects(readPreparedPublication(first.prepared_record, {root: f.root}), /later native candidate decision/);
   await recordPublicationDecision({...binding, status: "APPROVED", receipt: "f".repeat(64), validationPlan: plan("f".repeat(64), "repaired-output")});
   await assert.rejects(readPreparedPublication(first.prepared_record, {root: f.root}), /later native candidate decision/);
   await readPreparedPublication((await preparePublication({root: f.root})).prepared_record, {root: f.root});
