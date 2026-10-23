@@ -188,6 +188,17 @@ execution only when an explicit required-check contract calls for it. A native
 baseline-plus-focused claim needs the exact current private coverage manifest
 and its explicit independent `required-command-coverage` assessment. Never infer
 a passing aggregate from failed or interrupted output.
+An intact historical pass with incomplete native provenance retains that
+limitation. Its manifest additionally supplies `qualified_executions` with the
+original record/scope/output hashes, accepted facts, explicit unknowns, every
+changed dependency and current hash, and passing repair execution IDs. Require
+independent `qualified-historical-execution` coverage citing the exact manifest;
+publication transport labels the qualified fact without promoting eligibility.
+Native capture excludes chat/shell dispatch identity from its actual command
+environment and applicability. A check that consumes such a value declares
+`--environment NAME`; canonical cwd, executable/runtime and functional config
+remain bound. Full original dispatch/executed environment hashes remain private
+immutable provenance, and a new chat reuses unchanged original command evidence.
 
 Execute the returned `publish_argv`, or
 `npm run publication:publish -- --prepared <absolute-record>`. Publication runs
