@@ -139,6 +139,10 @@ and matching dispositions, and rejects identity/status conflicts or local duplic
    repeat `--input <exact-project-file>` for its complete consumed dependency
    closure before `-- <command>`. Capture build and package checks as needed.
    Supply the emitted original `--validation @<record>` to `oracle:review`.
+   The native recorder discovers original matching command proofs before
+   execution and writes immutable command coverage with actual changelist
+   commit/tree and input/environment/executable/output hashes. Preserve its
+   explicit REUSED/EXECUTED disposition and invalidation reasons.
 4. Preserve genuine prior review observations and passing source/dependency/
    configuration/environment/output-bound tests. Changed governing instructions
    require fresh assessment of affected criteria and missing coverage. Inspect
@@ -169,15 +173,42 @@ spending authorization. Broad architecture, public API-contract and authenticati
 labels alone create no new approval gate. Technical review identifies effects; exact authority is
 checked immediately before a protected publication/install mutation.
 
-Publish a `codex/release-v<version>` ref from the validated commit without switching
-canonical main. The remote is `https://github.com/cody-marcel-dfsm/mycrm.git`.
-Push, open its PR, wait for required checks and merge only the exact validated
-source. Use `npm run oracle:deployment -- <exact-ref>` before main/release
-promotion and `npm run install:reviewed` for supported native installation.
-The pre-push hook and maintainer install wrapper enforce exact receipt/effect
-admission. Preserve immutable historical stamped receipts alongside committed
-review checkpoints. Ordinary commits and source-review branch publication remain
-independent of review readiness.
+Complete every required check and full exact-source/effect admission during
+validation. Then prepare the fixed Git publication with
+`npm run publication:prepare -- <sourceSHA> origin refs/heads/main <remoteSHA>`.
+Its immutable private checkpoint records source/tree, remote/destination/baseline,
+completed technical/effect admission and the actual covered changelist hashes.
+The remote is `https://github.com/cody-marcel-dfsm/mycrm.git`.
+For this GitHub remote, preparation verifies original native command proofs and
+exports only an owner-authenticated sanitized immutable command envelope plus
+exact-source status. This completes source/evidence ref and status work during
+validation. CI accepts the truthful original environment and exact command
+coverage; it executes missing/invalidated checks and imposes additional platform
+execution only when an explicit required-check contract calls for it. A native
+baseline-plus-focused claim needs the exact current private coverage manifest
+and its explicit independent `required-command-coverage` assessment. Never infer
+a passing aggregate from failed or interrupted output.
+
+Execute the returned `publish_argv`, or
+`npm run publication:publish -- --prepared <absolute-record>`. Publication runs
+only the normal fast-forward Git push of that exact SHA. The native hook checks
+the bounded prepared proof and exact Git tuple; it runs no test, build, review,
+status/history traversal or moving-HEAD check. Concurrent authors may continue.
+The family coordinator dispatches its prepared member pushes in parallel with a
+less-than-ten-second publication target. Complete required CI/status preparation
+before publication; publication never waits for or repeats validation.
+Completed validation seals exact-CL command/source/effect coverage. Same-CL
+preparation consumes that seal; perform one legacy import audit only when no
+reusable seal exists. A later explicit completed rejection or detected governing
+criteria invalidation revokes candidate readiness through compact native metadata.
+Genuine later admitted whole-candidate IN_PROGRESS, INCOMPLETE and ERROR retain
+their original attempt records and require reconciliation before publication.
+Superseded attempts and unrelated commits/proposals preserve the later or fixed
+source checkpoint. Attempt supersession custody stays separate from readiness.
+
+Use `npm run install:reviewed` for supported native installation. Preserve
+immutable historical receipts alongside committed review checkpoints. Ordinary
+commits and source-review branch publication remain independent of review readiness.
 
 After actual publication and supported installation verification, record the
 separate delivered SHA and artifact digest. The native install wrapper records

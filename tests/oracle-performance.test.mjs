@@ -2004,6 +2004,10 @@ test("same committed source reopens changed governing criteria and failed invoca
   const source = await git("rev-parse", "HEAD"); await command(repo, ["review"], env);
   const {shipmentPlan, readValidatedCheckpoint} = await import("../scripts/shipment-state.mjs");
   const first = await readValidatedCheckpoint(repo);
+  const preservedDecision = path.join(repo, ".git/oracle/publication-prepared", `${source}-${first.record.tree}.decision`);
+  await assert.rejects(command(repo, ["review", "--validation", "Synthetic additional current evidence"], {...env, ORACLE_NO_OUTPUT: "1"}), /ORACLE_PROCESS=ERROR/);
+  assert.equal(JSON.parse(await readFile(preservedDecision)).status, "APPROVED");
+  assert.equal((await shipmentPlan({root: repo})).action, "DELIVER");
   const authority = path.join(repo, "Vault/docs/CONSTITUTION.md"), original = await readFile(authority);
   await writeFile(authority, Buffer.concat([original, Buffer.from("\nSynthetic changed criterion.\n")]));
   assert.equal((await shipmentPlan({root: repo})).action, "VALIDATE");
