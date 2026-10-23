@@ -110,7 +110,9 @@ test("ordinary agents call an isolated Oracle utility and never impersonate the 
   assert.equal(packageJson.scripts["oracle:review"], "node scripts/oracle-review.mjs review");
   assert.equal(packageJson.scripts["oracle:proposal"], "node scripts/oracle-review.mjs proposal");
   assert.doesNotMatch(workflow, /run: npm run oracle:verify-commit/);
-  assert.match(workflow, /Native publication\/install admission/);
+  assert.match(workflow, /run: npm run release:check/);
+  assert.equal(packageJson.scripts["release:check"], "node scripts/release-validation.mjs");
+  assert.match(workflow, /MYCRM_VALIDATION_SOURCE_SHA:.*github\.event\.pull_request\.head\.sha \|\| github\.sha/);
   assert.match(workflow, /fetch-depth: 2/);
   assert.match(oracleUtility, /"--ignore-user-config"/);
   assert.match(oracleUtility, /Broad architecture\/authentication\/public-contract labels/);
