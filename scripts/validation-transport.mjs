@@ -45,8 +45,9 @@ function verifyEnvelope(envelope, {repository, owner, sourceCommit, sourceTree})
         || seen.has(commandKey(check.command)) || !["EXACT_INPUT_EXECUTION", "BASELINE_PLUS_FOCUSED_REPAIR"].includes(check.coverage) || !Array.isArray(check.executions) || !check.executions.length) throw new Error("Native validation check identity/coverage is invalid or duplicated");
     seen.add(commandKey(check.command));
     for (const record of check.executions) {
-      const allowed = ["record_sha256", "command_sha256", "input_sha256", "executable_sha256", "environment_sha256", "output_sha256", "original_environment"];
+      const allowed = ["record_sha256", "command_sha256", "input_sha256", "executable_sha256", "environment_sha256", "output_sha256", "original_environment", ...(Object.hasOwn(record, "qualification") ? ["qualification"] : [])];
       if (Object.keys(record).sort().join() !== [...allowed].sort().join() || allowed.slice(0, 6).some(key => !digestPattern.test(record[key] ?? ""))) throw new Error("Native validation original execution hashes are invalid");
+      if (Object.hasOwn(record, "qualification") && (record.qualification !== "INDEPENDENTLY_QUALIFIED_HISTORICAL_PASS" || check.coverage !== "BASELINE_PLUS_FOCUSED_REPAIR")) throw new Error("Historical execution qualification requires composed independent coverage");
       const environment = record.original_environment;
       if (environment !== null && (Object.keys(environment).sort().join() !== ["node", "platform", "architecture"].sort().join() || !/^v\d+\.\d+\.\d+$/.test(environment.node)
           || !["darwin", "linux", "win32"].includes(environment.platform) || !["arm64", "x64", "ia32", "arm", "ppc64", "s390x", "riscv64"].includes(environment.architecture))) throw new Error("Native validation environment metadata is not safe and truthful");
@@ -69,11 +70,12 @@ export async function collectNativeChecks({root, sourceCommit, sourceTree, admis
   const receipt = JSON.parse(await readMetadataFile(path.join(directory, "technical-receipts", `${admission.technical_receipt_sha256}.json`), "utf8", {root: owner}));
   if (receipt.verdict !== "APPROVED" || receipt.review_status !== "COMPLETE" || receipt.reviewed_tree !== sourceTree || receipt.receipt_sha256 !== admission.technical_receipt_sha256
       || (receipt.candidate_commit ?? sourceCommit) !== sourceCommit) throw new Error("CI export requires the exact complete independent native decision");
-  const proofs = (await readValidationProofs({root, directory, validation: receipt.input_binding.validation, checkCurrentExecutable: false})).filter(proof => proof.eligible);
+  const originals = await readValidationProofs({root, directory, validation: receipt.input_binding.validation, checkCurrentExecutable: false});
+  const proofs = originals.filter(proof => proof.eligible && proof.original_eligible);
   const publicFiles = Object.fromEntries((await git(root, ["ls-tree", "-rz", sourceTree])).split("\0").filter(Boolean).map(entry => [entry.slice(entry.indexOf("\t") + 1), entry.slice(0, entry.indexOf("\t")).split(" ")[2]]));
   const authorities = Object.fromEntries((receipt.input_binding.authorities ?? []).map(item => [item.path, item.sha256]));
+  const current = {...publicFiles, ...authorities};
   const exactInputs = record => {
-    const current = {...publicFiles, ...authorities};
     if (Object.keys(publicFiles).some(name => record.before.files[name] !== current[name])) return false;
     return Object.entries(record.before.files).every(([name, value]) => Object.hasOwn(current, name) ? current[name] === value : value === null);
   };
@@ -101,9 +103,25 @@ export async function collectNativeChecks({root, sourceCommit, sourceTree, admis
     for (const check of manifest.checks) {
       if (checks.some(item => canonical(item.command) === canonical(check.command))) continue;
       if (!requiredCommands.some(command => canonical(command) === canonical(check.command)) || !Array.isArray(check.executions) || !check.executions.length) throw new Error("Focused command coverage is incomplete");
-      const records = check.executions.map(id => proofs.find(proof => proof.record.record_sha256 === id)?.record);
+      const selected = check.executions.map(id => originals.find(proof => proof.record.record_sha256 === id));
+      const records = selected.map(proof => proof?.record);
       if (records.some(record => !record) || !records.some(record => canonical(record.command) === canonical(check.command))) throw new Error("Focused coverage requires the original passing required-command baseline and every passing repair proof");
-      checks.push({command: check.command, coverage: "BASELINE_PLUS_FOCUSED_REPAIR", executions: records.map(publicExecution)});
+      const executions = selected.map(proof => {
+        const record = proof.record;
+        if (!proof.eligible) throw new Error("Focused coverage requires intact original passing execution facts");
+        if (proof.original_eligible) return publicExecution(record);
+        const qualification = check.qualified_executions?.find(item => item.record_sha256 === record.record_sha256);
+        const independentlyQualified = [...receipt.coverage ?? [], ...receipt.reused_coverage ?? []].some(item => item.criteria?.includes("qualified-historical-execution") && item.evidence?.includes(evidence.value));
+        const changed = [...new Set([...Object.keys(record.before.files), ...Object.keys(current)])].filter(name => (record.before.files[name] ?? null) !== (current[name] ?? null)).sort();
+        const repairs = (qualification?.repair_executions ?? []).map(id => selected.find(item => item?.record.record_sha256 === id && item.original_eligible && item.eligible));
+        if (!independentlyQualified || !qualification || qualification.original_scope_sha256 !== hash(canonical(record.before)) || qualification.original_output_sha256 !== record.output_sha256
+            || !qualification.accepted_facts?.length || !qualification.limitations?.length || [...qualification.accepted_facts, ...qualification.limitations].some(value => typeof value !== "string" || !value.trim())
+            || !Array.isArray(qualification.affected_dependencies) || canonical(qualification.affected_dependencies.map(item => item.path).sort()) !== canonical(changed)
+            || qualification.affected_dependencies.some(item => item.current_hash !== (current[item.path] ?? null))
+            || !repairs.length || repairs.some(item => !item) || changed.filter(name => !Object.hasOwn(authorities, name)).some(name => !repairs.some(item => Object.hasOwn(item.record.before.files, name) && item.record.before.files[name] === (current[name] ?? null)))) throw new Error("Historical passing facts require exact independent qualification and complete affected dependency/repair coverage");
+        return {...publicExecution(record), qualification: "INDEPENDENTLY_QUALIFIED_HISTORICAL_PASS"};
+      });
+      checks.push({command: check.command, coverage: "BASELINE_PLUS_FOCUSED_REPAIR", executions});
     }
   }
   const missing = requiredCommands.filter(command => !checks.some(check => canonical(command) === canonical(check.command)));

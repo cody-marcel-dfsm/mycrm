@@ -94,7 +94,10 @@ export async function readValidationProofs({root, directory, validation, checkCu
     }
     const eligible = !metadataReasons.length && record.outcome === "PASSED" && record.exit_code === 0 && !record.signal &&
       bindingHash(record.before) === bindingHash(record.after) && bindingHash(record.executable) === bindingHash(record.after_executable) && bindingHash(executable) === bindingHash(record.executable);
-    proofs.push({evidence: evidence.value, record, eligible, reason: eligible ? null : metadataReasons.join("; ") || "command failed, original inputs drifted, or executable changed", ...(currentProvenance ? {current_provenance: currentProvenance} : {})});
+    const originalEligible = record.outcome === "PASSED" && record.exit_code === 0 && !record.signal && bindingHash(record.before) === bindingHash(record.after) && bindingHash(record.executable) === bindingHash(record.after_executable)
+      && record.file_metadata_policy === "live-mode-and-type-v1" && Boolean(record.before.file_metadata && record.output_custody && record.execution_cwd && Object.hasOwn(record.executable, "target_index"))
+      && Object.values(record.before.file_metadata).every(value => value?.custody);
+    proofs.push({evidence: evidence.value, record, eligible, original_eligible: originalEligible, reason: eligible ? null : metadataReasons.join("; ") || "command failed, original inputs drifted, or executable changed", ...(currentProvenance ? {current_provenance: currentProvenance} : {})});
   }
   return proofs;
 }

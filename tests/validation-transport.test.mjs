@@ -11,6 +11,7 @@ import test from "node:test";
 import {collectNativeChecks, exportNativeValidation, importNativeValidation, gitBlobHash, requiredCommands, validationContext} from "../scripts/validation-transport.mjs";
 import {bindingHash, evidenceBinding} from "../scripts/oracle-inputs.mjs";
 import {validateRelease} from "../scripts/release-validation.mjs";
+import {readValidationProofs, validationDigest} from "../scripts/oracle-validation.mjs";
 
 const source = "a".repeat(40), tree = "b".repeat(40), repository = "synthetic-owner/my-crm";
 const hash = value => createHash("sha256").update(value).digest("hex");
@@ -144,6 +145,38 @@ test("export verifies actual native originals and composes only independently as
   assert.equal(original.input_sha256, bindingHash(baseline.record.before));
   assert.equal(original.record_sha256, baseline.record.record_sha256);
   assert.equal(original.output_sha256, baseline.record.output_sha256);
+  // A synthetic legacy record retains its real original output/input hashes,
+  // while deliberately representing unavailable historical custody/cwd facts.
+  const legacyRecord = {...baseline.record}; delete legacyRecord.execution_cwd; delete legacyRecord.output_custody; delete legacyRecord.recorder_environment;
+  legacyRecord.record_sha256 = validationDigest(legacyRecord);
+  const legacyPath = path.join(root, ".git/oracle/validations", `${legacyRecord.record_sha256}.json`);
+  await writeFile(legacyPath, `${JSON.stringify(legacyRecord)}\n`);
+  const legacy = {reference: `@${legacyPath}`, record: legacyRecord};
+  const [strict] = await readValidationProofs({root, directory: path.join(root, ".git/oracle"), validation: [await evidenceBinding(root, legacy.reference)]});
+  assert.equal(strict.eligible, false); assert.equal(strict.original_eligible, false);
+  const publicFiles = Object.fromEntries((await git("ls-tree", "-rz", candidate.source_tree)).split("\0").filter(Boolean).map(entry => [entry.slice(entry.indexOf("\t") + 1), entry.slice(0, entry.indexOf("\t")).split(" ")[2]]));
+  const current = {...publicFiles, ...Object.fromEntries(originals[0].record.review_provenance.before.inputs.authorities.map(item => [item.path, item.sha256]))};
+  const changed = [...new Set([...Object.keys(legacyRecord.before.files), ...Object.keys(current)])].filter(name => (legacyRecord.before.files[name] ?? null) !== (current[name] ?? null)).sort();
+  const qualified = {schema: "my-crm.required-command-coverage/v1", ...candidate, checks: [{command: requiredCommands[1], executions: [legacyRecord.record_sha256, focused.record.record_sha256], qualified_executions: [{record_sha256: legacyRecord.record_sha256,
+    original_scope_sha256: bindingHash(legacyRecord.before), original_output_sha256: legacyRecord.output_sha256,
+    accepted_facts: ["The original required command passed with retained input and output hashes; current repair closure was independently assessed."],
+    limitations: ["Original execution cwd and transitive output custody are unknown and remain unclaimed."],
+    affected_dependencies: changed.map(name => ({path: name, current_hash: current[name] ?? null})), repair_executions: [focused.record.record_sha256]}]}]};
+  const qualifiedPath = path.join(root, "Vault/tmp/qualified-historical-coverage.json");
+  await writeFile(qualifiedPath, JSON.stringify(qualified)); const qualifiedEvidence = await evidenceBinding(root, `@${qualifiedPath}`);
+  const qualifiedProofs = [originals[0], legacy, originals[2], focused];
+  const qualificationCoverage = [{path: "package.json", criteria: ["required-command-coverage", "qualified-historical-execution"], evidence: [qualifiedEvidence.value]}];
+  await assert.rejects(collectNativeChecks(await receipt(qualifiedProofs, [{...qualificationCoverage[0], criteria: ["required-command-coverage"]}], [qualifiedEvidence])), /independent qualification/);
+  const qualifiedChecks = await collectNativeChecks(await receipt(qualifiedProofs, qualificationCoverage, [qualifiedEvidence]));
+  const historicalExecution = qualifiedChecks.find(check => check.coverage === "BASELINE_PLUS_FOCUSED_REPAIR").executions[0];
+  assert.equal(historicalExecution.qualification, "INDEPENDENTLY_QUALIFIED_HISTORICAL_PASS"); assert.equal(historicalExecution.original_environment, null);
+  assert.equal(historicalExecution.record_sha256, legacyRecord.record_sha256); assert.equal(strict.eligible, false);
+  qualified.checks[0].qualified_executions[0].affected_dependencies.pop();
+  await writeFile(qualifiedPath, JSON.stringify(qualified));
+  await assert.rejects(collectNativeChecks(await receipt(qualifiedProofs, qualificationCoverage, [await evidenceBinding(root, `@${qualifiedPath}`)])), /complete affected dependency/);
+  qualified.checks[0].executions[0] = failed.record.record_sha256;
+  await writeFile(qualifiedPath, JSON.stringify(qualified));
+  await assert.rejects(collectNativeChecks(await receipt([originals[0], failed, originals[2], focused], qualificationCoverage, [await evidenceBinding(root, `@${qualifiedPath}`)])), /intact original passing/);
   const historicalPath = path.join(root, "Vault/tmp/required-command-coverage-original.json");
   const source = baseline.record.review_provenance.before.base_commit;
   await writeFile(historicalPath, JSON.stringify({schema: "my-crm.required-command-coverage/v1", source_commit: source, source_tree: await git("rev-parse", `${source}^{tree}`), checks: []}));
