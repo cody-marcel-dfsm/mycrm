@@ -1,6 +1,6 @@
 import assert from "node:assert/strict";
 import {createHash} from "node:crypto";
-import {mkdir, mkdtemp, readFile, realpath, rm, writeFile} from "node:fs/promises";
+import {mkdir, mkdtemp, readFile, realpath, rm, writeFile, symlink} from "node:fs/promises";
 import {execFile} from "node:child_process";
 import os from "node:os";
 import path from "node:path";
@@ -8,7 +8,7 @@ import process from "node:process";
 import {fileURLToPath} from "node:url";
 import {promisify} from "node:util";
 import test from "node:test";
-import {collectNativeChecks, exportNativeValidation, importNativeValidation, gitBlobHash, requiredCommands, validationContext} from "../scripts/validation-transport.mjs";
+import {collectNativeChecks, exportNativeValidation, importNativeValidation, gitBlobHash, historicalInputComparisons, requiredCommands, validationContext} from "../scripts/validation-transport.mjs";
 import {bindingHash, evidenceBinding} from "../scripts/oracle-inputs.mjs";
 import {validateRelease} from "../scripts/release-validation.mjs";
 import {readValidationProofs, validationDigest} from "../scripts/oracle-validation.mjs";
@@ -147,7 +147,13 @@ test("export verifies actual native originals and composes only independently as
   assert.equal(original.output_sha256, baseline.record.output_sha256);
   // A synthetic legacy record retains its real original output/input hashes,
   // while deliberately representing unavailable historical custody/cwd facts.
-  const legacyRecord = {...baseline.record}; delete legacyRecord.execution_cwd; delete legacyRecord.output_custody; delete legacyRecord.recorder_environment;
+  const privateInput = "Vault/tmp/original-input.txt", generatedGuide = "Vault/tmp/generated-guide.txt";
+  await writeFile(path.join(root, privateInput), "Synthetic unchanged original private input.\n");
+  await writeFile(path.join(root, generatedGuide), "Synthetic current generated navigation.\n");
+  const legacyRecord = structuredClone(baseline.record); delete legacyRecord.execution_cwd; delete legacyRecord.output_custody; delete legacyRecord.recorder_environment;
+  legacyRecord.before.files[privateInput] = gitBlobHash(await readFile(path.join(root, privateInput)));
+  legacyRecord.before.files[generatedGuide] = gitBlobHash(Buffer.from("Synthetic previous generated navigation.\n"));
+  legacyRecord.after = structuredClone(legacyRecord.before);
   legacyRecord.record_sha256 = validationDigest(legacyRecord);
   const legacyPath = path.join(root, ".git/oracle/validations", `${legacyRecord.record_sha256}.json`);
   await writeFile(legacyPath, `${JSON.stringify(legacyRecord)}\n`);
@@ -156,21 +162,31 @@ test("export verifies actual native originals and composes only independently as
   assert.equal(strict.eligible, false); assert.equal(strict.original_eligible, false);
   const publicFiles = Object.fromEntries((await git("ls-tree", "-rz", candidate.source_tree)).split("\0").filter(Boolean).map(entry => [entry.slice(entry.indexOf("\t") + 1), entry.slice(0, entry.indexOf("\t")).split(" ")[2]]));
   const current = {...publicFiles, ...Object.fromEntries(originals[0].record.review_provenance.before.inputs.authorities.map(item => [item.path, item.sha256]))};
-  const changed = [...new Set([...Object.keys(legacyRecord.before.files), ...Object.keys(current)])].filter(name => (legacyRecord.before.files[name] ?? null) !== (current[name] ?? null)).sort();
+  const comparisons = await historicalInputComparisons({root, record: legacyRecord, current});
+  assert.equal(comparisons.find(item => item.path === privateInput).changed, false);
+  assert.equal(comparisons.find(item => item.path === privateInput).current_state, "PRIVATE_INPUT_BYTES");
+  const changed = comparisons.filter(item => item.changed);
   const qualified = {schema: "my-crm.required-command-coverage/v1", ...candidate, checks: [{command: requiredCommands[1], executions: [legacyRecord.record_sha256, focused.record.record_sha256], qualified_executions: [{record_sha256: legacyRecord.record_sha256,
     original_scope_sha256: bindingHash(legacyRecord.before), original_output_sha256: legacyRecord.output_sha256,
     accepted_facts: ["The original required command passed with retained input and output hashes; current repair closure was independently assessed."],
     limitations: ["Original execution cwd and transitive output custody are unknown and remain unclaimed."],
-    affected_dependencies: changed.map(name => ({path: name, current_hash: current[name] ?? null})), repair_executions: [focused.record.record_sha256]}]}]};
+    affected_dependencies: changed.map(item => ({path: item.path, current_hash: item.current_hash, current_state: item.current_state,
+      disposition: item.path === generatedGuide ? "NON_EXECUTION_INPUT" : "EXECUTION_COVERED",
+      ...(item.path === generatedGuide ? {reason: "Generated navigation is outside the declared synthetic check command closure.", evidence: ["The check imports only node:fs/promises and reads no guide."]} : {})})), repair_executions: [focused.record.record_sha256]}]}]};
   const qualifiedPath = path.join(root, "Vault/tmp/qualified-historical-coverage.json");
   await writeFile(qualifiedPath, JSON.stringify(qualified)); const qualifiedEvidence = await evidenceBinding(root, `@${qualifiedPath}`);
   const qualifiedProofs = [originals[0], legacy, originals[2], focused];
-  const qualificationCoverage = [{path: "package.json", criteria: ["required-command-coverage", "qualified-historical-execution"], evidence: [qualifiedEvidence.value]}];
+  const qualificationCoverage = [{path: "package.json", criteria: ["required-command-coverage", "qualified-historical-execution", "qualified-dependency-disposition"], evidence: [qualifiedEvidence.value]}];
   await assert.rejects(collectNativeChecks(await receipt(qualifiedProofs, [{...qualificationCoverage[0], criteria: ["required-command-coverage"]}], [qualifiedEvidence])), /independent qualification/);
+  await assert.rejects(collectNativeChecks(await receipt(qualifiedProofs, [{...qualificationCoverage[0], criteria: ["required-command-coverage", "qualified-historical-execution"]}], [qualifiedEvidence])), /complete affected dependency/);
   const qualifiedChecks = await collectNativeChecks(await receipt(qualifiedProofs, qualificationCoverage, [qualifiedEvidence]));
   const historicalExecution = qualifiedChecks.find(check => check.coverage === "BASELINE_PLUS_FOCUSED_REPAIR").executions[0];
   assert.equal(historicalExecution.qualification, "INDEPENDENTLY_QUALIFIED_HISTORICAL_PASS"); assert.equal(historicalExecution.original_environment, null);
   assert.equal(historicalExecution.record_sha256, legacyRecord.record_sha256); assert.equal(strict.eligible, false);
+  assert.doesNotMatch(JSON.stringify(qualifiedChecks), /Vault|generated-guide|original-input|Synthetic previous|Synthetic current/);
+  await writeFile(path.join(root, privateInput), "Synthetic genuine uncovered command-input change.\n");
+  await assert.rejects(collectNativeChecks(await receipt(qualifiedProofs, qualificationCoverage, [qualifiedEvidence])), /complete affected dependency/);
+  await writeFile(path.join(root, privateInput), "Synthetic unchanged original private input.\n");
   qualified.checks[0].qualified_executions[0].affected_dependencies.pop();
   await writeFile(qualifiedPath, JSON.stringify(qualified));
   await assert.rejects(collectNativeChecks(await receipt(qualifiedProofs, qualificationCoverage, [await evidenceBinding(root, `@${qualifiedPath}`)])), /complete affected dependency/);
@@ -187,4 +203,17 @@ test("export verifies actual native originals and composes only independently as
   await assert.rejects(collectNativeChecks(await receipt(originals, coverage, [manifest, historical])), /manifest changed/);
   await writeFile(baseline.record.output_file, "Synthetic altered original output\n");
   await assert.rejects(collectNativeChecks(await receipt(originals, coverage, [manifest])), /output is missing or changed/);
+});
+
+test("historical identity audit distinguishes source/private absence and refuses unavailable custody", async t => {
+  const root = await realpath(await mkdtemp(path.join(os.tmpdir(), "my-crm-historical-inputs-")));
+  t.after(() => rm(root, {recursive: true, force: true}));
+  await promisify(execFile)("git", ["init", "-b", "main"], {cwd: root});
+  await writeFile(path.join(root, ".gitignore"), "Vault/\n"); await mkdir(path.join(root, "Vault"));
+  await writeFile(path.join(root, "Vault/actual"), "Synthetic private bytes");
+  await symlink("actual", path.join(root, "Vault/link"));
+  const record = {before: {files: {"deleted.mjs": "a".repeat(40), "Vault/missing": "b".repeat(40), "Vault/actual": gitBlobHash(Buffer.from("Synthetic private bytes")), "Vault/link": "c".repeat(40), "/outside-owner.txt": "d".repeat(64)}}};
+  const compared = await historicalInputComparisons({root, record, current: {}});
+  assert.deepEqual(compared.map(item => [item.path, item.current_state]), [["/outside-owner.txt", "UNAVAILABLE"], ["Vault/actual", "PRIVATE_INPUT_BYTES"], ["Vault/link", "UNAVAILABLE"], ["Vault/missing", "PRIVATE_INPUT_ABSENT"], ["deleted.mjs", "SOURCE_TREE_ABSENT"]]);
+  assert.equal(compared.find(item => item.path === "Vault/actual").changed, false);
 });

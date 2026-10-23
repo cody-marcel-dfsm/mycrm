@@ -42,6 +42,32 @@ test("new-chat bookkeeping preserves source observations and full original envir
   assert.equal(configured.public.eligible_coverage.length, 0); assert.match(configured.public.invalidated[0].reason, /environment/);
 });
 
+test("three saved rounds retain a command-specific functional environment independently of reviewer dispatch", async t => {
+  const {prepare, record, options, nativeProofs} = await fixture(t);
+  const before = reviewSnapshot(options), functionalEnvironment = "explicit-command-environment";
+  nativeProofs[0].record.before = {...before, scope: "declared-inputs-v2", tree: null, context: {environment: functionalEnvironment}};
+  nativeProofs[0].record.after = nativeProofs[0].record.before;
+  nativeProofs[0].current_provenance = {environment: functionalEnvironment};
+  options.validationProofs = nativeProofs;
+  let originalWitness;
+  for (let round = 0; round < 3; round++) {
+    const prepared = await prepare();
+    assert.equal(prepared.public.invalidated.some(item => item.kind === "validation"), false);
+    const prior = prepared.public.eligible_validations;
+    if (round) assert.equal(prior.length, 1);
+    const saved = await record(prepared, response());
+    const observation = saved.rounds.at(-1).validations[0];
+    assert.equal(observation.execution_environment_sha256, functionalEnvironment);
+    originalWitness ??= observation.input_sha256;
+    assert.equal(observation.input_sha256, originalWitness);
+  }
+  nativeProofs[0].current_provenance = {environment: "changed-functional-command-input"};
+  const changed = await prepare();
+  assert.equal(changed.public.eligible_validations.length, 0);
+  assert.match(changed.public.invalidated.find(item => item.kind === "validation").reason, /command environment changed/);
+  assert.equal(nativeProofs[0].record.before.context.environment, functionalEnvironment);
+});
+
 test("complete first scan consolidates findings and repair review carries only verified unaffected coverage", async (t) => {
   const {prepare, record, options} = await fixture(t);
   const initial = await prepare();

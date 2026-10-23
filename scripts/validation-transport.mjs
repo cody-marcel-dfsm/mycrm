@@ -18,6 +18,49 @@ const commandKey = command => hash(canonical(command));
 const git = async (root, args) => (await execute("git", args, {cwd: root, maxBuffer: 16 * 1024 * 1024})).stdout.trim();
 const issuerHash = (repository, owner) => hash(canonical({repository: repository.toLowerCase(), repository_owner_id: owner.id}));
 
+// This owner-local audit runs only while qualifying original validation facts.
+// Public Git inputs stay bound to the captured tree. Ignored historical inputs
+// require actual canonical bytes; omission from a public projection is no proof
+// of absence. Private paths and these comparisons never enter the envelope.
+export async function historicalInputComparisons({root, record, current}) {
+  const {pathCustody, readMetadataFile} = await import("./oracle-inputs.mjs");
+  const names = [...new Set([...Object.keys(record.before.files), ...Object.keys(current)])].sort();
+  const omitted = names.filter(name => !Object.hasOwn(current, name) && !path.isAbsolute(name) && !name.split("/").some(part => ["..", ".git"].includes(part))), ignored = new Set();
+  if (omitted.length) {
+    const stdout = await new Promise((resolve, reject) => {
+      const child = execFile("git", ["check-ignore", "--no-index", "-z", "--stdin"], {cwd: root, maxBuffer: 16 * 1024 * 1024}, (error, output) => error && error.code !== 1 ? reject(error) : resolve(output));
+      child.stdin.on("error", reject); child.stdin.end(`${omitted.join("\0")}\0`);
+    });
+    for (const name of stdout.split("\0").filter(Boolean)) ignored.add(name);
+  }
+  return Promise.all(names.map(async name => {
+    const original = record.before.files[name] ?? null;
+    let value = current[name] ?? null, state = Object.hasOwn(current, name) ? "BOUND_INPUT" : "SOURCE_TREE_ABSENT";
+    if (!Object.hasOwn(current, name)) {
+      if (path.isAbsolute(name) || name.split("/").some(part => ["..", ".git"].includes(part))) state = "UNAVAILABLE";
+      else {
+        if (ignored.has(name)) {
+          try {
+            const custody = await pathCustody(root, name, {allowMissing: true, allowFinalLink: false, excluded: [path.join(root, ".git")]});
+            if (custody.metadata === null) state = "PRIVATE_INPUT_ABSENT";
+            else {
+              const bytes = await readMetadataFile(custody.resolved_path, {}, {root});
+              value = oid.test(original ?? "") ? gitBlobHash(bytes) : hash(bytes);
+              state = "PRIVATE_INPUT_BYTES";
+            }
+          } catch (error) {
+            // Missing components are handled above. Ownership, regular-file and
+            // custody failures remain unknown, never converted into absence.
+            state = "UNAVAILABLE"; value = null;
+          }
+        }
+      }
+    }
+    return {path: name, original_hash: original, current_hash: value, current_state: state,
+      changed: state === "UNAVAILABLE" || original !== value};
+  }));
+}
+
 // gh owns existing credentials. Structured JSON travels on stdin, never shell
 // text or command-line token arguments; no response logs are published.
 export async function githubRequest(method, endpoint, body) {
@@ -75,12 +118,11 @@ export async function collectNativeChecks({root, sourceCommit, sourceTree, admis
   const publicFiles = Object.fromEntries((await git(root, ["ls-tree", "-rz", sourceTree])).split("\0").filter(Boolean).map(entry => [entry.slice(entry.indexOf("\t") + 1), entry.slice(0, entry.indexOf("\t")).split(" ")[2]]));
   const authorities = Object.fromEntries((receipt.input_binding.authorities ?? []).map(item => [item.path, item.sha256]));
   const current = {...publicFiles, ...authorities};
-  const exactInputs = record => {
-    if (Object.keys(publicFiles).some(name => record.before.files[name] !== current[name])) return false;
-    return Object.entries(record.before.files).every(([name, value]) => Object.hasOwn(current, name) ? current[name] === value : value === null);
-  };
+  const exact = new Map(await Promise.all(proofs.filter(proof => requiredCommands.some(command => canonical(command) === canonical(proof.record.command))).map(async proof =>
+    [proof.record.record_sha256, !(await historicalInputComparisons({root, record: proof.record,
+      current: Object.fromEntries(Object.entries(current).filter(([name]) => Object.hasOwn(publicFiles, name) || Object.hasOwn(proof.record.before.files, name)))})).some(item => item.changed)])));
   const checks = requiredCommands.flatMap(command => {
-    const proof = proofs.find(proof => canonical(proof.record.command) === canonical(command) && exactInputs(proof.record));
+    const proof = proofs.find(proof => canonical(proof.record.command) === canonical(command) && exact.get(proof.record.record_sha256));
     return proof ? [{command, coverage: "EXACT_INPUT_EXECUTION", executions: [publicExecution(proof.record)]}] : [];
   });
   // A focused repair never turns a failed aggregate into a passing execution.
@@ -106,21 +148,29 @@ export async function collectNativeChecks({root, sourceCommit, sourceTree, admis
       const selected = check.executions.map(id => originals.find(proof => proof.record.record_sha256 === id));
       const records = selected.map(proof => proof?.record);
       if (records.some(record => !record) || !records.some(record => canonical(record.command) === canonical(check.command))) throw new Error("Focused coverage requires the original passing required-command baseline and every passing repair proof");
-      const executions = selected.map(proof => {
+      const executions = await Promise.all(selected.map(async proof => {
         const record = proof.record;
         if (!proof.eligible) throw new Error("Focused coverage requires intact original passing execution facts");
         if (proof.original_eligible) return publicExecution(record);
         const qualification = check.qualified_executions?.find(item => item.record_sha256 === record.record_sha256);
         const independentlyQualified = [...receipt.coverage ?? [], ...receipt.reused_coverage ?? []].some(item => item.criteria?.includes("qualified-historical-execution") && item.evidence?.includes(evidence.value));
-        const changed = [...new Set([...Object.keys(record.before.files), ...Object.keys(current)])].filter(name => (record.before.files[name] ?? null) !== (current[name] ?? null)).sort();
+        const changed = (await historicalInputComparisons({root, record, current})).filter(item => item.changed);
         const repairs = (qualification?.repair_executions ?? []).map(id => selected.find(item => item?.record.record_sha256 === id && item.original_eligible && item.eligible));
+        const dispositionAssessed = [...receipt.coverage ?? [], ...receipt.reused_coverage ?? []].some(item => item.criteria?.includes("qualified-dependency-disposition") && item.evidence?.includes(evidence.value));
+        const dependencyCovered = comparison => {
+          const disposition = qualification?.affected_dependencies?.find(item => item.path === comparison.path);
+          if (!disposition || disposition.current_hash !== comparison.current_hash || disposition.current_state !== comparison.current_state || comparison.current_state === "UNAVAILABLE") return false;
+          if (disposition.disposition === "NON_EXECUTION_INPUT") return dispositionAssessed && typeof disposition.reason === "string" && disposition.reason.trim()
+            && Array.isArray(disposition.evidence) && disposition.evidence.length && disposition.evidence.every(value => typeof value === "string" && value.trim());
+          if (disposition.disposition !== "EXECUTION_COVERED") return false;
+          return Object.hasOwn(authorities, comparison.path) || repairs.some(item => item && Object.hasOwn(item.record.before.files, comparison.path) && item.record.before.files[comparison.path] === comparison.current_hash);
+        };
         if (!independentlyQualified || !qualification || qualification.original_scope_sha256 !== hash(canonical(record.before)) || qualification.original_output_sha256 !== record.output_sha256
             || !qualification.accepted_facts?.length || !qualification.limitations?.length || [...qualification.accepted_facts, ...qualification.limitations].some(value => typeof value !== "string" || !value.trim())
-            || !Array.isArray(qualification.affected_dependencies) || canonical(qualification.affected_dependencies.map(item => item.path).sort()) !== canonical(changed)
-            || qualification.affected_dependencies.some(item => item.current_hash !== (current[item.path] ?? null))
-            || !repairs.length || repairs.some(item => !item) || changed.filter(name => !Object.hasOwn(authorities, name)).some(name => !repairs.some(item => Object.hasOwn(item.record.before.files, name) && item.record.before.files[name] === (current[name] ?? null)))) throw new Error("Historical passing facts require exact independent qualification and complete affected dependency/repair coverage");
+            || !Array.isArray(qualification.affected_dependencies) || canonical(qualification.affected_dependencies.map(item => item.path).sort()) !== canonical(changed.map(item => item.path))
+            || !repairs.length || repairs.some(item => !item) || changed.some(item => !dependencyCovered(item))) throw new Error("Historical passing facts require exact independent qualification and complete affected dependency/repair coverage");
         return {...publicExecution(record), qualification: "INDEPENDENTLY_QUALIFIED_HISTORICAL_PASS"};
-      });
+      }));
       checks.push({command: check.command, coverage: "BASELINE_PLUS_FOCUSED_REPAIR", executions});
     }
   }

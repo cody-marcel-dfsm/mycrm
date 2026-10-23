@@ -151,12 +151,12 @@ function executionWitness(snapshot, dependencies, environment) {
 function commandWitness(snapshot, dependencies, environment) {
   return bindingHash({environment: environment ?? snapshot.context.environment, files: Object.fromEntries(dependencies.map((name) => [name, snapshot.files[name] ?? null]))});
 }
-function bindExecution(item, snapshot) {
+function bindExecution(item, snapshot, environment = item.execution_environment_sha256 ?? snapshot.context.environment) {
   dependenciesOf(item, snapshot);
   if (snapshot.scope === "declared-inputs-v2" || item.binding_kind === "declared-command-inputs-v1") {
-    return {...item, execution_environment_sha256: snapshot.context.environment, binding_kind: "declared-command-inputs-v1", input_sha256: commandWitness(snapshot, item.dependencies)};
+    return {...item, execution_environment_sha256: environment, binding_kind: "declared-command-inputs-v1", input_sha256: commandWitness(snapshot, item.dependencies, environment)};
   }
-  return {...item, execution_environment_sha256: snapshot.context.environment, binding_kind: "execution-inputs-v2", input_sha256: executionWitness(snapshot, item.dependencies)};
+  return {...item, execution_environment_sha256: environment, binding_kind: "execution-inputs-v2", input_sha256: executionWitness(snapshot, item.dependencies, environment)};
 }
 
 function validationScopeReason(proof, snapshot) {
@@ -350,7 +350,7 @@ export async function prepareSeries({directory, candidate, inputs, files, fileFa
     const scopeReason = validationScopeReason(proof, snapshot);
     const valid = Boolean(evidence && proof) && !scopeReason && witnessFor(origin.snapshot, item.dependencies, item.execution_environment_sha256) === witnessFor(snapshot, item.dependencies, proof?.current_provenance?.environment);
     if (!valid && !invalidated.some((entry) => entry.kind === "validation" && entry.id === item.id)) invalidated.push({kind: "validation", id: item.id, reason: !evidence ? "hash-bound validation evidence changed or was not supplied" : nativeProof?.reason ?? scopeReason ?? "declared inputs (source/configuration/dependencies), controlling policy, or environment changed"});
-    if (valid) eligibleValidation.push(bindExecution(item, snapshot));
+    if (valid) eligibleValidation.push(bindExecution(item, snapshot, proof.current_provenance?.environment ?? proof.record.before.context.environment));
   }
   // Selected captures can prove an absent optional configuration file. Retain
   // that null identity in this exact round so its automatically kept witness
