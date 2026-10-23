@@ -133,8 +133,19 @@ export async function shipmentPlan({root = process.cwd(), publishedRef = "refs/r
   let applicabilityError = null;
   const sourceMatches = checkpoint && await publicationSourceMatches(root, checkpoint.record.last_validated_commit, head);
   if (sourceMatches) {
-    try { await checkpointSelectionApplicable(root, checkpoint); }
-    catch (error) { applicabilityError = error; }
+    try {
+      await checkpointSelectionApplicable(root, checkpoint);
+      const {publicationDecisionStatus} = await import("./publication-checkpoint.mjs");
+      const decision = await publicationDecisionStatus({root, sourceCommit: checkpoint.record.last_validated_commit, sourceTree: checkpoint.record.tree});
+      if (decision && decision.status !== "APPROVED") throw new Error("Recorded candidate readiness awaits complete current assessment after its latest native decision");
+    }
+    catch (error) {
+      applicabilityError = error;
+      if (/Governing authority/.test(error.message)) {
+        const {recordPublicationDecision} = await import("./publication-checkpoint.mjs");
+        await recordPublicationDecision({root, sourceCommit: checkpoint.record.last_validated_commit, sourceTree: checkpoint.record.tree, status: "INVALIDATED_CRITERIA", decisionId: `criteria:${bindingHash(error.message)}`});
+      }
+    }
   }
   if (sourceMatches && !applicabilityError) {
     const delivered = await optionalJson(path.join(directory, "shipment-delivered.json"), owner);

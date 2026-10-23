@@ -5,7 +5,7 @@ import os from "node:os";
 import path from "node:path";
 import {fileURLToPath} from "node:url";
 import {promisify} from "node:util";
-import test from "node:test";
+import test, {describe} from "node:test";
 import {captureInputs, assertInputsMatch, withOracleRun, preparedEvidence, observedSourceBindings, bindingHash, pathCustody, evidenceBinding} from "../scripts/oracle-inputs.mjs";
 import {receiptSha256, sha256, runReviewAttempt} from "../scripts/oracle-review.mjs";
 import {seriesDigest, reviewSnapshot} from "../scripts/oracle-series.mjs";
@@ -123,6 +123,9 @@ async function waitFor(filename) {
   throw new Error("Synthetic reviewer did not start");
 }
 
+// Each case owns an isolated repository, process and evidence store. Bound
+// independent case overlap instead of serially repeating launcher startup.
+describe("native Oracle execution", {concurrency: 4}, () => {
 test("spawned CLI transports complete review execution policy as trusted developer instructions", async (t) => {
   const {repo, root, env, prepare} = await fixture(t); await prepare();
   for (const [index, args] of [["proposal", ["proposal", "Synthetic developer transport scope"]], ["initial", ["review"]], ["followup", ["review"]]]) {
@@ -1489,9 +1492,8 @@ test("deployment verifies consumed native records and output custody without amb
   await rename(originalRun, retained); await symlink(retained, originalRun);
   await assert.rejects(admitDeployment({root: repo}), /custody|path|link|changed/i);
   await rm(originalRun); await rename(retained, originalRun);
-  const prior = process.env.MYCRM_SYNTHETIC_AMBIENT;
-  try { process.env.MYCRM_SYNTHETIC_AMBIENT = "later hook context"; assert.equal((await admitDeployment({root: repo})).status, "ADMITTED"); }
-  finally { if (prior === undefined) delete process.env.MYCRM_SYNTHETIC_AMBIENT; else process.env.MYCRM_SYNTHETIC_AMBIENT = prior; }
+  const deployed = await execute(process.execPath, [fileURLToPath(new URL("../scripts/oracle-deployment.mjs", import.meta.url)), "check"], {cwd: repo, env: {...process.env, ...env, MYCRM_SYNTHETIC_AMBIENT: "later hook context"}});
+  assert.equal(JSON.parse(deployed.stdout).status, "ADMITTED");
   assert.deepEqual(await readFile(receiptFile), receiptBytes);
 });
 
@@ -1509,6 +1511,10 @@ test("committed-range review checkpoints exact source and unchanged shipment exe
   const checkpoint = await readValidatedCheckpoint(repo);
   assert.equal(checkpoint.record.last_validated_commit, head);
   assert.equal(checkpoint.receipt.candidate_commit, head);
+  const decision = JSON.parse(await readFile(path.join(repo, ".git/oracle/publication-prepared", `${head}-${checkpoint.record.tree}.decision`)));
+  assert.equal(decision.purpose, "product-publication"); assert.equal(decision.status, "APPROVED");
+  assert.equal(decision.technical_receipt_sha256, checkpoint.receipt.receipt_sha256);
+  assert.equal(decision.decision_id, checkpoint.receipt.invocation.id);
   assert.equal(checkpoint.receipt.deployment_history_base_commit, first);
   assert.equal((await shipmentPlan({root: repo})).action, "DELIVER");
   const roundsBefore = JSON.parse(await readFile(path.join(repo, ".git/oracle/series", `${checkpoint.receipt.base_commit}.json`))).rounds.length;
@@ -2006,10 +2012,14 @@ test("same committed source reopens changed governing criteria and failed invoca
   assert.notEqual((await readValidatedCheckpoint(repo)).receipt.receipt_sha256, first.receipt.receipt_sha256);
   const current = await readFile(authority); await writeFile(authority, Buffer.concat([current, Buffer.from("\nSynthetic failed-attempt criterion.\n")]));
   await assert.rejects(command(repo, ["review"], {...env, ORACLE_NO_OUTPUT: "1"}), /ORACLE_PROCESS=ERROR/);
+  const decisionFile = path.join(repo, ".git/oracle/publication-prepared", `${source}-${first.record.tree}.decision`);
+  assert.equal(JSON.parse(await readFile(decisionFile)).status, "ERROR");
   await writeFile(authority, current);
   assert.equal((await shipmentPlan({root: repo})).action, "VALIDATE");
   await command(repo, ["review"], env);
   assert.equal((await shipmentPlan({root: repo})).action, "DELIVER");
+  const renewed = await readValidatedCheckpoint(repo), decision = JSON.parse(await readFile(decisionFile));
+  assert.equal(decision.status, "APPROVED"); assert.equal(decision.technical_receipt_sha256, renewed.receipt.receipt_sha256);
   assert.equal(await git("rev-parse", "HEAD"), source);
 });
 
@@ -2092,8 +2102,8 @@ process.exit(result.status ?? 1);
   const statusScript = fileURLToPath(new URL("../scripts/shipment-state.mjs", import.meta.url));
   const plan = async (extra = {}) => {
     await writeFile(calls, "");
-    const result = await execute(process.execPath, [statusScript], {cwd: repo, env: {...process.env, ...env, ...extra}});
-    return {selection: JSON.parse(result.stdout), historyCalls: (await readFile(calls, "utf8")).trim()};
+    const started = performance.now(), result = await execute(process.execPath, [statusScript], {cwd: repo, env: {...process.env, ...env, ...extra}});
+    return {selection: JSON.parse(result.stdout), historyCalls: (await readFile(calls, "utf8")).trim(), elapsed_ms: performance.now() - started};
   };
   const audit = async (extra = {}) => {
     await writeFile(calls, "");
@@ -2110,6 +2120,8 @@ process.exit(result.status ?? 1);
   await writeFile(authority, authorityBytes);
   const matching = await plan();
   assert.equal(matching.selection.action, "DELIVER"); assert.equal(matching.historyCalls, "");
+  assert.ok(matching.elapsed_ms < 1000, `Recorded shipment selection exceeded one second: ${matching.elapsed_ms}ms`);
+  console.log(`MYCRM_SHIPMENT_PLAN_MS=${Math.round(matching.elapsed_ms)}`);
 
   await writeFile(historyFile, JSON.stringify({...JSON.parse(historyBytes), first_receipt_sha256: "f".repeat(64)}));
   const brokenHistory = await plan();
@@ -2126,4 +2138,5 @@ process.exit(result.status ?? 1);
   assert.equal((await plan()).selection.action, "DELIVER");
   assert.deepEqual(await readFile(archive), archiveBytes);
   assert.deepEqual((await readValidatedCheckpoint(repo)).record, originalCheckpoint.record);
+});
 });
