@@ -59,12 +59,13 @@ export async function readPreparedPublication(filename, {root = process.cwd()} =
   return {record, filename: absolute, sha256: hash(bytes)};
 }
 
-export async function preparePublication({root = process.cwd(), reference = "HEAD", remote = "origin", target = "refs/heads/main", remoteBefore, admit} = {}) {
+export async function preparePublication({root = process.cwd(), reference = "HEAD", remote = "origin", target = "refs/heads/main", remoteBefore, admit, attest} = {}) {
   const current = await layout(root, true);
   if (!publicationRef(target) || !/^[A-Za-z0-9][A-Za-z0-9_.-]*$/.test(remote)) throw new Error("Publication preparation requires an exact product ref and configured remote name");
   const source_commit = await git(current.root, ["rev-parse", "--verify", "--end-of-options", `${reference}^{commit}`]);
   const source_tree = await git(current.root, ["rev-parse", `${source_commit}^{tree}`]);
-  const remoteUrl = await git(current.root, ["remote", "get-url", "--push", remote]);
+  const remoteUrl = await git(current.root, ["remote", "get-url", "--push", "--all", remote]);
+  if (!remoteUrl || remoteUrl.includes("\n")) throw new Error("Prepared publication requires exactly one fixed push URL");
   const advertised = await git(current.root, ["ls-remote", "--refs", remote, target]);
   const actualRemote = advertised ? advertised.split(/\s+/)[0] : zeros;
   if (!oid.test(actualRemote) || remoteBefore !== undefined && remoteBefore !== actualRemote) throw new Error("Publication remote baseline changed; refresh preparation before publishing");
@@ -74,10 +75,12 @@ export async function preparePublication({root = process.cwd(), reference = "HEA
   }
   const admission = await (admit ?? (await import("./oracle-deployment.mjs")).admitDeployment)({root: current.root, reference: source_commit});
   if (admission.status !== "ADMITTED" || admission.source_commit !== source_commit || admission.target_tree !== source_tree) throw new Error("Publication preparation requires complete exact-source validation and effect admission");
+  const github = remoteUrl.match(/^(?:https:\/\/github\.com\/|git@github\.com:)([A-Za-z0-9_.-]+\/[A-Za-z0-9_.-]+?)(?:\.git)?$/);
+  const validation_transport = github ? await (attest ?? (await import("./validation-transport.mjs")).exportNativeValidation)({root: current.root, repository: github[1], sourceCommit: source_commit, sourceTree: source_tree, remote, admission}) : null;
   const history = await git(current.root, ["log", "--reverse", "--format=%H %T", actualRemote === zeros ? source_commit : `${actualRemote}..${source_commit}`]);
   const changelists = history ? history.split("\n").map(line => {const [commit_sha, tree_sha] = line.split(" "); return {commit_sha, tree_sha, validated_in_candidate: source_commit};}) : [];
   const record = {schema: "my-crm.publication-prepared/v1", repository_root: current.root, source_commit, source_tree, remote_name: remote,
-    remote_url_sha256: hash(remoteUrl), target_ref: target, remote_before: actualRemote, admission,
+    remote_url_sha256: hash(remoteUrl), target_ref: target, remote_before: actualRemote, admission, validation_transport,
     command_tracking: {disposition: "VALIDATION_COMPLETE", changelists, technical_receipt_sha256: admission.technical_receipt_sha256}};
   record.record_sha256 = digest(record);
   const filename = path.join(current.directory, `${tupleHash(record)}-${record.record_sha256}.json`), bytes = `${JSON.stringify(record, null, 2)}\n`;

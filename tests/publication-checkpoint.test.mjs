@@ -1,6 +1,6 @@
 import assert from "node:assert/strict";
 import {execFile} from "node:child_process";
-import {mkdtemp, readFile, realpath, rm, writeFile} from "node:fs/promises";
+import {chmod, cp, mkdir, mkdtemp, readFile, realpath, rm, writeFile} from "node:fs/promises";
 import os from "node:os";
 import path from "node:path";
 import {promisify} from "node:util";
@@ -68,6 +68,27 @@ test("preparation rejects moved remote and publication preserves ordinary fast-f
 test("ordinary review refs need no private publication proof", async t => {
   const f = await fixture(t);
   await admitPreparedPush(`main ${f.source} refs/heads/codex/review ${zeros}\n`, {root: f.root, remote: "origin", remoteUrl: f.remote});
+});
+
+test("real Git publication uses the effective native hook and no heavy validator while authors move", async t => {
+  const f = await fixture(t);
+  await mkdir(path.join(f.root, ".githooks")); await mkdir(path.join(f.root, "scripts"));
+  await cp(new URL("../.githooks/pre-push", import.meta.url), path.join(f.root, ".githooks/pre-push"));
+  await chmod(path.join(f.root, ".githooks/pre-push"), 0o755);
+  await cp(new URL("../scripts/publication-checkpoint.mjs", import.meta.url), path.join(f.root, "scripts/publication-checkpoint.mjs"));
+  for (const name of ["oracle-deployment.mjs", "oracle-review.mjs", "oracle-validation.mjs", "shipment-state.mjs", "release-validation.mjs"]) await writeFile(path.join(f.root, "scripts", name), "throw new Error('Heavy validation is forbidden during prepared Git publication');\n");
+  await f.git("config", "core.hooksPath", ".githooks");
+  assert.equal(await f.git("config", "--get", "core.hooksPath"), ".githooks");
+  const prepared = await preparePublication({root: f.root, admit: f.admit});
+  await writeFile(path.join(f.root, "source.txt"), "synthetic concurrent source arrival\n"); await f.git("add", "."); await f.git("commit", "-m", "Synthetic concurrent author commit");
+  await writeFile(path.join(f.root, "unfinished.txt"), "synthetic unfinished arrival\n");
+  const started = performance.now(); await publishPrepared(prepared.prepared_record, {root: f.root});
+  const elapsed = performance.now() - started;
+  assert.ok(elapsed < 10000, `Actual Git push exceeded ten seconds: ${elapsed}ms`);
+  assert.equal((await execute("git", ["rev-parse", "refs/heads/main"], {cwd: f.remote})).stdout.trim(), f.source);
+  assert.notEqual(await f.git("rev-parse", "HEAD"), f.source);
+  assert.match(await f.git("status", "--porcelain=v1"), /unfinished.txt/);
+  console.log(`MYCRM_SYNTHETIC_PUBLICATION_MS=${Math.round(elapsed)} effective_hook=.githooks/pre-push`);
 });
 
 test("every required release command participates in native evidence discovery; fresh CI executes every check", async () => {

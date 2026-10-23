@@ -3,7 +3,8 @@ import {promisify} from "node:util";
 import path from "node:path";
 import process from "node:process";
 import {fileURLToPath} from "node:url";
-import {atomicJson, bindingHash, metadataDirectory, readMetadataFile, assertPublishedInvocation, captureInputs, assertInputsMatch} from "./oracle-inputs.mjs";
+import {readFile, readdir} from "node:fs/promises";
+import {atomicJson, bindingHash, contentHash, pathCustody, metadataDirectory, readMetadataFile, assertPublishedInvocation, captureInputs, assertInputsMatch} from "./oracle-inputs.mjs";
 import {activeReviewController, observeReviewController} from "./oracle-lifecycle.mjs";
 import {verifyParallelArtifacts} from "./oracle-parallel.mjs";
 
@@ -67,6 +68,30 @@ export async function checkpointApplicable(root, checkpoint, {allowActiveControl
   await readValidationProofs({root, directory, validation: receipt.input_binding.validation, checkCurrentExecutable: false});
   return true;
 }
+// Status selects recorded command coverage; it performs no original-output,
+// review-series or history audit. Changed governing inputs reopen validation.
+// Full native custody/effect admission is the separate validation-time preflight.
+export async function checkpointSelectionApplicable(root, checkpoint) {
+  const authorities = checkpoint.receipt.input_binding.authorities ?? [];
+  const canonical = [];
+  const walk = async (relative) => {
+    for (const entry of await readdir(path.join(root, relative), {withFileTypes: true})) {
+      if (["tmp", "index"].includes(entry.name)) continue;
+      const name = `${relative}/${entry.name}`;
+      if (entry.isSymbolicLink()) throw new Error(`Governing authority custody changed: ${name}`);
+      if (entry.isDirectory()) await walk(name); else if (entry.isFile()) canonical.push(name);
+    }
+  };
+  await walk("Vault");
+  const recordedCanonical = authorities.filter(item => !path.isAbsolute(item.path) && item.path.startsWith("Vault/")).map(item => item.path).sort();
+  if (bindingHash(canonical.sort()) !== bindingHash(recordedCanonical)) throw new Error("Governing authority membership changed; validate the affected criteria");
+  for (const authority of authorities) {
+    const custody = await pathCustody(root, authority.path, {scopeRoot: path.isAbsolute(authority.path) ? path.dirname(path.resolve(root)) : root, allowMissing: true, allowFinalLink: false});
+    const current = custody.metadata === null ? null : contentHash(await readFile(custody.resolved_path));
+    if (current !== authority.sha256 || authority.custody && bindingHash(custody) !== bindingHash(authority.custody)) throw new Error(`Governing authority changed; validate affected criteria: ${authority.path}`);
+  }
+  return true;
+}
 export async function readValidatedCheckpoint(root = process.cwd()) {
   const {owner, directory} = await store(root), record = await optionalJson(path.join(directory, "shipment-validated.json"), owner);
   if (!record) return null;
@@ -108,7 +133,7 @@ export async function shipmentPlan({root = process.cwd(), publishedRef = "refs/r
   let applicabilityError = null;
   const sourceMatches = checkpoint && await publicationSourceMatches(root, checkpoint.record.last_validated_commit, head);
   if (sourceMatches) {
-    try { await checkpointApplicable(root, checkpoint, {allowActiveController: !observeReview}); }
+    try { await checkpointSelectionApplicable(root, checkpoint); }
     catch (error) { applicabilityError = error; }
   }
   if (sourceMatches && !applicabilityError) {

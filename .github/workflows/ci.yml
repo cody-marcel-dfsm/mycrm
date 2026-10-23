@@ -7,6 +7,7 @@ on:
 
 permissions:
   contents: read
+  statuses: read
 
 jobs:
   test:
@@ -15,11 +16,13 @@ jobs:
       - uses: actions/checkout@11d5960a326750d5838078e36cf38b85af677262 # v4
         with:
           fetch-depth: 2
+          ref: ${{ github.event.pull_request.head.sha || github.sha }}
       - uses: actions/setup-node@49933ea5288caeca8642d1e84afbd3f7d6820020 # v4
         with:
           node-version: 20
           cache: npm
       - run: npm ci
-      # Ordinary source commits precede independent maintainer validation.
-      # Native publication/install admission verifies exact sealed receipts.
       - run: npm run release:check
+        env:
+          GH_TOKEN: ${{ github.token }}
+          MYCRM_VALIDATION_SOURCE_SHA: ${{ github.event.pull_request.head.sha || github.sha }}

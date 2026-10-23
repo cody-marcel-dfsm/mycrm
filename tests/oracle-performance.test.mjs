@@ -2063,7 +2063,7 @@ test("maintainer selection rejects pending technical approval before installer c
   }
 });
 
-test("checkpoint applicability rejects current drift before history and retains final custody", async (t) => {
+test("checkpoint selection reuses recorded coverage while validation preflight retains full history custody", async (t) => {
   const {repo, root, env, git, prepare} = await fixture(t); await prepare(); await git("branch", "-m", "main");
   await git("-c", "user.name=Synthetic", "-c", "user.email=synthetic@example.invalid", "commit", "-qm", "Synthetic current status");
   await command(repo, ["review"], env);
@@ -2095,25 +2095,33 @@ process.exit(result.status ?? 1);
     const result = await execute(process.execPath, [statusScript], {cwd: repo, env: {...process.env, ...env, ...extra}});
     return {selection: JSON.parse(result.stdout), historyCalls: (await readFile(calls, "utf8")).trim()};
   };
+  const audit = async (extra = {}) => {
+    await writeFile(calls, "");
+    const code = `import {readValidatedCheckpoint,checkpointApplicable} from ${JSON.stringify(new URL("../scripts/shipment-state.mjs", import.meta.url).href)};try{await checkpointApplicable(process.cwd(),await readValidatedCheckpoint(process.cwd()));console.log(JSON.stringify({applicable:true}));}catch(error){console.log(JSON.stringify({applicable:false,reason:error.message}));}`;
+    const result = await execute(process.execPath, ["--input-type=module", "-e", code], {cwd: repo, env: {...process.env, ...env, ...extra}});
+    return {audit: JSON.parse(result.stdout), historyCalls: (await readFile(calls, "utf8")).trim()};
+  };
 
   await writeFile(authority, Buffer.concat([authorityBytes, Buffer.from("\nSynthetic current authority drift.\n")]));
   const drifted = await plan();
   assert.equal(drifted.selection.action, "VALIDATE"); assert.equal(drifted.selection.approval_state, "PENDING");
-  assert.match(drifted.selection.reason, /inputs drifted/); assert.equal(drifted.historyCalls, "");
+  assert.match(drifted.selection.reason, /Governing authority changed/); assert.equal(drifted.historyCalls, "");
 
   await writeFile(authority, authorityBytes);
   const matching = await plan();
-  assert.equal(matching.selection.action, "DELIVER"); assert.match(matching.historyCalls, /rev-list/);
+  assert.equal(matching.selection.action, "DELIVER"); assert.equal(matching.historyCalls, "");
 
   await writeFile(historyFile, JSON.stringify({...JSON.parse(historyBytes), first_receipt_sha256: "f".repeat(64)}));
   const brokenHistory = await plan();
-  assert.equal(brokenHistory.selection.action, "VALIDATE"); assert.equal(brokenHistory.selection.approval_state, "PENDING");
-  assert.match(brokenHistory.historyCalls, /rev-list/); assert.match(brokenHistory.selection.reason, /inputs drifted/);
+  assert.equal(brokenHistory.selection.action, "DELIVER"); assert.equal(brokenHistory.historyCalls, "");
+  const rejectedHistory = await audit();
+  assert.equal(rejectedHistory.audit.applicable, false); assert.match(rejectedHistory.historyCalls, /rev-list/); assert.match(rejectedHistory.audit.reason, /inputs drifted/);
 
   await writeFile(historyFile, historyBytes);
   const late = await plan({SHIPMENT_TEST_MUTATE_HISTORY: "1"});
-  assert.equal(late.selection.action, "VALIDATE"); assert.equal(late.selection.approval_state, "PENDING");
-  assert.match(late.historyCalls, /rev-list/); assert.match(late.selection.reason, /inputs drifted/);
+  assert.equal(late.selection.action, "DELIVER"); assert.equal(late.historyCalls, "");
+  const rejectedArrival = await audit({SHIPMENT_TEST_MUTATE_HISTORY: "1"});
+  assert.equal(rejectedArrival.audit.applicable, false); assert.match(rejectedArrival.historyCalls, /rev-list/); assert.match(rejectedArrival.audit.reason, /inputs drifted/);
   await writeFile(authority, authorityBytes);
   assert.equal((await plan()).selection.action, "DELIVER");
   assert.deepEqual(await readFile(archive), archiveBytes);

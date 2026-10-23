@@ -179,6 +179,15 @@ validation. Then prepare the fixed Git publication with
 Its immutable private checkpoint records source/tree, remote/destination/baseline,
 completed technical/effect admission and the actual covered changelist hashes.
 The remote is `https://github.com/cody-marcel-dfsm/mycrm.git`.
+For this GitHub remote, preparation verifies original native command proofs and
+exports only an owner-authenticated sanitized immutable command envelope plus
+exact-source status. This completes source/evidence ref and status work during
+validation. CI accepts the truthful original environment and exact command
+coverage; it executes missing/invalidated checks and imposes additional platform
+execution only when an explicit required-check contract calls for it. A native
+baseline-plus-focused claim needs the exact current private coverage manifest
+and its explicit independent `required-command-coverage` assessment. Never infer
+a passing aggregate from failed or interrupted output.
 
 Execute the returned `publish_argv`, or
 `npm run publication:publish -- --prepared <absolute-record>`. Publication runs
