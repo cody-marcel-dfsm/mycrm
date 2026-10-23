@@ -14,6 +14,7 @@ import Ajv from "ajv";
 import {recordValidatedCommit, readValidatedCheckpoint, shipmentPlan} from "./shipment-state.mjs";
 import {runParallelReview, verifyParallelArtifacts, nativeCohortObservations} from "./oracle-parallel.mjs";
 import {withReviewController} from "./oracle-lifecycle.mjs";
+import {recordPublicationDecision} from "./publication-checkpoint.mjs";
 import {archiveTechnicalReceipt, committedReceipt, deploymentHistoryForReview, deploymentPlan, pendingDeploymentEffects, authorizationDigest, validateDeploymentAssessment, validateDeploymentDispositions, verifyNewEffectAuthorities, verifyDeploymentAuthorization} from "./oracle-deployment.mjs";
 
 const execFileAsync = promisify(execFile);
@@ -337,6 +338,7 @@ async function review(args = [], {run, phase, producer = null, verifyProducer = 
       return integrityError;
     }
   };
+  let publicationCandidate = null;
   // Every admitted phase shares the original evidence boundary, including
   // preparation and receipt/checkpoint failures outside the assessment block.
   try {
@@ -366,6 +368,10 @@ async function review(args = [], {run, phase, producer = null, verifyProducer = 
   const evidence = {...prepared.payload, requested_validation_evidence: requestedValidationEvidence, inherited_validation_evidence: inherited.evidence, review_context: series.public, reviewer_metadata_file: path.join(run, "reviewer.json"), deployment_history: deployment, integrated_deployment_diff: deployment.unverified_commits.length && deployment.baseline ? await git(["diff", "--binary", "--no-ext-diff", deployment.baseline, candidate.tree]) : null};
   if (producer) evidence.producer_origin = {...producer, fresh_module_graph: true};
   await atomicJson(path.join(run, "evidence.json"), evidence);
+  if (candidate.commit) {
+    publicationCandidate = {root: process.cwd(), sourceCommit: candidate.commit, sourceTree: candidate.tree, decisionId: currentInvocation().id};
+    await recordPublicationDecision({...publicationCandidate, status: "IN_PROGRESS"});
+  }
   await atomicJson(path.join(run, "preparation.json"), {reused: prepared.reused, sha256: bindingHash(evidence)});
   const schemaPath = path.join(run, "response.schema.json"); const outputPath = path.join(run, "response.json");
   await writeMetadataFile(schemaPath, `${JSON.stringify(responseSchema, null, 2)}\n`);
@@ -485,7 +491,10 @@ async function review(args = [], {run, phase, producer = null, verifyProducer = 
   for (const finding of response.findings) process.stdout.write(`ORACLE_FINDING=${JSON.stringify(finding)}\n`);
   if (completedSeries.rounds.at(-1).repair_plan) process.stdout.write(`ORACLE_REPAIR_PLAN=${JSON.stringify(completedSeries.rounds.at(-1).repair_plan)}\n`);
   if (response.synthesis) process.stdout.write(`ORACLE_REPAIR_SYNTHESIS=${response.synthesis}\n`);
-  if (response.review_status === "INCOMPLETE") { process.exitCode = 1; return {...response, input_binding: inputs}; }
+  if (response.review_status === "INCOMPLETE") {
+    if (publicationCandidate) await recordPublicationDecision({...publicationCandidate, status: "INCOMPLETE"});
+    process.exitCode = 1; return {...response, input_binding: inputs};
+  }
   const receipt = {schema: "my-crm.oracle-approval/v2", ...reviewerRecord, parallel_review_evidence: parallelEvidence, input_binding: inputs, proposal_record_sha256: proposalRecord.record_sha256, repository: "my-crm", invocation: currentInvocation(), reviewed_tree: candidate.tree, base_commit: candidate.base, ...(candidate.commit ? {candidate_commit: candidate.commit, deployment_history_base_commit: candidate.parent} : {}), ...response, deployment_baseline_commit: deployment.baseline, deployment_history_sha256: deployment.sha256, deployment_history_status: deployment.status, recovered_deployment_commits: deployment.recovered_commits, review_series_sha256: completedSeries.sha256, review_series_id: completedSeries.series_id, review_round: series.public.round, validation_evidence: validationEvidence, requested_validation_evidence: requestedValidationEvidence, inherited_validation_evidence: inherited.evidence, owner_approval_evidence: ownerApprovalEvidence};
   receipt.receipt_sha256 = receiptSha256(receipt);
   // The final exact-input check precedes series publication above. Live receipt
@@ -509,8 +518,10 @@ async function review(args = [], {run, phase, producer = null, verifyProducer = 
   }
   process.stdout.write(`ORACLE_VERDICT=${receipt.verdict} tree=${receipt.reviewed_tree} receipt=${receipt.receipt_sha256}\n`);
   if (receipt.verdict !== "APPROVED") process.exitCode = 1;
+  if (publicationCandidate) await recordPublicationDecision({...publicationCandidate, status: receipt.verdict, receipt: receipt.receipt_sha256});
   return receipt;
   } catch (error) {
+    if (publicationCandidate) await recordPublicationDecision({...publicationCandidate, status: "ERROR"});
     throw await withIntegrityPrecedence(error);
   }
 }

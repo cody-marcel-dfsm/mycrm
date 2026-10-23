@@ -5,7 +5,7 @@ import os from "node:os";
 import path from "node:path";
 import {promisify} from "node:util";
 import test from "node:test";
-import {admitPreparedPush, preparePublication, publishPrepared, readPreparedPublication} from "../scripts/publication-checkpoint.mjs";
+import {admitPreparedPush, preparePublication, publishPrepared, readPreparedPublication, recordPublicationDecision} from "../scripts/publication-checkpoint.mjs";
 import {validateRelease} from "../scripts/release-validation.mjs";
 
 const execute = promisify(execFile), zeros = "0".repeat(40);
@@ -68,6 +68,44 @@ test("preparation rejects moved remote and publication preserves ordinary fast-f
 test("ordinary review refs need no private publication proof", async t => {
   const f = await fixture(t);
   await admitPreparedPush(`main ${f.source} refs/heads/codex/review ${zeros}\n`, {root: f.root, remote: "origin", remoteUrl: f.remote});
+});
+
+test("later whole-candidate rejection, incomplete assessment and errors revoke prepared publication", async t => {
+  const f = await fixture(t), prepared = await preparePublication({root: f.root, admit: f.admit});
+  const binding = {root: f.root, sourceCommit: f.source, sourceTree: f.tree};
+  const tuple = `fixed-source ${f.source} refs/heads/main ${f.before}\n`;
+  for (const status of ["IN_PROGRESS", "REJECTED", "INCOMPLETE", "ERROR"]) {
+    await recordPublicationDecision({...binding, status});
+    let calls = 0;
+    await assert.rejects(publishPrepared(prepared.prepared_record, {root: f.root, run: async () => {calls++;}}), /later native candidate decision/);
+    await assert.rejects(admitPreparedPush(tuple, {root: f.root, remote: "origin", remoteUrl: f.remote}), /later native candidate decision/);
+    assert.equal(calls, 0, `${status} allowed mutation`);
+    await assert.rejects(preparePublication({root: f.root, admit: f.admit}), /latest native candidate approval/);
+  }
+  await recordPublicationDecision({...binding, status: "APPROVED", receipt: "a".repeat(64)});
+  const renewed = await preparePublication({root: f.root, admit: f.admit});
+  assert.notEqual(renewed.prepared_record, prepared.prepared_record);
+  await assert.rejects(readPreparedPublication(prepared.prepared_record, {root: f.root}), /later native candidate decision/);
+  await admitPreparedPush(tuple, {root: f.root, remote: "origin", remoteUrl: f.remote});
+  await readPreparedPublication(renewed.prepared_record, {root: f.root});
+});
+
+test("unrelated candidate decisions and proposal changes preserve fixed-source admission; changed markers fail closed", async t => {
+  const f = await fixture(t), prepared = await preparePublication({root: f.root, admit: f.admit});
+  await writeFile(path.join(f.root, "source.txt"), "synthetic later author\n"); await f.git("add", "."); await f.git("commit", "-m", "Synthetic unrelated candidate");
+  await recordPublicationDecision({root: f.root, sourceCommit: await f.git("rev-parse", "HEAD"), sourceTree: await f.git("rev-parse", "HEAD^{tree}"), status: "ERROR"});
+  await writeFile(path.join(f.root, ".git/oracle/proposal.json"), "synthetic unrelated proposal\n");
+  await writeFile(path.join(f.root, "unfinished.txt"), "synthetic unfinished input\n");
+  let calls = 0;
+  await publishPrepared(prepared.prepared_record, {root: f.root, run: async () => {calls++;}});
+  assert.equal(calls, 1);
+  const marker = path.join(f.root, ".git/oracle/publication-prepared", `${f.source}-${f.tree}.decision`);
+  const original = await readFile(marker);
+  const value = JSON.parse(original); value.status = "ERROR"; await writeFile(marker, JSON.stringify(value));
+  await assert.rejects(publishPrepared(prepared.prepared_record, {root: f.root, run: async () => {calls++;}}), /decision is malformed/);
+  assert.equal(calls, 1);
+  await writeFile(marker, original); await rm(marker);
+  await assert.rejects(readPreparedPublication(prepared.prepared_record, {root: f.root}), /ENOENT/);
 });
 
 test("real Git publication uses the effective native hook and no heavy validator while authors move", async t => {

@@ -1,9 +1,9 @@
 // Publication deliberately loads only Node builtins. Full source, validation,
 // receipt and effect admission occurs in preparePublication, before Git push.
-import {createHash} from "node:crypto";
+import {createHash, randomUUID} from "node:crypto";
 import {execFile, spawn} from "node:child_process";
 import {constants} from "node:fs";
-import {lstat, mkdir, open, realpath, writeFile} from "node:fs/promises";
+import {lstat, mkdir, open, realpath, rename, rm, writeFile} from "node:fs/promises";
 import path from "node:path";
 import process from "node:process";
 import {fileURLToPath} from "node:url";
@@ -39,6 +39,53 @@ async function boundedRead(filename) {
   } finally { await handle.close(); }
 }
 
+async function replacePointer(filename, bytes) {
+  const temporary = `${filename}.${randomUUID()}.tmp`;
+  try {
+    await writeFile(temporary, bytes, {flag: "wx", mode: 0o600});
+    try { if (!(await lstat(filename)).isFile()) throw new Error("Publication decision pointer must be a regular file"); }
+    catch (error) { if (error.code !== "ENOENT") throw error; }
+    await rename(temporary, filename);
+  } finally { await rm(temporary, {force: true}); }
+}
+
+const decisionName = (directory, commit, tree) => path.join(directory, `${commit}-${tree}.decision`);
+async function readDecision(current, sourceCommit, sourceTree) {
+  const record = JSON.parse(await boundedRead(decisionName(current.directory, sourceCommit, sourceTree)));
+  if (record.schema !== "my-crm.publication-decision/v1" || record.purpose !== "product-publication" || record.record_sha256 !== digest(record)
+      || record.repository_root !== current.root || record.source_commit !== sourceCommit || record.source_tree !== sourceTree
+      || !["IN_PROGRESS", "APPROVED", "REJECTED", "INCOMPLETE", "ERROR"].includes(record.status)
+      || typeof record.decision_id !== "string" || !record.decision_id
+      || record.status === "APPROVED" && !sha.test(record.technical_receipt_sha256 ?? "")) throw new Error("Native publication decision is malformed or bound to another candidate");
+  return record;
+}
+
+// The native review writer advances one bounded candidate-specific decision.
+// Unrelated source commits and proposal attempts never change this identity.
+export async function recordPublicationDecision({root = process.cwd(), sourceCommit, sourceTree, status, receipt = null, decisionId = randomUUID(), ifAbsent = false} = {}) {
+  if (!oid.test(sourceCommit ?? "") || !oid.test(sourceTree ?? "") || !["IN_PROGRESS", "APPROVED", "REJECTED", "INCOMPLETE", "ERROR"].includes(status)
+      || status === "APPROVED" && !sha.test(receipt ?? "")) throw new Error("Native publication decision requires an exact candidate and outcome");
+  const current = await layout(root, true);
+  const record = {schema: "my-crm.publication-decision/v1", purpose: "product-publication", repository_root: current.root, source_commit: sourceCommit, source_tree: sourceTree,
+    status, technical_receipt_sha256: receipt, decision_id: decisionId};
+  record.record_sha256 = digest(record);
+  const filename = path.join(current.directory, `${record.record_sha256}.decision.json`), bytes = `${JSON.stringify(record, null, 2)}\n`;
+  try { await writeFile(filename, bytes, {flag: "wx", mode: 0o600}); }
+  catch (error) { if (error.code !== "EEXIST" || !(await boundedRead(filename)).equals(Buffer.from(bytes))) throw error; }
+  const pointer = decisionName(current.directory, sourceCommit, sourceTree);
+  if (ifAbsent) {
+    try { await writeFile(pointer, bytes, {flag: "wx", mode: 0o600}); }
+    catch (error) { if (error.code !== "EEXIST") throw error; return readDecision(current, sourceCommit, sourceTree); }
+  } else await replacePointer(pointer, bytes);
+  return record;
+}
+
+async function assertDecision(current, record) {
+  const decision = await readDecision(current, record.source_commit, record.source_tree);
+  if (decision.status !== "APPROVED" || decision.technical_receipt_sha256 !== record.admission.technical_receipt_sha256
+      || decision.record_sha256 !== record.decision_sha256) throw new Error("Prepared publication was superseded by a later native candidate decision");
+}
+
 function verify(record, filename, directory) {
   if (record.schema !== "my-crm.publication-prepared/v1" || !sha.test(record.record_sha256 ?? "") || record.record_sha256 !== digest(record)
       || path.dirname(filename) !== directory || path.basename(filename) !== `${tupleHash(record)}-${record.record_sha256}.json`
@@ -46,6 +93,7 @@ function verify(record, filename, directory) {
       || !/^[A-Za-z0-9][A-Za-z0-9_.-]*$/.test(record.remote_name ?? "") || !sha.test(record.remote_url_sha256 ?? "") || !publicationRef(record.target_ref)
       || record.admission?.status !== "ADMITTED" || record.admission.source_commit !== record.source_commit || record.admission.target_tree !== record.source_tree
       || !sha.test(record.admission.technical_receipt_sha256 ?? "") || !sha.test(record.admission.plan_sha256 ?? "")
+      || !sha.test(record.decision_sha256 ?? "")
       || !Array.isArray(record.command_tracking?.changelists) || record.command_tracking.changelists.some(item => !oid.test(item.commit_sha ?? "") || !oid.test(item.tree_sha ?? ""))) {
     throw new Error("Prepared publication proof is malformed, changed or bound to another candidate");
   }
@@ -56,6 +104,7 @@ export async function readPreparedPublication(filename, {root = process.cwd()} =
   const current = await layout(root), absolute = path.resolve(filename);
   const bytes = await boundedRead(absolute), record = verify(JSON.parse(bytes), absolute, current.directory);
   if (record.repository_root !== current.root) throw new Error("Prepared publication proof belongs to another canonical repository");
+  await assertDecision(current, record);
   return {record, filename: absolute, sha256: hash(bytes)};
 }
 
@@ -75,23 +124,33 @@ export async function preparePublication({root = process.cwd(), reference = "HEA
   }
   const admission = await (admit ?? (await import("./oracle-deployment.mjs")).admitDeployment)({root: current.root, reference: source_commit});
   if (admission.status !== "ADMITTED" || admission.source_commit !== source_commit || admission.target_tree !== source_tree) throw new Error("Publication preparation requires complete exact-source validation and effect admission");
+  let decision;
+  try { decision = await readDecision(current, source_commit, source_tree); }
+  catch (error) {
+    if (error.code !== "ENOENT") throw error;
+    // Adopt an existing exact native receipt once when upgrading older state.
+    decision = await recordPublicationDecision({root: current.root, sourceCommit: source_commit, sourceTree: source_tree, status: "APPROVED", receipt: admission.technical_receipt_sha256, decisionId: `adopted:${admission.technical_receipt_sha256}`, ifAbsent: true});
+  }
+  if (decision.status !== "APPROVED" || decision.technical_receipt_sha256 !== admission.technical_receipt_sha256) throw new Error("Publication preparation requires the latest native candidate approval");
   const github = remoteUrl.match(/^(?:https:\/\/github\.com\/|git@github\.com:)([A-Za-z0-9_.-]+\/[A-Za-z0-9_.-]+?)(?:\.git)?$/);
   const validation_transport = github ? await (attest ?? (await import("./validation-transport.mjs")).exportNativeValidation)({root: current.root, repository: github[1], sourceCommit: source_commit, sourceTree: source_tree, remote, admission}) : null;
   const history = await git(current.root, ["log", "--reverse", "--format=%H %T", actualRemote === zeros ? source_commit : `${actualRemote}..${source_commit}`]);
   const changelists = history ? history.split("\n").map(line => {const [commit_sha, tree_sha] = line.split(" "); return {commit_sha, tree_sha, validated_in_candidate: source_commit};}) : [];
   const record = {schema: "my-crm.publication-prepared/v1", repository_root: current.root, source_commit, source_tree, remote_name: remote,
-    remote_url_sha256: hash(remoteUrl), target_ref: target, remote_before: actualRemote, admission, validation_transport,
+    remote_url_sha256: hash(remoteUrl), target_ref: target, remote_before: actualRemote, admission, validation_transport, decision_sha256: decision.record_sha256,
     command_tracking: {disposition: "VALIDATION_COMPLETE", changelists, technical_receipt_sha256: admission.technical_receipt_sha256}};
   record.record_sha256 = digest(record);
   const filename = path.join(current.directory, `${tupleHash(record)}-${record.record_sha256}.json`), bytes = `${JSON.stringify(record, null, 2)}\n`;
   verify(record, filename, current.directory);
+  await assertDecision(current, record);
   try { await writeFile(filename, bytes, {flag: "wx", mode: 0o600}); }
   catch (error) { if (error.code !== "EEXIST" || !(await boundedRead(filename)).equals(Buffer.from(bytes))) throw error; }
-  // The fixed tuple lookup contains only an immutable filename. Publishing
+  // The fixed tuple lookup names the latest immutable preparation. Publishing
   // reads one bounded proof, never a history/validation/evidence inventory.
   const lookup = path.join(current.directory, `${tupleHash(record)}.prepared`);
-  try { await writeFile(lookup, path.basename(filename), {flag: "wx", mode: 0o600}); }
-  catch (error) { if (error.code !== "EEXIST" || (await boundedRead(lookup)).toString() !== path.basename(filename)) throw new Error("An existing prepared tuple has different immutable admission"); }
+  let previous;
+  try { previous = (await boundedRead(lookup)).toString(); } catch (error) { if (error.code !== "ENOENT") throw error; }
+  if (previous !== path.basename(filename)) await replacePointer(lookup, path.basename(filename));
   return {source_commit, source_tree, prepared_record: filename, prepared_record_sha256: hash(bytes), publish_argv: [process.execPath, fileURLToPath(import.meta.url), "publish", "--prepared", filename], command_tracking: record.command_tracking};
 }
 
@@ -108,6 +167,7 @@ export async function admitPreparedPush(input, {root = process.cwd(), remote, re
     if (!/^[a-f0-9]{64}-[a-f0-9]{64}\.json$/.test(lookup)) throw new Error("Prepared publication lookup is malformed");
     const filename = path.join(current.directory, lookup), record = verify(JSON.parse(await boundedRead(filename)), filename, current.directory);
     if (record.repository_root !== current.root || canonical(tuple(record)) !== canonical(expected)) throw new Error("Git publication differs from its prepared source, remote, destination or baseline");
+    await assertDecision(current, record);
   }
 }
 
