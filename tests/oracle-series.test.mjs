@@ -38,24 +38,27 @@ test("completed native child reuse candidates retain exact policy dependency and
     reported_coverage: [coverage("a.mjs"), coverage("b.mjs", ["b.mjs", "test.mjs"])],
     reuse_completion: {candidate: true, reviewer_policy_sha256: policy, reviewer_policy_version: version, reason: "Synthetic verified complete native child"}};
   const current = await prepare({cohortAssessments: [observation]});
-  assert.deepEqual(current.public.eligible_coverage.map(item => item.path), ["a.mjs", "b.mjs"]);
+  assert.deepEqual(current.public.requalification_candidates.map(item => item.path), ["a.mjs", "b.mjs"]);
   assert.throws(() => assessRound(current, response({coverage: []}), []), /lacks coverage/);
-  assert.doesNotThrow(() => assessRound(current, response({coverage: [], reused_coverage: ["a.mjs", "b.mjs"]}), []));
+  assert.equal(current.public.eligible_coverage.length, 0);
+  assert.ok(current.public.requalification_candidates.every(item => item.coverage_eligibility === "NONE" && !Object.hasOwn(item, "input_sha256")));
+  assert.throws(() => assessRound(current, response({coverage: [], reused_coverage: ["a.mjs", "b.mjs"]}), []), /reused coverage is invalid/);
+  assert.doesNotThrow(() => assessRound(current, response(), []));
   const policyChanged = await prepare({inputs: {...options.inputs, reviewer_policy_sha256: "f".repeat(64)}, cohortAssessments: [observation]});
-  assert.equal(policyChanged.public.eligible_coverage.length, 2); assert.equal(policyChanged.public.eligible_coverage[0].policy_applicability.original_sha256, policy);
-  assert.equal(policyChanged.public.eligible_coverage[0].policy_applicability.status, "FRESH_INDEPENDENT_CURRENT_CRITERIA_VERIFICATION_REQUIRED");
+  assert.equal(policyChanged.public.requalification_candidates.length, 2); assert.equal(policyChanged.public.requalification_candidates[0].policy_applicability.original_sha256, policy);
+  assert.equal(policyChanged.public.requalification_candidates[0].policy_applicability.status, "FRESH_INDEPENDENT_CURRENT_CRITERIA_VERIFICATION_REQUIRED");
   const changed = await prepare({files: {...options.files, "test.mjs": "changed"}, cohortAssessments: [observation]});
-  assert.deepEqual(changed.public.eligible_coverage.map(item => item.path), ["a.mjs"]); assert.ok(changed.public.invalidated.some(item => item.id === "b.mjs" && item.changed_dependencies.includes("test.mjs")));
+  assert.deepEqual(changed.public.requalification_candidates.map(item => item.path), ["a.mjs"]); assert.ok(changed.public.invalidated.some(item => item.id === "b.mjs" && item.changed_dependencies.includes("test.mjs")));
   const context = await prepare({environment: "changed-environment", cohortAssessments: [observation]});
-  assert.equal(context.public.eligible_coverage.length, 0); assert.ok(context.public.invalidated.some(item => item.changed_context?.includes("environment")));
+  assert.equal(context.public.eligible_coverage.length, 0); assert.equal(context.public.requalification_candidates.length, 0); assert.ok(context.public.invalidated.some(item => item.changed_context?.includes("environment")));
   for (const reason of ["Original effective policy or trusted role identity is unknown", "Independent child assessment is unfinished or its process failed"]) {
     const rejected = await prepare({cohortAssessments: [{...observation, reuse_completion: {...observation.reuse_completion, candidate: false, reason}}]});
-    assert.equal(rejected.public.eligible_coverage.length, 0); assert.ok(rejected.public.invalidated.some(item => item.reason === reason));
+    assert.equal(rejected.public.eligible_coverage.length, 0); assert.equal(rejected.public.requalification_candidates.length, 0); assert.ok(rejected.public.invalidated.some(item => item.reason === reason));
   }
   const unknown = await prepare({cohortAssessments: [{...observation, reuse_completion: {...observation.reuse_completion, reviewer_policy_sha256: null}}]});
-  assert.equal(unknown.public.eligible_coverage.length, 0);
+  assert.equal(unknown.public.eligible_coverage.length, 0); assert.equal(unknown.public.requalification_candidates.length, 0);
   const unfinished = await prepare({cohortAssessments: [observation, {...observation, id: "newer-child", reported_coverage: [], unreviewed: ["a.mjs"], reuse_completion: {candidate: false, reason: "Unfinished child"}}]});
-  assert.deepEqual(unfinished.public.eligible_coverage.map(item => item.path), ["b.mjs"]); assert.ok(unfinished.public.invalidated.some(item => item.id === "a.mjs" && /unfinished/.test(item.reason)));
+  assert.deepEqual(unfinished.public.requalification_candidates.map(item => item.path), ["b.mjs"]); assert.ok(unfinished.public.invalidated.some(item => item.id === "a.mjs" && /unfinished/.test(item.reason)));
 });
 
 test("new-chat bookkeeping preserves source observations and full original environment provenance stays distinct", async t => {

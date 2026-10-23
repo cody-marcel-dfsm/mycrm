@@ -734,9 +734,11 @@ test("complete current-policy native child observations survive aggregate ERROR 
   await command(repo, ["review"], configured);
   const series = JSON.parse(await readFile(seriesFile)), latest = series.rounds.at(-1);
   assert.equal(JSON.stringify(series.rounds[0]), original); assert.equal(latest.verdict, "APPROVED");
-  assert.ok(latest.response.reused_coverage.includes("candidate.txt")); assert.ok(!latest.response.reused_coverage.includes("tests/synthetic.mjs"));
+  assert.ok(!latest.response.reused_coverage.includes("candidate.txt"));
+  assert.ok(latest.response.coverage.some(item => item.path === "candidate.txt"));
   const reused = latest.coverage.find(item => item.path === "candidate.txt");
-  assert.equal(reused.origin.aggregate_status, "ERROR"); assert.equal(reused.origin.child_verdict, "REJECTED"); assert.equal(reused.independent_reuse_verification_required, true);
+  assert.ok(!reused.origin, "Fresh current coverage incorrectly inherits a raw ERROR native witness");
+  assert.ok(latest.observed_cohorts.some(item => item.execution_status === "ERROR" && item.reported_verdict === "REJECTED"));
   assert.ok(latest.invalidated.some(item => item.id === "tests/synthetic.mjs" && /dependency witness/.test(item.reason)));
   assert.equal(latest.response.resolutions.find(item => item.id === "SYNTHETIC-EXIT-1").status, "RESOLVED");
 });

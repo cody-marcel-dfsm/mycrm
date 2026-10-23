@@ -387,12 +387,12 @@ export async function prepareSeries({directory, candidate, inputs, files, fileFa
       if (origin !== previous || additiveOwner) recovered.push({path: item.path, from_round: origin.round, original_tree: origin.snapshot.tree, additive_owner_evidence: additiveOwner, policy_provenance: original.policyProof});
     }
   }
-  // Native child custody and completion are assessed independently of an
-  // aggregate ERROR. Current reuse still requires the next approver's explicit
-  // reused_coverage decision; the original ERROR/REJECTED facts stay intact.
-  const cohortReuse = new Map(), unfinishedCohortPaths = new Set();
+  // Native child custody and completion preserve structured requalification
+  // context. Only fresh current coverage may establish criteria/dependency/
+  // evidence witnesses; original ERROR/REJECTED facts retain eligibility NONE.
+  const cohortCandidates = new Map(), unfinishedCohortPaths = new Set();
   for (const observation of cohortAssessments) {
-    for (const name of observation.unreviewed) if (Object.hasOwn(snapshot.files, name)) {cohortReuse.delete(name); unfinishedCohortPaths.add(name);}
+    for (const name of observation.unreviewed) if (Object.hasOwn(snapshot.files, name)) {cohortCandidates.delete(name); unfinishedCohortPaths.add(name);}
     const completion = observation.reuse_completion;
     const origin = series.rounds.find(round => round.snapshot.tree === observation.observed_tree && round.native_cohort_reports?.some(report =>
       report.value === observation.response_evidence.value && report.sha256 === observation.response_evidence.sha256));
@@ -424,11 +424,11 @@ export async function prepareSeries({directory, candidate, inputs, files, fileFa
           reason: changedContext.length ? `Completed child review context changed: ${changedContext.join(", ")}` : changedInputs.length ? `Completed child consumed dependencies changed: ${changedInputs.join(", ")}` : "Independent child reported unfinished path assessment"});
         continue;
       }
-      cohortReuse.set(item.path, {...item, input_sha256: witness(snapshot, item.dependencies),
+      cohortCandidates.set(item.path, {...item, original_input_sha256: item.input_sha256, coverage_eligibility: "NONE",
         origin: {kind: "NATIVE_COMPLETED_CHILD", id: observation.id, original_round: origin.round, original_tree: origin.snapshot.tree,
           aggregate_status: observation.execution_status, child_status: observation.reported_review_status, child_verdict: observation.reported_verdict,
           response_evidence: observation.response_evidence, native_manifest_sha256: observation.native_manifest_sha256, ...completion},
-        independent_reuse_verification_required: true,
+        fresh_current_coverage_required: true,
         ...(policyApplicability ? {policy_applicability: {original_sha256: sourceContext.reviewer_policy_sha256, current_sha256: context.reviewer_policy_sha256,
           status: "FRESH_INDEPENDENT_CURRENT_CRITERIA_VERIFICATION_REQUIRED"}} : {})});
       unfinishedCohortPaths.delete(item.path);
@@ -438,12 +438,7 @@ export async function prepareSeries({directory, candidate, inputs, files, fileFa
     const index = eligibleCoverage.findIndex(item => item.path === name); if (index !== -1) eligibleCoverage.splice(index, 1);
     invalidated.push({kind: "coverage", id: name, reason: "A newer independent child explicitly reported unfinished path assessment"});
   }
-  for (const [name, item] of cohortReuse) {
-    const existing = eligibleCoverage.findIndex(entry => entry.path === name);
-    if (existing === -1) eligibleCoverage.push(item); else eligibleCoverage[existing] = item;
-    recovered.push({path: name, from_round: item.origin.original_round, original_tree: item.origin.original_tree,
-      native_child: item.origin.id, independent_reuse_verification_required: true});
-  }
+  const requalificationCandidates = [...cohortCandidates.values()].map(({input_sha256: _originalWitness, ...item}) => item);
   const eligibleValidation = [];
   for (const {item, round: origin} of retainedObservations(series, "validations")) {
     const evidence = inputs.validation.find((entry) => entry.kind === "file" && entry.value === item.evidence && entry.sha256 === item.evidence_sha256);
@@ -557,7 +552,7 @@ export async function prepareSeries({directory, candidate, inputs, files, fileFa
     path_dispositions: pathDispositions, supporting_coverage: supportingCoverage, navigation_coverage: navigationCoverage, observed_assessments: observedAssessments, observed_cohorts: cohortAssessments, unavailable_sources: unavailableSources, ambiguous_source_context: ambiguousSources,
     last_complete_verdict: series.rounds.findLast((round) => round.review_status === "COMPLETE")?.verdict ?? null,
     latest_repair_plan: previous?.repair_plan ?? null,
-    prior_findings: previous?.findings ?? [], eligible_coverage: eligibleCoverage, eligible_validations: eligibleValidation, invalidated,
+    prior_findings: previous?.findings ?? [], requalification_candidates: requalificationCandidates, eligible_coverage: eligibleCoverage, eligible_validations: eligibleValidation, invalidated,
     finding_history: [...history.values()], history_file: filename, history_sha256: series.sha256 ?? null,
     validation_proofs: proofNavigation,
     reviewer_policy_equivalence: equivalence,
@@ -565,6 +560,8 @@ export async function prepareSeries({directory, candidate, inputs, files, fileFa
     preverified_validations: preverifiedValidations,
     unfinished_scope: unfinishedScope,
     unsuccessful_repair_rounds: repairRejections, synthesis_required: repairRejections >= 2,
+    requalification_required_paths: requalificationCandidates.map(item => item.path),
+    fresh_source_paths: requiredPaths.filter(name => !requalificationCandidates.some(item => item.path === name)),
     required_paths: requiredPaths,
   }};
 }

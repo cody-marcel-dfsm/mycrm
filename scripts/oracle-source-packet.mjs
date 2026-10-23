@@ -35,11 +35,11 @@ export async function prepareSourcePacket({directory, candidate, inputs, evidenc
   const navigationCollection = evidence.review_context.navigation_coverage ?? [];
   const navigationCollectionHash = bindingHash(navigationCollection);
   for (const name of cohort.required_paths) {
-    const consumed = [...evidence.review_context.eligible_coverage ?? [], ...evidence.review_context.supporting_coverage ?? []].filter(item => item.path === name);
+    const consumed = [...evidence.review_context.eligible_coverage ?? [], ...evidence.review_context.supporting_coverage ?? [], ...evidence.review_context.requalification_candidates ?? []].filter(item => item.path === name);
     const item = {path: name, required: true, candidate_commit: candidate.commit ?? null, candidate_tree: candidate.tree,
       dependency_closure: "UNKNOWN_UNTIL_INDEPENDENT_TRACE", dependencies_on_demand: [...new Set(consumed.flatMap(item => item.dependencies ?? []))],
       retained_observation_checkpoints: consumed.map(item => ({path: item.path, input_sha256: item.input_sha256 ?? null,
-        origin: item.round ?? item.origin ?? null, eligibility: "INDEPENDENT_CURRENT_APPLICABILITY_REQUIRED"})), versions: []};
+        origin: item.round ?? item.origin ?? null, eligibility: item.coverage_eligibility === "NONE" ? "NONE_REQUIRES_FRESH_CURRENT_COVERAGE" : "INDEPENDENT_CURRENT_APPLICABILITY_REQUIRED"})), versions: []};
     const navigation = navigationCollection.filter(entry => entry.path === name)
       .sort((a, b) => (a.origin?.round ?? 0) - (b.origin?.round ?? 0));
     const latest = navigation.at(-1);

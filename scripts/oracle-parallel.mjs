@@ -67,9 +67,13 @@ function boundedPayload(value, evidence, primary) {
   }
   if (serializedPayloadBytes(value) > payloadLimit) {
     value.retained_collections = {...value.retained_collections,
+      requalification_candidates: collection(context.requalification_candidates ?? [], "/review_context/requalification_candidates"),
       eligible_coverage: collection(context.eligible_coverage ?? [], "/review_context/eligible_coverage")};
     value.review_context.eligible_coverage = value.review_context.eligible_coverage.map(item => ({path: item.path,
       input_sha256: item.input_sha256, original_sha256: item.original_sha256, original_reference: item.original_reference,
+      independent_current_applicability_required: true}));
+    value.review_context.requalification_candidates = value.review_context.requalification_candidates.map(item => ({path: item.path,
+      original_sha256: item.original_sha256, original_reference: item.original_reference, coverage_eligibility: "NONE",
       independent_current_applicability_required: true}));
   }
   if (serializedPayloadBytes(value) > payloadLimit) throw new Error(`Cohort payload exceeds its bound after retained collection projection: ${serializedPayloadBytes(value)} bytes`);
@@ -102,7 +106,7 @@ export function partitionPayload(plan, cohort, evidence) {
     origin: typeof item.origin === "object" && item.origin ? {kind: item.origin.kind, id: item.origin.id, original_round: item.origin.original_round,
       original_tree: item.origin.original_tree, aggregate_status: item.origin.aggregate_status, child_status: item.origin.child_status, child_verdict: item.origin.child_verdict} : item.origin ?? item.round ?? null,
     assessment: String(item.assessment ?? item.reason ?? "").slice(0, 700),
-    independent_current_applicability_required: true, policy_applicability: item.policy_applicability ?? null,
+    independent_current_applicability_required: true, coverage_eligibility: item.coverage_eligibility ?? null, policy_applicability: item.policy_applicability ?? null,
     original_sha256: bindingHash(item), original_reference: original(`${pointer}/${index}`)}] : []);
 
   const value = {cohort: {...cohort, candidate_commit: plan.candidate_commit, candidate_tree: plan.candidate_tree,
@@ -116,6 +120,9 @@ export function partitionPayload(plan, cohort, evidence) {
     staged_files: evidence.staged_files,
     review_context: {required_paths: cohort.required_paths, eligible_coverage: summarize(context.eligible_coverage ?? [], "/review_context/eligible_coverage"),
       supporting_coverage: summarize(context.supporting_coverage ?? [], "/review_context/supporting_coverage"),
+      requalification_candidates: summarize(context.requalification_candidates ?? [], "/review_context/requalification_candidates"),
+      requalification_required_paths: (context.requalification_required_paths ?? []).filter(name => names.has(name)),
+      fresh_source_paths: (context.fresh_source_paths ?? cohort.required_paths).filter(name => names.has(name)),
       ambiguous_source_context: primary ? {count: (context.ambiguous_source_context ?? []).length,
         original_sha256: bindingHash(context.ambiguous_source_context ?? []), original_reference: original("/review_context/ambiguous_source_context"),
         source_eligibility: "CONTEXT_ONLY_REQUIRES_INDEPENDENT_CURRENT_ADOPTION"} : null,
@@ -343,11 +350,11 @@ export async function nativeCohortObservations({root, directory, validation = []
       response_evidence: binding, original_response_sha256: bindingHash(response), native_manifest_sha256: manifestBinding.sha256,
       artifact_custody_sha256: custody, native_bindings: nativeBindings, execution: process, custody_intact: true,
       coverage: [], reported_coverage: response.coverage, findings: response.findings, reported_findings: response.findings, unreviewed: response.unreviewed,
-      reuse_completion: {candidate: completeChild && knownPolicy, reason: !completeChild ? "Independent child assessment is unfinished or its process failed" : !knownPolicy ? "Original effective policy or trusted role identity is unknown" : "Complete independent child observations require exact current dependency/context checks and fresh independent reuse verification",
+      reuse_completion: {candidate: completeChild && knownPolicy, reason: !completeChild ? "Independent child assessment is unfinished or its process failed" : !knownPolicy ? "Original effective policy or trusted role identity is unknown" : "Complete independent child observations require exact current dependency/context checks and fresh explicit current coverage",
         reviewer_policy_sha256: original.inputs.reviewer_policy_sha256 ?? null, reviewer_policy_version: original.inputs.reviewer_policy_version ?? null,
         trusted_role_sha256: reviewer.role_instruction_sha256 ?? null, reviewer_metadata_sha256: original.reviewer_metadata_sha256,
         input_binding_sha256: plan.input_binding_sha256, response_file_sha256: binding.sha256},
-      applicability: "Original aggregate ERROR and child status remain unchanged. Intact COMPLETE child observations with known policy may become dependency-compatible candidates for fresh independent reuse verification; no passing validation or approval is inherited."};
+      applicability: "Original aggregate ERROR and child status remain unchanged. Intact COMPLETE child observations with known policy remain eligibility-NONE requalification context until fresh explicit current criteria/dependency/evidence coverage is admitted; no native coverage witness, passing validation or approval is inherited."};
     auditState.assessed++; auditState.verified.set(cacheKey, {manifest, manifestBinding, base: original.inputs.base_commit, seriesId: original.review_context.series_id, observation: structuredClone(observation)});
     observations.push(observation);
   }

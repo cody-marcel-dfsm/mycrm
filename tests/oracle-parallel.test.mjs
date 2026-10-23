@@ -55,6 +55,20 @@ test("eligible native reuse candidates preserve every exact original while seria
   }
 });
 
+test("raw child requalification navigation retains eligibility NONE and bounded exact original pointers", () => {
+  const e = evidence(); e.review_context.required_paths = Array.from({length: 51}, (_, index) => `src/raw-${index}.mjs`);
+  e.review_context.requalification_candidates = e.review_context.required_paths.map(name => ({path: name, coverage_eligibility: "NONE", original_input_sha256: "a".repeat(64),
+    dependencies: Array.from({length: 100}, (_, index) => `src/dependency-${index}.mjs`), assessment: "Original semantic assessment. ".repeat(1000),
+    origin: {kind: "NATIVE_COMPLETED_CHILD", aggregate_status: "ERROR", child_status: "COMPLETE", child_verdict: "REJECTED", custody: "private custody".repeat(10000)}}));
+  const plan = cohortPlan({candidate, inputs, context: e.review_context}), cohort = plan.cohorts.find(item => item.id === "implementation-consumers");
+  const payload = partitionPayload(plan, cohort, e); assert.ok(Buffer.byteLength(`${JSON.stringify(payload, null, 2)}\n`) <= payloadLimit);
+  assert.equal(payload.review_context.eligible_coverage.length, 0); assert.equal(payload.review_context.requalification_candidates.length, 51);
+  for (const [index, item] of payload.review_context.requalification_candidates.entries()) {
+    assert.equal(item.coverage_eligibility, "NONE"); assert.equal(item.original_sha256, bindingHash(e.review_context.requalification_candidates[index]));
+    assert.equal(item.original_reference.pointer, `/review_context/requalification_candidates/${index}`);
+  }
+});
+
 test("cohort navigation keeps actual prior-attempt and cumulative pending deltas distinct", () => {
   const e = evidence(); e.review_context.changed_since_previous = [names[1]]; e.review_context.pending_changed_paths = [...names];
   const plan = cohortPlan({candidate, inputs, context: e.review_context});
