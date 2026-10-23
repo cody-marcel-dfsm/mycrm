@@ -73,12 +73,6 @@ export async function recordPublicationDecision({root = process.cwd(), sourceCom
   try { await writeFile(filename, bytes, {flag: "wx", mode: 0o600}); }
   catch (error) { if (error.code !== "EEXIST" || !(await boundedRead(filename)).equals(Buffer.from(bytes))) throw error; }
   const pointer = decisionName(current.directory, sourceCommit, sourceTree);
-  if (["IN_PROGRESS", "INCOMPLETE", "ERROR"].includes(status)) {
-    let prior; try {prior = await readDecision(current, sourceCommit, sourceTree);} catch (error) {if (error.code !== "ENOENT") throw error;}
-    // Preserve the new immutable attempt above. An unfinished or failed
-    // process grants no decision and cannot revoke an earlier complete one.
-    if (prior && ["APPROVED", "REJECTED", "INVALIDATED_CRITERIA"].includes(prior.status)) return prior;
-  }
   if (ifAbsent) {
     try { await writeFile(pointer, bytes, {flag: "wx", mode: 0o600}); }
     catch (error) { if (error.code !== "EEXIST") throw error; return readDecision(current, sourceCommit, sourceTree); }
