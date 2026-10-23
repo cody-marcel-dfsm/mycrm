@@ -5,6 +5,12 @@ import {atomicJson, bindingHash, contentHash, readMetadataFile, writeMetadataFil
 import {prepareSourcePacket, utf8Pages} from "./oracle-source-packet.mjs";
 
 export const cohortIds = ["cross-cutting", "implementation-consumers", "verification-recovery"];
+const auditStates = new WeakMap();
+export function createNativeCohortAudit() {
+  const state = {owner: null, verified: new Map(), reused: 0, assessed: 0};
+  const audit = Object.freeze({get statistics() {return {reused: state.reused, assessed: state.assessed};}});
+  auditStates.set(audit, state); return audit;
+}
 export const payloadLimit = 64 * 1024;
 const unique = (values) => [...new Set(values)];
 const serializedPayloadBytes = value => Buffer.byteLength(`${JSON.stringify(value, null, 2)}\n`);
@@ -213,17 +219,25 @@ export async function verifyParallelArtifacts(reference, {root} = {}) {
   if (contentHash(raw) !== reference.sha256) throw new Error("Parallel review artifact manifest changed");
   const manifest = JSON.parse(raw), directory = path.dirname(reference.path);
   if (manifest.schema !== "my-crm.parallel-artifacts/v1" || !Array.isArray(manifest.files)) throw new Error("Parallel review artifact manifest is malformed");
-  for (const item of manifest.files) {
-    if (!item.path.startsWith(`${directory}${path.sep}`) || contentHash(await readMetadataFile(item.path, {}, {root})) !== item.sha256) throw new Error("Parallel review original cohort evidence changed");
-    if (item.binding) await assertEvidenceIntegrity(path.dirname(directory), [item.binding]);
+  for (let start = 0; start < manifest.files.length; start += 16) {
+    await Promise.all(manifest.files.slice(start, start + 16).map(async item => {
+      if (!item.path.startsWith(`${directory}${path.sep}`) || contentHash(await readMetadataFile(item.path, {}, {root})) !== item.sha256) throw new Error("Parallel review original cohort evidence changed");
+      if (item.binding) {
+        if (item.binding.kind !== "file" || item.binding.sha256 !== item.sha256 || path.resolve(path.dirname(directory), item.binding.value.replace(/^@/, "")) !== item.path) throw new Error("Parallel review original cohort binding differs from its manifest");
+        await assertEvidenceIntegrity(path.dirname(directory), [item.binding]);
+      }
+    }));
   }
   return manifest;
 }
 
 // A native ERROR may precede aggregate admission. Preserve its individual
 // finding obligations without promoting source coverage or any reported verdict.
-export async function nativeCohortObservations({root, directory, validation = [], retained = [], base = null, seriesId = null}) {
+export async function nativeCohortObservations({root, directory, validation = [], retained = [], base = null, seriesId = null, audit = createNativeCohortAudit()}) {
   const owner = path.dirname(directory), runs = path.join(directory, "runs");
+  const auditState = auditStates.get(audit);
+  if (!auditState || auditState.owner && auditState.owner !== owner) throw new Error("Native cohort audit belongs to another owner");
+  auditState.owner = owner;
   const pattern = /^([a-f0-9-]{36})\/cohorts\/(cross-cutting|implementation-consumers|verification-recovery)\/response\.json$/;
   const originals = new Map(retained.map(item => [item.response_evidence.value, item]));
   const references = new Map(retained.map(item => [item.response_evidence.value, item.response_evidence]));
@@ -232,15 +246,35 @@ export async function nativeCohortObservations({root, directory, validation = []
     if (pattern.test(path.relative(runs, filename))) references.set(item.value, item);
   }
   const observations = [];
+  // All cohorts in one invocation share the original manifest and parent
+  // metadata. Audit those originals once in this call; each later preparation
+  // or final integrity boundary creates a fresh audit and catches mutations.
+  const manifests = new Map(), metadata = new Map(), bindings = new Map();
+  const read = name => {if (!metadata.has(name)) metadata.set(name, readMetadataFile(name, "utf8", {root: owner}).then(JSON.parse)); return metadata.get(name);};
+  const bind = value => {if (!bindings.has(value)) bindings.set(value, evidenceBinding(root, value)); return bindings.get(value);};
   for (const reference of references.values()) {
     const filename = path.resolve(root, reference.value.replace(/^@/, "")), match = path.relative(runs, filename).match(pattern);
     if (!match) throw new Error("Retained cohort report is outside the native review store");
     const [, invocation, cohort] = match, run = path.join(runs, invocation), area = path.dirname(filename);
-    const read = async name => JSON.parse(await readMetadataFile(name, "utf8", {root: owner}));
-    const binding = await evidenceBinding(root, reference.value);
+    const binding = await bind(reference.value);
     if (binding.sha256 !== reference.sha256 || reference.custody && bindingHash(binding.custody) !== bindingHash(reference.custody)) throw new Error("Native cohort original report content or custody changed");
-    const manifestPath = path.join(run, "cohort-artifacts.json"), manifestBinding = await evidenceBinding(root, `@${manifestPath}`);
-    const manifest = await verifyParallelArtifacts({path: manifestPath, sha256: manifestBinding.sha256}, {root: owner});
+    const manifestPath = path.join(run, "cohort-artifacts.json"), manifestBinding = await bind(`@${manifestPath}`);
+    const cacheKey = bindingHash(binding), checkpoint = auditState.verified.get(cacheKey);
+    if (checkpoint) {
+      if (base && base !== checkpoint.base || seriesId && seriesId !== checkpoint.seriesId) throw new Error("Native cohort report belongs to another review base or series");
+      // Every phase freshly hashes all original bytes and custody identities.
+      // Identical sealed facts can skip parsing and semantic provenance replay.
+      const artifacts = await Promise.all(checkpoint.manifest.files.map(item => bind(`@${item.path}`)));
+      const nativeBindings = await Promise.all(checkpoint.observation.native_bindings.map(item => bind(item.value)));
+      if (bindingHash(manifestBinding) !== bindingHash(checkpoint.manifestBinding) || bindingHash(artifacts) !== checkpoint.observation.artifact_custody_sha256
+          || bindingHash(nativeBindings) !== bindingHash(checkpoint.observation.native_bindings)) throw new Error("Native cohort original artifact content or custody changed");
+      const old = originals.get(reference.value);
+      if (old && (old.artifact_custody_sha256 !== checkpoint.observation.artifact_custody_sha256 || old.native_manifest_sha256 !== manifestBinding.sha256
+          || bindingHash(old.native_bindings) !== bindingHash(checkpoint.observation.native_bindings))) throw new Error("Native cohort retained checkpoint differs from original provenance");
+      auditState.reused++; observations.push(structuredClone(checkpoint.observation)); continue;
+    }
+    if (!manifests.has(manifestPath)) manifests.set(manifestPath, verifyParallelArtifacts({path: manifestPath, sha256: manifestBinding.sha256}, {root: owner}));
+    const manifest = await manifests.get(manifestPath);
     const original = await read(path.join(run, "evidence.json")), native = await read(path.join(run, "outcome.json"));
     const plan = await read(path.join(run, "cohort-plan.json")), {plan_sha256, ...planBody} = plan;
     const payload = await read(path.join(area, "evidence.json")), process = await read(path.join(area, "process.json"));
@@ -263,18 +297,20 @@ export async function nativeCohortObservations({root, directory, validation = []
           candidate_tree: plan.candidate_tree, input_binding_sha256: plan.input_binding_sha256, plan_sha256, reviewer_settings_sha256: bindingHash(plan.reviewer_settings)}) ||
         packet.cohort_id !== cohort || packet.candidate_tree !== plan.candidate_tree || packet.candidate_commit !== plan.candidate_commit || packet.input_binding_sha256 !== plan.input_binding_sha256 ||
         !new Ajv({strict: false}).validate(schema, envelope)) throw new Error("Native cohort report lacks verified child, candidate, schema or source provenance");
-    const artifacts = await Promise.all(manifest.files.map(item => evidenceBinding(root, `@${item.path}`)));
+    const artifacts = await Promise.all(manifest.files.map(item => bind(`@${item.path}`)));
     const custody = bindingHash(artifacts), old = originals.get(reference.value);
     if (old && (old.artifact_custody_sha256 !== custody || old.native_manifest_sha256 !== manifestBinding.sha256)) throw new Error("Native cohort original artifact content or custody changed");
-    const nativeBindings = await Promise.all([...new Set([manifestPath, path.join(run, "evidence.json"), path.join(run, "outcome.json"), reviewerPath, ...required])].map(name => evidenceBinding(root, `@${name}`)));
+    const nativeBindings = await Promise.all([...new Set([manifestPath, path.join(run, "evidence.json"), path.join(run, "outcome.json"), reviewerPath, ...required])].map(name => bind(`@${name}`)));
     if (old) await assertEvidenceIntegrity(root, old.native_bindings);
     const response = envelope.response;
-    observations.push({id: `cohort-${invocation}-${cohort}`, round: original.review_context.round, execution_status: "ERROR", source_verdict: null,
+    const observation = {id: `cohort-${invocation}-${cohort}`, round: original.review_context.round, execution_status: "ERROR", source_verdict: null,
       reported_review_status: response.review_status, reported_verdict: response.verdict, observed_tree: plan.candidate_tree,
       response_evidence: binding, original_response_sha256: bindingHash(response), native_manifest_sha256: manifestBinding.sha256,
       artifact_custody_sha256: custody, native_bindings: nativeBindings, execution: process, custody_intact: true,
       coverage: [], reported_coverage: response.coverage, findings: response.findings, unreviewed: response.unreviewed,
-      applicability: "Verified individual native cohort findings only. Original aggregate ERROR and child status retained; no coverage, passing validation or approval inherited."});
+      applicability: "Verified individual native cohort findings only. Original aggregate ERROR and child status retained; no coverage, passing validation or approval inherited."};
+    auditState.assessed++; auditState.verified.set(cacheKey, {manifest, manifestBinding, base: original.inputs.base_commit, seriesId: original.review_context.series_id, observation: structuredClone(observation)});
+    observations.push(observation);
   }
   const identities = new Map();
   for (const observation of observations) for (const finding of observation.findings) {

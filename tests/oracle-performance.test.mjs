@@ -11,7 +11,7 @@ import {receiptSha256, sha256} from "../scripts/oracle-review.mjs";
 import {seriesDigest, reviewSnapshot} from "../scripts/oracle-series.mjs";
 import {readValidationProofs, inheritNativeEvidence, executableBinding, fileMetadata} from "../scripts/oracle-validation.mjs";
 import {admitDeployment} from "../scripts/oracle-deployment.mjs";
-import {nativeCohortObservations} from "../scripts/oracle-parallel.mjs";
+import {nativeCohortObservations, createNativeCohortAudit} from "../scripts/oracle-parallel.mjs";
 import {installReviewed} from "../scripts/codex-maintainer-install.mjs";
 
 const execute = promisify(execFile);
@@ -724,9 +724,14 @@ test("aggregate ERROR retains native cohort findings for independent current dis
   const failed = JSON.parse(await readFile(seriesFile)).rounds.at(-1);
   assert.equal(failed.execution_status, "ERROR"); assert.equal(failed.verdict, null); assert.equal(failed.coverage.length, 0);
   assert.equal(failed.native_cohort_reports.length, 3);
-  const observed = await nativeCohortObservations({root: repo, directory, validation: failed.native_cohort_reports});
+  const audit = createNativeCohortAudit();
+  const observed = await nativeCohortObservations({root: repo, directory, validation: failed.native_cohort_reports, audit});
   assert.equal(observed.length, 3); assert.ok(observed.every(item => item.coverage.length === 0 && item.execution_status === "ERROR"));
   assert.ok(observed.every(item => item.findings[0].id === "SYNTHETIC-EXIT-1"));
+  assert.deepEqual(await nativeCohortObservations({root: repo, directory, retained: observed, audit}), observed);
+  assert.deepEqual(audit.statistics, {assessed: 3, reused: 3});
+  await assert.rejects(nativeCohortObservations({root: repo, directory, retained: observed, audit, base: "a-different-actual-base"}), /another review base/);
+  await assert.rejects(nativeCohortObservations({root: repo, directory: path.join(root, "another-owner/oracle"), retained: [], audit}), /another owner/);
   const report = failed.native_cohort_reports[0].value.slice(1), original = await readFile(report);
   for (const damage of ["content", "custody", "missing-child", "changed-child"]) {
     const processFile = path.join(path.dirname(report), "process.json"), processBytes = await readFile(processFile);
@@ -734,7 +739,7 @@ test("aggregate ERROR retains native cohort findings for independent current dis
     if (damage === "custody") await chmod(report, 0o600);
     if (damage === "missing-child") await rm(processFile);
     if (damage === "changed-child") await writeFile(processFile, "changed native child provenance");
-    await assert.rejects(nativeCohortObservations({root: repo, directory, retained: observed}), /changed|ENOENT/);
+    await assert.rejects(nativeCohortObservations({root: repo, directory, retained: observed, audit}), /changed|missing|ENOENT/);
     await writeFile(report, original); await chmod(report, 0o644); await writeFile(processFile, processBytes);
   }
   const forged = path.join(repo, "Vault/tmp/forged-cohort.json"); await writeFile(forged, original);

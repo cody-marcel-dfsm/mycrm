@@ -118,7 +118,7 @@ export async function observationSourcePaths({directory, base, series = null, wi
   return withBindingState ? {paths, established: paths.filter((name) => known.has(name))} : paths;
 }
 
-export async function inheritObservedEvidence({directory, base, requestedEvidence = [], root = directory}) {
+export async function inheritObservedEvidence({directory, base, requestedEvidence = [], root = directory, cohortAudit}) {
   let series;
   try { series = verifySeries(JSON.parse(await readMetadataFile(path.join(directory, "series", `${base}.json`), "utf8", {root: path.dirname(directory)})), base); }
   catch (error) { if (error.code !== "ENOENT") throw error; series = {schema: "my-crm.oracle-series/v1", base_commit: base, series_id: "supporting-only", rounds: []}; }
@@ -139,7 +139,7 @@ export async function inheritObservedEvidence({directory, base, requestedEvidenc
   const retained = [...new Map(series.rounds.flatMap(round => round.observed_cohorts ?? []).map(item => [item.id, item])).values()];
   const reports = series.rounds.flatMap(round => round.native_cohort_reports ?? []);
   const requestedBindings = await Promise.all(requestedEvidence.filter(value => /^runs\/[a-f0-9-]{36}\/cohorts\/(?:cross-cutting|implementation-consumers|verification-recovery)\/response\.json$/.test(path.relative(directory, path.resolve(root, value.replace(/^@/, ""))))).map(value => evidenceBinding(root, value)));
-  const cohorts = await nativeCohortObservations({root, directory, validation: [...requestedBindings, ...reports], retained, base, seriesId: series.series_id === "supporting-only" ? null : series.series_id});
+  const cohorts = await nativeCohortObservations({root, directory, validation: [...requestedBindings, ...reports], retained, base, seriesId: series.series_id === "supporting-only" ? null : series.series_id, audit: cohortAudit});
   for (const cohort of cohorts) for (const binding of cohort.native_bindings) if (!present.has(binding.value)) { evidence.push(binding.value); present.add(binding.value); }
   return {evidence, invalidated, cohorts};
 }

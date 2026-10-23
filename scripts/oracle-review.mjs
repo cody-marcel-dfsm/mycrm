@@ -12,7 +12,7 @@ import {environmentHash, fullEnvironmentHash, executionEnvironment, executableBi
 import {findCommandValidation, recordCommandCoverage, commandArtifactBinding} from "./oracle-command-tracking.mjs";
 import Ajv from "ajv";
 import {recordValidatedCommit, readValidatedCheckpoint, shipmentPlan} from "./shipment-state.mjs";
-import {runParallelReview, verifyParallelArtifacts, nativeCohortObservations} from "./oracle-parallel.mjs";
+import {runParallelReview, verifyParallelArtifacts, nativeCohortObservations, createNativeCohortAudit} from "./oracle-parallel.mjs";
 import {withReviewController, activeReviewController} from "./oracle-lifecycle.mjs";
 import {recordPublicationDecision, sealPublicationValidation, terminalAdmissionComplete} from "./publication-checkpoint.mjs";
 import {archiveTechnicalReceipt, committedReceipt, deploymentHistoryForReview, deploymentPlan, publicationPlanFromValidatedReceipt, pendingDeploymentEffects, authorizationDigest, validateDeploymentAssessment, validateDeploymentDispositions, verifyNewEffectAuthorities, verifyDeploymentAuthorization} from "./oracle-deployment.mjs";
@@ -307,6 +307,7 @@ async function candidateDeploymentHistory(candidate) {
 }
 
 async function review(args = [], {run, phase, producer = null, verifyProducer = async () => {}}) {
+  const cohortAudit = createNativeCohortAudit();
   const {validationEvidence, requestedValidationEvidence, inherited, ownerApprovalEvidence, proposalRecord, candidate, directory, observedPaths, establishedObservedPaths, cohortAssessments} = await phase("precheck_ms", async () => {
     const {validationEvidence: requestedValidationEvidence, ownerApprovalEvidence} = reviewArguments(args);
     const proposalRecord = await readProposalRecord();
@@ -315,7 +316,7 @@ async function review(args = [], {run, phase, producer = null, verifyProducer = 
     candidate.files = [...new Set([...candidate.files, ...deployment.integrated_paths])].sort();
     const directory = await oracleDirectory();
     const native = await inheritNativeEvidence({root: process.cwd(), directory, base: candidate.base, requestedEvidence: requestedValidationEvidence});
-    const observed = await inheritObservedEvidence({directory, base: candidate.base, root: process.cwd(), requestedEvidence: [...requestedValidationEvidence, ...native.evidence]});
+    const observed = await inheritObservedEvidence({directory, base: candidate.base, root: process.cwd(), requestedEvidence: [...requestedValidationEvidence, ...native.evidence], cohortAudit});
     const inherited = {evidence: [...native.evidence, ...observed.evidence], invalidated: [...native.invalidated, ...observed.invalidated]};
     const {paths: observedPaths, established: establishedObservedPaths} = await observationSourcePaths({directory, base: candidate.base, withBindingState: true, additionalFindings: observed.cohorts.flatMap(item => item.findings)});
     return {validationEvidence: [...requestedValidationEvidence, ...inherited.evidence], requestedValidationEvidence, inherited, ownerApprovalEvidence, proposalRecord, candidate, directory, observedPaths, establishedObservedPaths, cohortAssessments: observed.cohorts};
@@ -325,7 +326,7 @@ async function review(args = [], {run, phase, producer = null, verifyProducer = 
   const recheckAdmittedEvidence = async () => {
     await readValidationProofs({root: process.cwd(), directory, validation: admittedEvidence});
     await assertEvidenceIntegrity(process.cwd(), [...admittedEvidence, admittedOwner]);
-    await nativeCohortObservations({root: process.cwd(), directory, retained: cohortAssessments});
+    await nativeCohortObservations({root: process.cwd(), directory, retained: cohortAssessments, audit: cohortAudit});
   };
   const withIntegrityPrecedence = async original => {
     try { await recheckAdmittedEvidence(); return original; }
