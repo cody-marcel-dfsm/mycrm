@@ -143,7 +143,7 @@ export async function shipmentPlan({root = process.cwd(), publishedRef = "refs/r
       applicabilityError = error;
       if (/Governing authority/.test(error.message)) {
         const {recordPublicationDecision} = await import("./publication-checkpoint.mjs");
-        await recordPublicationDecision({root, sourceCommit: checkpoint.record.last_validated_commit, sourceTree: checkpoint.record.tree, status: "INVALIDATED_CRITERIA", decisionId: `criteria:${bindingHash(error.message)}`});
+        await recordPublicationDecision({root, sourceCommit: checkpoint.record.last_validated_commit, sourceTree: checkpoint.record.tree, status: "INVALIDATED_CRITERIA", decisionId: `criteria:${bindingHash(error.message)}`, invalidationReason: error.message});
       }
     }
   }

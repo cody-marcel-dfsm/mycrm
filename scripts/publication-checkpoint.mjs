@@ -64,7 +64,7 @@ async function readDecision(current, sourceCommit, sourceTree, filename = decisi
 
 // The native review writer advances one bounded candidate-specific decision.
 // Unrelated source commits and proposal attempts never change this identity.
-export async function recordPublicationDecision({root = process.cwd(), sourceCommit, sourceTree, status, receipt = null, decisionId = randomUUID(), ifAbsent = false, expectedDecisionId = null, validationPlan = null, admitted = null} = {}) {
+export async function recordPublicationDecision({root = process.cwd(), sourceCommit, sourceTree, status, receipt = null, decisionId = randomUUID(), ifAbsent = false, expectedDecisionId = null, validationPlan = null, admitted = null, invalidationReason = null} = {}) {
   if (!oid.test(sourceCommit ?? "") || !oid.test(sourceTree ?? "") || !["IN_PROGRESS", "APPROVED", "REJECTED", "INVALIDATED_CRITERIA", "INCOMPLETE", "ERROR"].includes(status)
       || status === "APPROVED" && !sha.test(receipt ?? "")) throw new Error("Native publication decision requires an exact candidate and outcome");
   const current = await layout(root, true);
@@ -78,7 +78,8 @@ export async function recordPublicationDecision({root = process.cwd(), sourceCom
     try {await writeFile(coverageFile, coverageBytes, {flag: "wx", mode: 0o600});} catch (error) {if (error.code !== "EEXIST" || !(await boundedRead(coverageFile)).equals(Buffer.from(coverageBytes))) throw error;}
   }
   const record = {schema: "my-crm.publication-decision/v1", purpose: "product-publication", repository_root: current.root, source_commit: sourceCommit, source_tree: sourceTree,
-    status, technical_receipt_sha256: receipt, decision_id: decisionId, validation_plan_sha256: validationPlanHash};
+    status, technical_receipt_sha256: receipt, decision_id: decisionId, validation_plan_sha256: validationPlanHash,
+    ...(invalidationReason === null ? {} : {invalidation_reason: invalidationReason})};
   record.record_sha256 = digest(record);
   const filename = path.join(current.directory, `${record.record_sha256}.decision.json`), bytes = `${JSON.stringify(record, null, 2)}\n`;
   try { await writeFile(filename, bytes, {flag: "wx", mode: 0o600}); }
