@@ -9,7 +9,7 @@ import test, {describe} from "node:test";
 import {captureInputs, assertInputsMatch, withOracleRun, preparedEvidence, observedSourceBindings, bindingHash, pathCustody, evidenceBinding} from "../scripts/oracle-inputs.mjs";
 import {receiptSha256, sha256} from "../scripts/oracle-review.mjs";
 import {seriesDigest, reviewSnapshot} from "../scripts/oracle-series.mjs";
-import {readValidationProofs, inheritNativeEvidence, executableBinding, fileMetadata} from "../scripts/oracle-validation.mjs";
+import {readValidationProofs, inheritNativeEvidence, executableBinding, fileMetadata, validationDigest} from "../scripts/oracle-validation.mjs";
 import {admitDeployment} from "../scripts/oracle-deployment.mjs";
 import {nativeCohortObservations, createNativeCohortAudit} from "../scripts/oracle-parallel.mjs";
 import {installReviewed} from "../scripts/codex-maintainer-install.mjs";
@@ -911,7 +911,8 @@ test("missing exact command intake waits idempotently and queued native evidence
   for(const item of commands){const captured=await command(repo,["validate","--",...item],runEnv),reference=captured.stdout.match(/ORACLE_VALIDATION_EVIDENCE=(.+)/)[1];proofs.push({reference,record:JSON.parse(await readFile(reference.slice(1)))});}
   const manifest={schema:"my-crm.required-command-coverage/v1",source_commit:old,source_tree:oldTree,checks:commands.map((item,index)=>({command:item,executions:[proofs[index].record.record_sha256]}))};
   const stale=path.join(repo,"Vault/tmp/stale-command-intake.json"),exact=path.join(repo,"Vault/tmp/exact-command-intake.json");await writeFile(stale,JSON.stringify(manifest));
-  const args=["--validation",`@${stale}`,...proofs.flatMap(item=>["--validation",item.reference])],first=runningReview(repo,runEnv,args);t.after(()=>first.child.kill("SIGTERM"));
+  const originalRecords=(await readdir(path.join(repo,".git/oracle/validations"))).sort();
+  const args=["--validation",`@${stale}`],first=runningReview(repo,runEnv,args);t.after(()=>first.child.kill("SIGTERM"));
   const owner=path.join(repo,".git/oracle");await waitFor(path.join(owner,"controllers/00000000.json"));
   const controller=JSON.parse(await readFile(path.join(owner,"controllers/00000000.json"))),progressFile=path.join(owner,"controllers",controller.id,"progress.json");let progress;
   for(let i=0;i<1000;i++){try{progress=JSON.parse(await readFile(progressFile));}catch(e){if(e.code!=="ENOENT")throw e;}if(progress?.phase==="WAITING_FOR_EVIDENCE")break;await new Promise(resolve=>setTimeout(resolve,20));}
@@ -926,8 +927,51 @@ test("missing exact command intake waits idempotently and queued native evidence
   const resumed=runningReview(repo,runEnv,["--validation",`@${exact}`]);t.after(()=>resumed.child.kill("SIGTERM"));
   const results=await Promise.all([first.done,duplicate.done,resumed.done]);for(const result of results)assert.equal(result.code,0,result.stderr);
   assert.equal((await readFile(calls,"utf8")).trim().split("\n").length,3);
+  assert.deepEqual((await readdir(path.join(owner,"validations"))).sort(),originalRecords,"Manifest attachment restores originals without executing the commands again");
   const nativeRuns=await Promise.all(runs.map(async name=>{try{return JSON.parse(await readFile(path.join(owner,"runs",name,"outcome.json")));}catch{return null;}}));
   assert.ok(nativeRuns.some(item=>item?.outcome==="INCOMPLETE"&&item.reviewer_invoked===false));
+});
+
+test("restart manifest context restores intact historical originals without granting strict eligibility", async t => {
+  const {repo, env, prepare, git} = await fixture(t); await prepare();
+  await git("-c", "user.name=Synthetic", "-c", "user.email=synthetic@example.invalid", "commit", "-qm", "Synthetic committed input");
+  const captured = await command(repo, ["validate", "--", process.execPath, "-e", "process.stdout.write('synthetic historical pass')"], env);
+  const capturedFile = captured.stdout.match(/ORACLE_VALIDATION_EVIDENCE=@(.+)/)[1], record = JSON.parse(await readFile(capturedFile));
+  // This synthetic historical record truthfully lacks those original facts.
+  delete record.execution_cwd; delete record.output_custody;
+  record.record_sha256 = validationDigest(record);
+  const filename = path.join(path.dirname(capturedFile), `${record.record_sha256}.json`);
+  await writeFile(filename, JSON.stringify(record));
+  const manifest = {schema: "my-crm.required-command-coverage/v1", source_commit: await git("rev-parse", "HEAD"), source_tree: await git("rev-parse", "HEAD^{tree}"),
+    checks: [{command: record.command, executions: [record.record_sha256]}]};
+  const manifestFile = path.join(repo, "Vault/tmp/restart-context.json"); await writeFile(manifestFile, JSON.stringify(manifest));
+  const options = {root: repo, directory: path.join(repo, ".git/oracle"), base: manifest.source_commit, requestedEvidence: [`@${manifestFile}`]};
+  const before = await readFile(filename), inherited = await inheritNativeEvidence(options);
+  assert.deepEqual(inherited.evidence, [`@${filename}`]); assert.deepEqual(inherited.invalidated, []);
+  const [proof] = await readValidationProofs({root: repo, directory: options.directory, validation: [await evidenceBinding(repo, inherited.evidence[0])]});
+  assert.equal(proof.eligible, false); assert.equal(proof.original_eligible, false); assert.equal(proof.record.outcome, "PASSED");
+  assert.equal(proof.record.execution_cwd, undefined); assert.deepEqual(await readFile(filename), before);
+  assert.deepEqual((await inheritNativeEvidence({...options, requestedEvidence: [...options.requestedEvidence, `@${filename}`]})).evidence, [], "An attached original is not rediscovered");
+  await writeFile(manifestFile, JSON.stringify({...manifest, source_commit: "0".repeat(40)}));
+  assert.deepEqual((await inheritNativeEvidence(options)).evidence, [], "Historical manifests create no current execution context");
+  await writeFile(manifestFile, JSON.stringify(manifest));
+  const output = await readFile(record.output_file), moved = `${filename}.saved`, movedOutput = `${record.output_file}.saved`;
+  for (const damage of ["missing", "record-bytes", "record-link", "output-bytes", "output-link", "identity"] ) {
+    if (damage === "missing") await rm(filename);
+    if (damage === "record-bytes") await writeFile(filename, `${before} altered`);
+    if (damage === "record-link") { await rename(filename, moved); await symlink(moved, filename); }
+    if (damage === "output-bytes") await writeFile(record.output_file, "altered synthetic output");
+    if (damage === "output-link") { await rename(record.output_file, movedOutput); await symlink(movedOutput, record.output_file); }
+    if (damage === "identity") await writeFile(manifestFile, JSON.stringify({...manifest, checks: [{command: record.command, executions: ["../outside"]}]}));
+    const rejected = await inheritNativeEvidence(options);
+    assert.deepEqual(rejected.evidence, [], damage); assert.equal(rejected.invalidated.length, 1, damage);
+    if (damage === "record-link") { await rm(filename); await rename(moved, filename); }
+    else await writeFile(filename, before);
+    if (damage === "output-link") { await rm(record.output_file); await rename(movedOutput, record.output_file); }
+    else await writeFile(record.output_file, output);
+    await writeFile(manifestFile, JSON.stringify(manifest));
+  }
+  assert.deepEqual((await inheritNativeEvidence(options)).evidence, [`@${filename}`]);
 });
 
 test("native validation captures original command and inputs, supports proof reuse, and rejects changed output", async (t) => {

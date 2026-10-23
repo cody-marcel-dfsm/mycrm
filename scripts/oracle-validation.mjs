@@ -3,7 +3,7 @@ import {execFile} from "node:child_process";
 import {promisify} from "node:util";
 import path from "node:path";
 import process from "node:process";
-import {bindingHash, contentHash, pathCustody, lexicalPath, metadataDirectory, readMetadataFile} from "./oracle-inputs.mjs";
+import {bindingHash, contentHash, pathCustody, lexicalPath, metadataDirectory, readMetadataFile, evidenceBinding, assertEvidenceIntegrity} from "./oracle-inputs.mjs";
 import {verifySeries, retainedObservations} from "./oracle-series.mjs";
 
 export const validationDigest = ({record_sha256: _ignored, ...record}) => bindingHash(record);
@@ -158,16 +158,65 @@ export function assertValidationProofsMatch(before, after) {
   throw new Error(`Oracle native validation source, executable, environment or provenance changed during review: ${changed.join(", ")}`);
 }
 
+async function manifestExecutionContext({root, directory, requestedEvidence, originalHashes}) {
+  const evidence = [], invalidated = [], manifests = [], bindings = [];
+  const present = new Set(requestedEvidence.map(value => lexicalPath(root, value.replace(/^@/, ""))));
+  const privateRoot = path.resolve(root, "Vault/tmp"), canonicalDirectory = await metadataDirectory(path.dirname(directory), directory, {create: false});
+  for (const value of requestedEvidence) {
+    const filename = lexicalPath(root, value.replace(/^@/, ""));
+    if (!filename.startsWith(`${privateRoot}${path.sep}`) || !filename.endsWith(".json")) continue;
+    const binding = await evidenceBinding(root, value);
+    if (!binding.custody.resolved_path.startsWith(`${privateRoot}${path.sep}`)) throw new Error("Required-command recovery manifest escaped its canonical private directory");
+    const bytes = await readMetadataFile(filename, {}, {root});
+    if (contentHash(bytes) !== binding.sha256) throw new Error("Required-command recovery manifest changed during admission");
+    let manifest; try { manifest = JSON.parse(bytes); } catch { continue; }
+    if (manifest.schema === "my-crm.required-command-coverage/v1") { manifests.push({manifest, binding}); bindings.push(binding); }
+  }
+  if (!manifests.length) return {evidence, invalidated};
+  const [commit, tree] = (await execute("git", ["rev-parse", "HEAD", "HEAD^{tree}"], {cwd: root})).stdout.trim().split("\n");
+  for (const {manifest, binding} of manifests) {
+    if (manifest.source_commit !== commit || manifest.source_tree !== tree) continue;
+    if (!Array.isArray(manifest.checks) || manifest.checks.some(check => !Array.isArray(check?.executions) || check.executions.some(id => !/^[a-f0-9]{64}$/.test(id)))) {
+      invalidated.push({kind: "validation", id: "manifest-execution-context", evidence: binding.value, reason: "Required-command manifest has malformed original execution identities"}); continue;
+    }
+    for (const id of new Set(manifest.checks.flatMap(check => check.executions))) {
+      const value = `@${path.join(canonicalDirectory, "validations", `${id}.json`)}`;
+      if (present.has(value.slice(1))) continue;
+      present.add(value.slice(1));
+      try {
+        const original = await evidenceBinding(root, value);
+        if (originalHashes.has(id) && original.sha256 !== originalHashes.get(id)) throw new Error("Stored native original record content hash changed");
+        // Restore authentic context, including failed/ineligible historical
+        // records. This integrity-only read grants no current applicability,
+        // command coverage or approval. The normal audit and reviewer retain
+        // every original outcome, unknown provenance and eligibility decision.
+        const [proof] = await readValidationProofs({root, directory, validation: [original], checkCurrentExecutable: false});
+        if (!proof || proof.record.record_sha256 !== id) throw new Error("Manifest original execution identity differs");
+        evidence.push(value);
+      } catch (error) {
+        invalidated.push({kind: "validation", id: `manifest-native-${id}`, evidence: value,
+          reason: error.code === "ENOENT" ? "Required-command original record or output is missing" : `Required-command original context invalidated: ${error.message}`});
+      }
+    }
+  }
+  await assertEvidenceIntegrity(root, bindings);
+  return {evidence, invalidated};
+}
+
 export async function inheritNativeEvidence({root, directory, base, requestedEvidence}) {
   let series;
   try { series = verifySeries(JSON.parse(await readMetadataFile(path.join(directory, "series", `${base}.json`), "utf8", {root: path.dirname(directory)})), base); }
-  catch (error) { if (error.code === "ENOENT") return {evidence: [], invalidated: []}; throw error; }
+  catch (error) { if (error.code !== "ENOENT") throw error; }
+  const originalHashes = new Map((series ? retainedObservations(series, "validations") : []).filter(({item}) => item.execution_record_sha256).map(({item}) => [item.execution_record_sha256, item.evidence_sha256]));
+  const context = await manifestExecutionContext({root, directory, requestedEvidence, originalHashes});
+  if (!series) return context;
   const canonicalDirectory = await metadataDirectory(path.dirname(directory), directory, {create: false});
   const present = new Set(await Promise.all(requestedEvidence.map(async (value) => {
     const filename = lexicalPath(root, value.replace(/^@/, ""));
     try { return (await pathCustody(root, filename, {scopeRoot: null})).resolved_path; } catch { return filename; }
   })));
-  const evidence = [], invalidated = [];
+  const evidence = context.evidence.filter(value => !present.has(value.slice(1))), invalidated = [...context.invalidated];
+  for (const value of evidence) present.add(value.slice(1));
   for (const {item} of retainedObservations(series, "validations")) {
     if (!item.execution_record_sha256) continue; // Native observations only; no legacy/owner/API evidence inference.
     const filename = lexicalPath(root, item.evidence.replace(/^@/, ""));
