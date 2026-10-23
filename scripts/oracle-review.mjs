@@ -902,6 +902,7 @@ async function continuousReview(args, controller) {
       onAdmitted: () => removeMetadataFile(path.join(directory, "approval.json"), {force: true})});
   }
   const evidence = new Set(requested.validationEvidence);
+  const cohortAudit = createNativeCohortAudit();
   const checkpoint = await readValidatedCheckpoint();
   let owner = requested.ownerApprovalEvidence, attempt = 0,
     forceReview = checkpoint && requested.validationEvidence.some((item) => !checkpoint.receipt.validation_evidence.includes(item)), catchingUp = false;
@@ -931,13 +932,13 @@ async function continuousReview(args, controller) {
     const staged = await git(["diff", "--cached", "--name-only"]);
     const evidenceBase = staged ? before : checkpoint?.receipt.base_commit ?? proposal.base_commit;
     const native = await inheritNativeEvidence({root: process.cwd(), directory, base: evidenceBase, requestedEvidence: [...evidence]});
-    const observed = await inheritObservedEvidence({root: process.cwd(), directory, base: evidenceBase, requestedEvidence: [...evidence, ...native.evidence]});
+    const observed = await inheritObservedEvidence({root: process.cwd(), directory, base: evidenceBase, requestedEvidence: [...evidence, ...native.evidence], cohortAudit});
     const admitted = await Promise.all([...new Set([...evidence, ...native.evidence, ...observed.evidence])].map(value => evidenceBinding(process.cwd(), value)));
     const admittedOwner = await evidenceBinding(process.cwd(), owner);
     const recheckAttemptEvidence = async () => {
       await readValidationProofs({root: process.cwd(), directory, validation: admitted});
       await assertEvidenceIntegrity(process.cwd(), [...admitted, admittedOwner]);
-      await nativeCohortObservations({root: process.cwd(), directory, retained: observed.cohorts});
+      await nativeCohortObservations({root: process.cwd(), directory, retained: observed.cohorts, audit: cohortAudit});
     };
     await recheckAttemptEvidence();
     const currentArgs = [...evidence].flatMap((item) => ["--validation", item]);
