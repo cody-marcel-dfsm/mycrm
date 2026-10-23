@@ -85,22 +85,36 @@ function cohortDiagnostic(value) {
   return /^Cohort [A-Za-z0-9_-]+ (?:omitted required coverage:|has unfinished assessment$|execution failed:|bound inputs changed during assessment$|candidate or plan binding differs$|omitted cross-area integration assessment$|has no formal assessment$|completed without a verdict$)/.test(value);
 }
 
+// Legacy unreviewed strings mix whole filenames with semantic diagnostics.
+// Typed source fields and recorded inventories remain authoritative, including
+// absent/deleted names. A slash inside a sentence never creates source identity.
+function legacySourceName(name) {
+  return typeof name === "string" && name.trim() === name && !/[\r\n]/.test(name) && !cohortDiagnostic(name)
+    && !/:\s/.test(name) && (!name.includes("/") || !/\s/.test(name.split("/")[0]))
+    && (name.includes("/") || /\.[A-Za-z0-9_-]+$/.test(name));
+}
+
 export async function observationSourcePaths({directory, base, series = null, withBindingState = false, additionalFindings = []}) {
   if (!series) {
     try { series = verifySeries(JSON.parse(await readMetadataFile(path.join(directory, "series", `${base}.json`), "utf8", {root: path.dirname(directory)})), base); }
     catch (error) { if (error.code !== "ENOENT") throw error; series = {schema: "my-crm.oracle-series/v1", base_commit: base, series_id: "supporting-only", rounds: []}; }
     series = await augmentedSeries(directory, base, series);
   }
-  const findings = new Map(), external = new Set(), known = new Set(), names = new Set();
+  const findings = new Map(), external = new Set(), known = new Set(), names = new Set(), typed = new Set(), inventory = new Set();
   for (const round of series.rounds) {
     for (const name of round.snapshot.external_paths ?? []) external.add(name);
-    for (const name of Object.keys(round.snapshot.files)) known.add(name);
+    for (const [name, hash] of Object.entries(round.snapshot.files)) {known.add(name); if (hash !== null) inventory.add(name);}
+    for (const name of round.snapshot.source_paths ?? []) inventory.add(name);
+    for (const item of [...round.coverage ?? [], ...round.validations ?? [], ...round.observed_assessment?.coverage ?? [], ...round.observed_assessment?.validations ?? []]) {
+      if (item.path) typed.add(item.path);
+      for (const name of item.dependencies ?? []) typed.add(name);
+    }
     for (const name of round.snapshot.observed_source_paths ?? []) names.add(name);
     for (const finding of [...round.observed_assessment?.findings ?? [], ...round.observed_cohorts?.flatMap(item => item.findings) ?? [], ...round.findings]) findings.set(finding.id, finding);
     for (const resolution of round.response?.resolutions ?? []) if (resolution.status === "RESOLVED") findings.delete(resolution.id);
   }
   for (const finding of additionalFindings) findings.set(finding.id, finding);
-  for (const finding of findings.values()) for (const name of [finding.path, ...finding.affected_paths]) if (name) names.add(name);
+  for (const finding of findings.values()) for (const name of [finding.path, ...finding.affected_paths]) if (name) {names.add(name); typed.add(name);}
   const previous = series.rounds.at(-1);
   for (const name of previous?.unreviewed ?? previous?.response?.unreviewed ?? []) {
     if (cohortDiagnostic(name)) {
@@ -112,9 +126,9 @@ export async function observationSourcePaths({directory, base, series = null, wi
     }
     // Unfinished scope can also contain prose. Existing names and explicit file
     // syntax participate in source closure; semantic labels remain unfinished.
-    if (known.has(name) || name.includes("/") || /\.[A-Za-z0-9_-]+$/.test(name)) names.add(name);
+    if (inventory.has(name) || typed.has(name) || legacySourceName(name)) names.add(name);
   }
-  const paths = [...names].filter((name) => !external.has(name) && !cohortDiagnostic(name)).sort();
+  const paths = [...names].filter((name) => !external.has(name) && (inventory.has(name) || typed.has(name) || legacySourceName(name))).sort();
   return withBindingState ? {paths, established: paths.filter((name) => known.has(name))} : paths;
 }
 
@@ -241,6 +255,7 @@ export function reviewSnapshot({candidate, inputs, files, fileFacts = null, envi
   const policy = inputs.reviewer_policy_sha256 ? {reviewer_policy_sha256: inputs.reviewer_policy_sha256, reviewer_policy_version: inputs.reviewer_policy_version ?? null} : {tool_sha256: inputs.tool_sha256};
   const context = {authorities: inputs.authorities.filter((item) => controllingPolicies.has(item.path) || item.external && item.controlling), ...policy, owner: inputs.owner, environment};
   const snapshot = {tree: candidate.tree, base_commit: candidate.base, tool_binding_sha256: inputs.tool_sha256, tool_source_files: inputs.tool_source_files ?? null, files: {...files}, context, proposal_sha256: inputs.proposal_sha256};
+  snapshot.source_paths = [...new Set([...Object.keys(files), ...candidate.files])].sort();
   snapshot.external_paths = inputs.authorities.filter((item) => item.external).map((item) => item.path).sort();
   for (const name of candidate.files) snapshot.files[name] ??= null;
   for (const authority of inputs.authorities) snapshot.files[authority.path] = authority.sha256;
@@ -321,7 +336,10 @@ export async function prepareSeries({directory, candidate, inputs, files, fileFa
       if (origin.snapshot.external_paths?.includes(name) && !snapshot.external_paths.includes(name)) snapshot.external_paths.push(name);
     }
   }
-  const changed = previous ? changedDependencies(previous.snapshot, snapshot, [...new Set([...Object.keys(previous.snapshot.files), ...Object.keys(snapshot.files)])]).sort() : [...candidate.files];
+  const sourceInventory = new Set([...snapshot.source_paths, ...observedPaths, ...series.rounds.flatMap(round => round.snapshot.source_paths ?? []),
+    ...series.rounds.flatMap(round => Object.entries(round.snapshot.files).filter(([, hash]) => hash !== null).map(([name]) => name))]);
+  const concreteSource = name => sourceInventory.has(name) || legacySourceName(name);
+  const changed = (previous ? changedDependencies(previous.snapshot, snapshot, [...new Set([...Object.keys(previous.snapshot.files), ...Object.keys(snapshot.files)])]) : [...candidate.files]).filter(concreteSource).sort();
   for (const name of changed) snapshot.files[name] ??= null;
   const invalidated = [...inheritedInvalidations];
   const unfinishedScope = previous?.unreviewed ?? previous?.response?.unreviewed ?? [];
@@ -392,8 +410,8 @@ export async function prepareSeries({directory, candidate, inputs, files, fileFa
     else if (round.verdict === "REJECTED") { if (initialRejectionSeen) repairRejections += 1; initialRejectionSeen = true; }
     initialAssessmentComplete = true;
   }
-  const pendingChanged = [...new Set([...changed, ...(previous?.review_status === "INCOMPLETE" ? previous.pending_changed_paths ?? previous.changed_since_previous : [])])].sort();
-  const requiredPaths = [...new Set([...candidate.files, ...pendingChanged, ...observedPaths.filter((name) => !unavailableSources.some((item) => item.path === name)), ...unfinishedScope.filter((name) => Object.hasOwn(snapshot.files, name)), ...(!previous ? snapshot.external_paths.filter((name) => snapshot.files[name] !== null) : [])])].filter(name => !cohortDiagnostic(name)).sort();
+  const pendingChanged = [...new Set([...changed, ...(previous?.review_status === "INCOMPLETE" ? previous.pending_changed_paths ?? previous.changed_since_previous : [])])].filter(concreteSource).sort();
+  const requiredPaths = [...new Set([...candidate.files, ...pendingChanged, ...observedPaths.filter((name) => !unavailableSources.some((item) => item.path === name)), ...unfinishedScope.filter((name) => Object.hasOwn(snapshot.files, name)), ...(!previous ? snapshot.external_paths.filter((name) => snapshot.files[name] !== null) : [])])].filter(concreteSource).sort();
   const observedAssessments = [...cohortAssessments, ...series.rounds.flatMap((round) => {
     const observed = round.observed_assessment;
     if (!observed) return [];

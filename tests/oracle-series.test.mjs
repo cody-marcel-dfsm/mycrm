@@ -3,7 +3,7 @@ import {mkdir, mkdtemp, readFile, rm, writeFile, symlink} from "node:fs/promises
 import os from "node:os";
 import path from "node:path";
 import test from "node:test";
-import {prepareSeries, reviewSnapshot, assessRound, saveRound, verifySeries, inheritObservedEvidence} from "../scripts/oracle-series.mjs";
+import {prepareSeries, reviewSnapshot, assessRound, saveRound, verifySeries, inheritObservedEvidence, observationSourcePaths} from "../scripts/oracle-series.mjs";
 import {contentHash} from "../scripts/oracle-inputs.mjs";
 import {cohortPlan, aggregateCohorts} from "../scripts/oracle-parallel.mjs";
 import {bindingHash} from "../scripts/oracle-inputs.mjs";
@@ -263,6 +263,41 @@ test("actual cohort missing-coverage diagnostics resume as semantic scope and co
     assert.ok(!current.public.required_paths.includes(diagnostic));
     assert.ok(!Object.hasOwn(current.snapshot.files, diagnostic));
   }
+});
+
+test("retained filename-bearing diagnostics remain criteria while typed current/base and missing paths remain required", async t => {
+  const {prepare, options, inputs} = await fixture(t);
+  const diagnostics = [
+    "Current governing-input reconciliation: Vault/docs/design.md advanced; fresh preparation must assess its delta.",
+    "Exact-candidate required-command composition: both supplied manifests bind earlier commits / trees.",
+    "Execution coverage for the changed audit in tests/audit.test.mjs against scripts/audit.mjs remains unfinished."
+  ];
+  const missing = "missing directory/explicit dependency.mjs", deleted = "base directory/deleted file.mjs";
+  const attempted = await prepare({files: {...options.files, [deleted]: "original-base-source"}});
+  // Reproduce the legacy producer's polluted snapshot, including the absence
+  // of a separately recorded Git/current source inventory.
+  delete attempted.snapshot.source_paths;
+  Object.assign(attempted.snapshot.files, Object.fromEntries(diagnostics.map(name => [name, null])));
+  attempted.snapshot.observed_source_paths = diagnostics;
+  const raw = response({review_status: "INCOMPLETE", verdict: null, coverage: [coverage("a.mjs")],
+    findings: [finding("EXPLICIT-MISSING", {path: missing, affected_paths: [missing]})], unreviewed: [...diagnostics, deleted, missing, "ignored/absent-helper.mjs"]});
+  await saveRound(attempted, null, null, {error: {message: "Synthetic interrupted complete input."}, observed: {response: raw, assessed: assessRound(attempted, raw, []), response_evidence: {value: "@synthetic.json", sha256: "synthetic"}}});
+  const history = structuredClone((await prepare()).series);
+  // Old parser pollution remains immutable historical data. Absence alone
+  // never supplies a typed source identity for a diagnostic sentence.
+  Object.assign(history.rounds[0].snapshot.files, Object.fromEntries(diagnostics.map(name => [name, null])));
+  history.rounds[0].snapshot.observed_source_paths = diagnostics;
+  const observed = await observationSourcePaths({series: history});
+  for (const name of diagnostics) assert.ok(!observed.includes(name));
+  for (const name of [missing, deleted, "ignored/absent-helper.mjs"]) assert.ok(observed.includes(name));
+  // Exercise complete native preparation and aggregation on the real saved
+  // ERROR/INCOMPLETE producer record, without a fabricated diagnostic path.
+  const current = await prepare();
+  for (const name of diagnostics) {assert.ok(current.public.unfinished_scope.includes(name)); assert.ok(!current.public.required_paths.includes(name)); assert.ok(!Object.hasOwn(current.snapshot.files, name));}
+  for (const name of [missing, deleted, "ignored/absent-helper.mjs"]) assert.ok(current.public.required_paths.includes(name));
+  const fresh = response({coverage: current.public.required_paths.map(name => coverage(name)), resolutions: [{id: "EXPLICIT-MISSING", status: "RESOLVED", evidence: "Independent absence and caller assessment."}]});
+  assert.throws(() => assessRound(current, {...fresh, coverage: fresh.coverage.filter(item => item.path !== missing)}, inputs.validation), /lacks coverage/);
+  assert.doesNotThrow(() => assessRound(current, fresh, inputs.validation));
 });
 
 test("raw finding-only and explicit file scope require fresh absence coverage outside original membership", async (t) => {
