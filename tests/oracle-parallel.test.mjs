@@ -4,7 +4,7 @@ import {chmod, mkdtemp, readFile, rm, writeFile} from "node:fs/promises";
 import os from "node:os";
 import path from "node:path";
 import {cohortPlan, partitionPayload, aggregateCohorts, runParallelReview, verifyParallelArtifacts, payloadLimit} from "../scripts/oracle-parallel.mjs";
-import {atomicJson, bindingHash, withOracleRun} from "../scripts/oracle-inputs.mjs";
+import {atomicJson, bindingHash, contentHash, evidenceBinding, withOracleRun} from "../scripts/oracle-inputs.mjs";
 import {prepareSeries, assessRound, saveRound, seriesFindingSchema} from "../scripts/oracle-series.mjs";
 
 const candidate = {commit: "1".repeat(40), tree: "2".repeat(40), base: "3".repeat(40)};
@@ -350,6 +350,45 @@ test("native dispatch starts all three independent assessments before any finish
   const {result, peak, outcomes} = await runFixture();
   assert.equal(peak, 3);assert.equal(outcomes.actual_overlap, true);assert.equal(outcomes.outcomes.length, 3);
   assert.equal(result.verdict, "APPROVED");
+});
+
+test("native dispatch exposes authenticated current qualification and collector navigation to every cohort", {timeout: 10000}, async () => {
+  const root = await mkdtemp(path.join(os.tmpdir(), "mycrm-requested-evidence-"));
+  try {
+    const paths = ["qualified-command-coverage-current.json", "current-qualification-facts.json", "actual-collector-fixture.json"].map(name => path.join(root, name));
+    for (const filename of paths) await writeFile(filename, JSON.stringify({fixture_only: true, candidate_commit: candidate.commit}));
+    const retained = evidence(); retained.inputs = {...inputs, validation: await Promise.all(paths.map(filename => evidenceBinding(root, `@${filename}`)))};
+    retained.requested_validation_evidence = paths.map(filename => `@${filename}`);
+    retained.review_context.requalification_candidates = [{path: names[1], coverage_eligibility: "NONE", assessment: "Retained ERROR child context"}];
+    retained.review_context.requalification_required_paths = [names[1]];
+    retained.review_context.fresh_source_paths = [...names];
+    const original = JSON.stringify(retained);
+    await runFixture(async area => {
+      const raw = await readFile(path.join(area.directory, "evidence.json")); assert.ok(raw.length <= payloadLimit);
+      const payload = JSON.parse(raw), packet = JSON.parse(await readFile(payload.source_packet.path));
+      const navigation = packet.requested_validation_evidence;
+      assert.equal(navigation.count, 3); assert.equal(navigation.grants_eligible_coverage, false); assert.equal(navigation.grants_approval, false);
+      assert.equal(navigation.original_requested_sha256, bindingHash(retained.requested_validation_evidence));
+      const chunks = await Promise.all(navigation.pages.map(async page => {
+        const bytes = await readFile(page.path); assert.ok(bytes.length <= 8192); assert.equal(contentHash(bytes), page.sha256);
+        assert.equal(page.origin.kind, "REQUESTED_VALIDATION_EVIDENCE"); return bytes.toString();
+      }));
+      const entries = JSON.parse(chunks.join("")); assert.deepEqual(entries.map(entry => entry.locator), retained.requested_validation_evidence);
+      entries.forEach((entry, index) => {
+        assert.equal(entry.sha256, retained.inputs.validation[index].sha256); assert.equal(entry.original_binding.sha256, bindingHash(retained.inputs.validation[index]));
+        assert.equal(entry.original_binding.pointer, `/inputs/validation/${index}`); assert.equal(entry.context.candidate_commit, candidate.commit);
+        assert.equal(entry.context.candidate_tree, candidate.tree); assert.equal(entry.context.coverage_eligibility, "NONE_FROM_NAVIGATION"); assert.ok(entry.purpose);
+      });
+      assert.match(area.prompt, /requested_validation_evidence pages/);
+      if (payload.cohort.id === "implementation-consumers") {
+        assert.equal(payload.review_context.requalification_candidates[0].coverage_eligibility, "NONE");
+        assert.deepEqual(payload.review_context.requalification_required_paths, [names[1]]); assert.deepEqual(payload.review_context.fresh_source_paths, [names[1]]);
+      }
+    }, async ({root: fixtureRoot, result}) => verifyParallelArtifacts(result.reference, {root: fixtureRoot}), retained);
+    assert.equal(JSON.stringify(retained), original);
+    const missing = structuredClone(retained); missing.requested_validation_evidence.push(`@${path.join(root, "unbound.json")}`);
+    await assert.rejects(runFixture(null, null, missing), /lacks its authenticated input binding/);
+  } finally { await rm(root, {recursive: true, force: true}); }
 });
 
 test("native dispatch bounds final serialized wrappers and seals projected originals through receipt admission", {timeout: 10000}, async () => {

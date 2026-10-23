@@ -32,6 +32,20 @@ export async function prepareSourcePacket({directory, candidate, inputs, evidenc
   const invalidations = evidence.review_context.invalidated ?? [];
   const invalidationPages = await pagesFor(`${JSON.stringify(invalidations, null, 2)}\n`,
     {kind: "ALL_NATIVE_INVALIDATION_REASONS", original_pointer: "/review_context/invalidated", original_sha256: bindingHash(invalidations)});
+  const requested = evidence.requested_validation_evidence ?? [];
+  const requestedBindings = requested.flatMap(value => {
+    const index = (inputs.validation ?? []).findIndex(binding => binding.value === value);
+    if (index < 0) throw new Error("Requested validation evidence lacks its authenticated input binding");
+    const binding = inputs.validation[index];
+    return binding.kind === "file" ? [{locator: binding.value, sha256: binding.sha256,
+      purpose: "Explicitly requested current assessment evidence; inspect the exact original qualification, facts, command result or fixture scope independently.",
+      context: {candidate_commit: candidate.commit ?? null, candidate_tree: candidate.tree, coverage_eligibility: "NONE_FROM_NAVIGATION"},
+      original_binding: {file: "../../evidence.json", pointer: `/inputs/validation/${index}`, sha256: bindingHash(binding)}}] : [];
+  });
+  const requestedEvidence = {count: requestedBindings.length, grants_eligible_coverage: false, grants_approval: false,
+    original_requested_sha256: bindingHash(requested),
+    pages: await pagesFor(`${JSON.stringify(requestedBindings, null, 2)}\n`,
+      {kind: "REQUESTED_VALIDATION_EVIDENCE", original_pointer: "/requested_validation_evidence", original_sha256: bindingHash(requested)})};
   const navigationCollection = evidence.review_context.navigation_coverage ?? [];
   const navigationCollectionHash = bindingHash(navigationCollection);
   for (const name of cohort.required_paths) {
@@ -72,7 +86,8 @@ export async function prepareSourcePacket({directory, candidate, inputs, evidenc
   }
   const manifest = {schema: "my-crm.source-packet/v1", cohort_id: cohort.id, candidate_commit: candidate.commit ?? null,
     candidate_tree: candidate.tree, review_base: candidate.base, diff_base: diffBase, input_binding_sha256: bindingHash(inputs),
-    page_byte_limit: 8192, assigned_diff: diffPages, all_invalidation_reasons: {count: invalidations.length, pages: invalidationPages}, required_paths: [...cohort.required_paths], items,
+    page_byte_limit: 8192, assigned_diff: diffPages, all_invalidation_reasons: {count: invalidations.length, pages: invalidationPages},
+    requested_validation_evidence: requestedEvidence, required_paths: [...cohort.required_paths], items,
     authority_once: (inputs.authorities ?? []).map(authority => ({path: authority.path, sha256: authority.sha256,
       state: "READ_ONCE_PER_CURRENT_IDENTITY_BY_TRUSTED_REVIEWER", external: authority.external ?? false})),
     dependency_policy: "Materialized bodies preserve exact original locators. Unmaterialized dependencies, callers, construction, publication and failure edges remain explicitly on-demand and require independent tracing. Presence, hashes and retained checkpoints grant no coverage, validation or approval."};
