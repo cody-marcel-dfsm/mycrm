@@ -1,3 +1,4 @@
+import * as validationContracts from "./validation-contract.mjs";
 import {createHash} from "node:crypto";
 import {execFile, spawn} from "node:child_process";
 import {mkdir, readFile, rm, writeFile, lstat, realpath} from "node:fs/promises";
@@ -313,6 +314,8 @@ async function review(args = [], {run, phase, producer = null, verifyProducer = 
     const {validationEvidence: requestedValidationEvidence, ownerApprovalEvidence} = reviewArguments(args);
     const proposalRecord = await readProposalRecord();
     const candidate = await assertExactStagedCandidate();
+    const selected = validationContracts.admitContract(process.cwd(), candidate.tree, proposalRecord);
+    if (selected) for (const record of [...selected.results, ...selected.before]) requestedValidationEvidence.push(`@${record._record_path}`, `@${record.output_file}`);
     const deployment = await candidateDeploymentHistory(candidate);
     candidate.files = [...new Set([...candidate.files, ...deployment.integrated_paths])].sort();
     const directory = await oracleDirectory();
@@ -674,9 +677,10 @@ async function reviewProposal(request, args = [], {run, phase}) {
     "Verify the stated problem and cause. Classify architecture, public API-contract, authentication, and authorization impact yourself.",
     "Complete technical proposal assessment without human approval gates. Missing human deployment permission does not block technical verdict, proposal persistence, implementation or later source review. Classify actual protected credential-trust, permission-authority, tenant-isolation or incompatible-contract deployment effects separately with a nonblocking warning and exact required decision. Architecture/authentication/public-contract labels, filenames, ordinary corrections and compatible repairs alone create no permission requirement. The owning publication/install workflow checks specifically protected effects before mutation; preserve the independent explicit public API-version REQUEST requirement and technical rejection.",
     "A blocking finding must flag the user under concise Problem, Cause, and Recommended change parts with no more than three sentences each. Proposal approval never approves a completed diff.",
+    "If scripts/validation-catalog.json exists, read that exact catalog and current scripts/validation-selection.json if present. Before implementation independently select docs_only minimal document sanity, bug_fix focused fail-before/pass-after, deep_bug_fix all relevant interactions, or feature thorough acceptance. Emit exactly one extra line VALIDATION_SELECTION=<single-line JSON with change_class, scope_paths, categories [{name,tests,fixtures}], reason, revision_of>. Include every class minimum category; select exact planned tests for focused/interactions/acceptance, exact supporting fixtures under tests/; empty tests/fixtures for fixed sanity/regression. scope_paths are bounded project-relative planned paths. revision_of names the current contract_sha256 or is null when absent. Unknown impact expands coverage. Do not accumulate feature tests into the small recurrence registry. No skipped, partial or empty test run passes. Native publication and security boundaries remain mandatory.",
     "Explain the decision under concise Problem, Cause, and Recommended change headings. End with exactly four machine-readable lines: API_VERSION_ASSESSMENT=<single-line JSON object matching the five fields above>; AUTHENTICATION_IMPACT=NONE or AUTHENTICATION_IMPACT=AUTHENTICATION; OWNER_APPROVAL_STATUS=NOT_REQUIRED, APPROVED, or MISSING; and ORACLE_VERDICT=APPROVED or ORACLE_VERDICT=REJECTED."
   ].join("\n");
-  let response;
+  let response, validationSelection;
   const settings = await phase("model_selection_ms", async () => inputs.reviewer_settings);
   const {model, reasoning_effort: effort} = settings;
   const reviewerRecord = await recordReviewer(run, settings);
@@ -700,6 +704,9 @@ async function reviewProposal(request, args = [], {run, phase}) {
       findings: []
     }, {requireApiAssessment: true});
     await verifyApiVersionRequestEvidence(response, inputs.validation);
+    if (await readFile(path.join(process.cwd(), validationContracts.catalogPath), "utf8").then(() => true, error => {if (error.code === "ENOENT") return false; throw error;})) {
+      if (response.verdict === "APPROVED") validationSelection = validationContracts.proposalSelection(output);
+    }
   } finally { await phase("postcheck_ms", async () => assertInputsMatch(inputs, await capture())); }
   const record = {
     schema: "my-crm.oracle-proposal/v2",
@@ -714,8 +721,9 @@ async function reviewProposal(request, args = [], {run, phase}) {
     owner_approval_evidence: ownerApprovalEvidence,
     review: response,
   };
+  if (validationSelection) record.validation_contract = validationContracts.sealSelection(process.cwd(), validationSelection, request, response);
   record.record_sha256 = proposalRecordSha256(record);
-  await phase("publication_ms", async () => { assertInputsMatch(inputs, await capture()); await assertCurrentInvocation(); await atomicJson(await proposalPath(), record); });
+  await phase("publication_ms", async () => { assertInputsMatch(inputs, await capture()); await assertCurrentInvocation(); await atomicJson(await proposalPath(), record); if (record.validation_contract) validationContracts.writeSelection(process.cwd(), record.validation_contract); });
   process.stdout.write(`${response.summary}\nORACLE_PROPOSAL=${response.verdict} record=${record.record_sha256}\n`);
   if (response.verdict !== "APPROVED") process.exitCode = 1;
   return response;

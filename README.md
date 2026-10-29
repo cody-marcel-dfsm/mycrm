@@ -183,3 +183,9 @@ Maintainers run `npm run build:clients`, `npm run check:clients`, and `npm run r
 ## License
 
 Apache License 2.0. See `LICENSE` and `NOTICE`.
+
+## Maintainer validation
+
+The native proposal selects a fixed, change-specific executable validation contract
+before implementation. See [the maintainer contract](scripts/validation-contract.md)
+for the four change classes, complete execution requirements and reviewed revisions.

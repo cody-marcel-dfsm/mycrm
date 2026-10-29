@@ -362,7 +362,8 @@ export async function captureInputs({root, base, tree = null, validationEvidence
     Promise.all(validationEvidence.map((value) => evidenceBinding(root, value))),
     evidenceBinding(root, ownerApprovalEvidence),
   ]);
-  const authorities = [...localAuthorities, ...externalAuthorities];
+  const catalog = await fileBinding(root, "scripts/validation-catalog.json", {allowMissing: true});
+  const authorities = [...localAuthorities, ...externalAuthorities, catalog];
   const tool_sha256 = bindingHash(await Promise.all(policyModules.map(async (name) => contentHash(await readFile(new URL(name, import.meta.url))))));
   return {schema: "my-crm.oracle-inputs/v2", tool_sha256, tool_source_files: policyModules, reviewer_policy_sha256: await currentPolicy(), reviewer_policy_version: await policyVersion(), base_commit: base, reviewed_tree: tree, authorities, validation, owner, proposal_sha256: proposal ? bindingHash(proposal) : null,
     ...(observedPaths.length ? {observed_sources: observedSources} : {}),

@@ -1,3 +1,21 @@
+
+## Fixed validation selected before implementation
+
+The controlling maintainer validation contract is documented in
+`scripts/validation-contract.md`. The independent native proposal fixes a change
+class, exact executable categories and planned scope before implementation.
+`docs_only` uses minimal genuine-document sanity; `bug_fix` requires the focused
+assertion to fail before and pass after; `deep_bug_fix` adds complete relevant
+interactions; `feature` requires thorough relevant acceptance. Implementation,
+release and CI consume that same immutable selection. No empty, skipped, partial,
+cancelled or todo test run is a pass. Source, catalog, runtime and original results
+remain bound; scope changes require an explicit independently reviewed revision.
+Keep a small curated recurrence registry instead of accumulating feature tests.
+This supersedes a blanket whole-suite baseline only for valid selected contracts;
+the initial selector bootstrap retains its existing proposal and broad checks.
+Privacy, boundary, independent review and publication gates remain in force.
+Ordinary implementers do not adopt the independent approver skill.
+
 # My CRM repository contract
 
 My CRM is an independent third-party BOS application and native GPT plugin.

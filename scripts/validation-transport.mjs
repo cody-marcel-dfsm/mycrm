@@ -1,3 +1,4 @@
+import {publishedContract, requiredFor} from "./validation-contract.mjs";
 import {createHash} from "node:crypto";
 import {execFile, spawn} from "node:child_process";
 import {readFile} from "node:fs/promises";
@@ -10,11 +11,12 @@ const execute = promisify(execFile), oid = /^[a-f0-9]{40}$/, digestPattern = /^[
 const canonical = value => Array.isArray(value) ? `[${value.map(canonical).join(",")}]` : value && typeof value === "object" ? `{${Object.keys(value).sort().map(key => `${JSON.stringify(key)}:${canonical(value[key])}`).join(",")}}` : JSON.stringify(value);
 const hash = value => createHash("sha256").update(value).digest("hex");
 export const gitBlobHash = bytes => createHash("sha1").update(`blob ${bytes.length}\0`).update(bytes).digest("hex");
-export const requiredCommands = Object.freeze([["npm", "run", "build"], ["npm", "test"], ["npm", "run", "check:release"]]);
+const selectedValidation = publishedContract();
+export const requiredCommands = Object.freeze(requiredFor(selectedValidation));
 export const validationContext = "my-crm/native-validation";
 export const requiredCIWorkflow = ".github/workflows/ci.yml";
 export const requiredCIJob = "test";
-const contract = {required_commands: requiredCommands, execution_contract: "accept-original-supported-native-execution", additional_platform_executions: []};
+const contract = {...(selectedValidation ? {selection_sha256: selectedValidation.contract_sha256} : {}), required_commands: requiredCommands, execution_contract: "accept-original-supported-native-execution", additional_platform_executions: []};
 export const validationContractHash = hash(canonical(contract));
 const commandKey = command => hash(canonical(command));
 const git = async (root, args) => (await execute("git", args, {cwd: root, maxBuffer: 16 * 1024 * 1024})).stdout.trim();

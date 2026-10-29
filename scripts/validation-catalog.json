@@ -1,0 +1,37 @@
+{
+  "schema": "my-crm.validation-catalog/v1",
+  "classes": {
+    "docs_only": [
+      "sanity"
+    ],
+    "bug_fix": [
+      "sanity",
+      "focused",
+      "regression"
+    ],
+    "deep_bug_fix": [
+      "sanity",
+      "focused",
+      "interactions",
+      "regression"
+    ],
+    "feature": [
+      "sanity",
+      "interactions",
+      "acceptance",
+      "regression"
+    ]
+  },
+  "regression": [
+    {
+      "test": "tests/public-contract.test.mjs",
+      "recurrence": "External client ownership boundaries need a stable small recurrence guard.",
+      "boundary": "No sibling source or authentication implementation enters My CRM."
+    },
+    {
+      "test": "tests/privacy-native-provenance.test.mjs",
+      "recurrence": "Synthetic-only evidence and package privacy recur across maintenance work.",
+      "boundary": "No customer identity or credentials may enter artifacts."
+    }
+  ]
+}

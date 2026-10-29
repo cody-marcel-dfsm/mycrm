@@ -1,3 +1,4 @@
+import {publishedContract, requiredFor} from "./validation-contract.mjs";
 import {access} from "node:fs/promises";
 import {execFile, spawn} from "node:child_process";
 import {promisify} from "node:util";
@@ -23,7 +24,7 @@ export async function validateRelease({execute = run, nativeEvidence, priorCover
       : await (await import("./validation-transport.mjs")).importNativeValidation({repository: process.env.GITHUB_REPOSITORY, sourceCommit, sourceTree});
   }
   for (const invalidation of priorCoverage?.invalidated ?? []) console.log(`MYCRM_VALIDATION_INVALIDATED=${JSON.stringify(invalidation)}`);
-  for (const command of [["npm", "run", "build"], ["npm", "test"], ["npm", "run", "check:release"]]) {
+  for (const command of requiredFor(publishedContract(root))) {
     const covered = priorCoverage?.covered?.find(item => JSON.stringify(item.command) === JSON.stringify(command));
     if (covered) {console.log(`MYCRM_VALIDATION_REUSED=${JSON.stringify({command, provenance: "ORIGINAL_NATIVE_EXECUTION", coverage: covered.coverage, executions: covered.original_executions})}`); continue;}
     // Missing native coverage executes every required command honestly.
