@@ -67,7 +67,11 @@ test("first CI consumes owner-authenticated native original checks and repeats z
   assert.equal(prior.covered[1].original_executions[0].original_environment.platform, "darwin");
   assert.equal(f.state.statuses[0].context, validationContext);
   const publicBytes = Buffer.from(f.state.blob.content, "base64").toString();
-  assert.doesNotMatch(publicBytes, /Vault|\/Users\/|\/home\/|token|stderr|review|CODEX_|PATH|execution_cwd/i);
+  const publicRecord = JSON.parse(publicBytes);
+  assert.deepEqual(publicRecord.checks.map(check => check.command), requiredCommands);
+  // Exact public command names may contain "review"; private review evidence may not.
+  const withoutCommands = {...publicRecord, checks: publicRecord.checks.map(({command, ...check}) => check)};
+  assert.doesNotMatch(JSON.stringify(withoutCommands), /Vault|\/Users\/|\/home\/|token|stderr|review|CODEX_|PATH|execution_cwd/i);
 });
 
 test("unpublished source is uploaded during validation preparation before status issuance", async () => {
@@ -192,10 +196,15 @@ test("export verifies actual native originals and composes only independently as
   await writeFile(path.join(root, ".gitignore"), "Vault/\ndist/\n"); await writeFile(path.join(root, "candidate.txt"), "Synthetic source before repair.\n");
   await writeFile(path.join(root, "package.json"), JSON.stringify({name: "synthetic-native-transport", type: "module", scripts: {build: "node synthetic-check.mjs build", test: "node synthetic-check.mjs test", "check:release": "node synthetic-check.mjs package"}}));
   await writeFile(path.join(root, "synthetic-check.mjs"), "import{mkdir,writeFile}from'node:fs/promises';if(process.argv[2]==='build'){await mkdir('dist/my-crm',{recursive:true});await writeFile('dist/my-crm/artifact.txt','synthetic artifact');}console.log('Synthetic original command ran');if(process.argv[2]==='test'&&process.env.SYNTHETIC_FAIL_NATIVE_CHECK)process.exitCode=1;\n");
+  await mkdir(path.join(root, "tests"));
+  for (const filename of requiredCommands[1].slice(2)) {
+    await writeFile(path.join(root, filename), "import test from 'node:test';import assert from 'node:assert/strict';test('synthetic native selected check',()=>assert.equal(Boolean(process.env.SYNTHETIC_FAIL_NATIVE_CHECK),false));\n");
+  }
   await git("init", "-b", "main"); await git("config", "user.name", "Synthetic Maintainer"); await git("config", "user.email", "synthetic@example.invalid"); await git("add", "."); await git("commit", "-m", "Synthetic source baseline");
   const launcher = fileURLToPath(new URL("../scripts/oracle-review.mjs", import.meta.url)), env = {...process.env, CODEX_THREAD_ID: "", CODEX_SELECTED_MODEL: "synthetic-test-model", CODEX_SELECTED_REASONING_EFFORT: "high"};
+  delete env.NODE_TEST_CONTEXT; // The fixture owns a real independent Node test runner.
   const capture = async (command, extra = {}) => {
-    const names = (await git("ls-files")).split("\n"), args = [launcher, "validate", ...names.flatMap(name => ["--input", name]), "--", ...command];
+    const names = (await git("ls-files")).split("\n"), args = [launcher, "validate", ...names.flatMap(name => ["--input", name]), "--environment", "SYNTHETIC_FAIL_NATIVE_CHECK", "--", ...command];
     let output; try {output = (await execute(process.execPath, args, {cwd: root, env: {...env, ...extra}})).stdout;} catch (error) {output = error.stdout;}
     const reference = output.match(/ORACLE_VALIDATION_EVIDENCE=(.+)/)?.[1]; assert.ok(reference, output);
     return {reference, record: JSON.parse(await readFile(reference.slice(1)))};
@@ -211,7 +220,7 @@ test("export verifies actual native originals and composes only independently as
   };
   assert.equal((await collectNativeChecks(await receipt(originals))).length, 3);
   const failed = await capture(requiredCommands[1], {SYNTHETIC_FAIL_NATIVE_CHECK: "true"});
-  assert.equal(failed.record.outcome, "FAILED");
+  assert.equal(failed.record.outcome, "FAILED", await readFile(failed.record.output_file, "utf8"));
   await assert.rejects(collectNativeChecks(await receipt([originals[0], failed, originals[2]])), /coverage missing/);
   const baseline = originals[1]; await writeFile(path.join(root, "candidate.txt"), "Synthetic repaired source.\n"); await git("add", "."); await git("commit", "-m", "Synthetic focused repair changelist");
   const focused = await capture([process.execPath, "synthetic-check.mjs", "focused"]);

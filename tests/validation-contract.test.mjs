@@ -62,6 +62,13 @@ test('real unchanged reproduction fails then passes; release uses every selected
   assert.deepEqual(remaining,[executed[0]]);
 });
 
+test('a rejected source-mutating before run cannot become reproduction after commit',t=>{
+ const f=fixture(t);f.publish();
+ f.put('tests/reproduction.test.mjs',"import test from 'node:test';import assert from 'node:assert/strict';import{writeFileSync}from'node:fs';import value from '../source.mjs';test('mutation is not reproduction',()=>{if(!value)writeFileSync(new URL('../source.mjs',import.meta.url),'export default true;');assert.equal(value,true);});");f.commit();
+ const before=v.executeCategory(f.root,'focused','before');assert.equal(before.exit_code,1);assert.equal(before.record.inputs_unchanged,false);assert.equal(before.record.summary.fail,1);
+ const original=readFileSync(before.filename);f.commit();assert.throws(()=>v.executeCategory(f.root,'focused'),/unchanged-test/);assert.deepEqual(readFileSync(before.filename),original);
+});
+
 test('syntax failures and changed reproduction do not supply bug-before evidence',t=>{
   const f=fixture(t);f.publish();
   f.put('tests/reproduction.test.mjs','not valid javascript {{{');f.commit();
