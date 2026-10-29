@@ -113,3 +113,39 @@ test('hard end-to-end policy is immutable and simple bugs cannot expand into int
 test('catalog introduction is an explicit new scoped epoch, never relabeled npm-test proof',()=>{
  assert.equal(v.bootstrapEpoch,'my-crm.validation-contract-introduction/v1');assert.deepEqual(v.requiredFor(null),v.bootstrapCommands);assert.equal(v.bootstrapCommands.some(command=>JSON.stringify(command)===JSON.stringify(['npm','test'])),false);assert.ok(v.bootstrapCommands[1].includes('tests/native-review-settings.test.mjs'));
 });
+
+test('unchanged category reaches independent repair assessment without repeating its tests',t=>{
+ const f=fixture(t),selection=f.selection('feature');selection.categories[2].tests=['tests/acceptance.test.mjs'];
+ const contract=v.sealSelection(f.root,selection,'Synthetic selected feature',{verdict:'APPROVED'});v.writeSelection(f.root,contract);
+ f.put('tests/reproduction.test.mjs',"import test from 'node:test';import assert from 'node:assert/strict';import value from '../source.mjs';test('interaction',()=>assert.equal(value,false));");
+ f.put('tests/acceptance.test.mjs',"import test from 'node:test';test('acceptance',()=>{});");f.commit();
+ const records=Object.fromEntries(['sanity','interactions','acceptance'].map(name=>[name,v.executeCategory(f.root,name)]));
+ const original=readFileSync(records.interactions.filename);
+ f.put('tests/acceptance.test.mjs',"import test from 'node:test';import assert from 'node:assert/strict';test('repaired acceptance',()=>assert.equal(2+2,4));");f.commit();
+ for(const name of ['sanity','acceptance'])assert.equal(v.executeCategory(f.root,name).exit_code,0);
+ const tree=f.git('rev-parse','HEAD^{tree}'),admitted=v.admitContract(f.root,tree,{validation_contract:contract});
+ assert.equal(admitted.results.find(r=>r.category==='interactions').record_sha256,records.interactions.record.record_sha256);
+ assert.equal(admitted.requalification.length,1);assert.equal(admitted.requalification[0].category,'interactions');
+ const dependencies=['scripts/validation-contract.mjs',v.catalogPath,v.selectionPath,'package.json','tests/reproduction.test.mjs','source.mjs'];
+ const response={review_status:'COMPLETE',verdict:'APPROVED',coverage:[{path:'tests/reproduction.test.mjs',criteria:['validation-category-reuse'],dependencies,dependency_rationale:'Complete synthetic import closure plus harness/configuration.',assessment:'Original interaction inputs remain unchanged; acceptance was rerun.',evidence:[`@${records.interactions.filename}`,`@${records.interactions.record.output_file}`]}]};
+ const bindings=admitted.results.flatMap(r=>[r._record_path,r.output_file]).map(p=>({kind:'file',value:`@${p}`,sha256:v.hash(readFileSync(p,'utf8'))}));
+ assert.throws(()=>v.verifyCategoryAssessment(f.root,tree,{validation_contract:contract},{...response,coverage:[]},bindings),/independent/);
+ assert.throws(()=>v.verifyCategoryAssessment(f.root,tree,{validation_contract:contract},response,[]),/bound/);
+ assert.doesNotThrow(()=>v.verifyCategoryAssessment(f.root,tree,{validation_contract:contract},response,bindings));
+ assert.deepEqual(readFileSync(records.interactions.filename),original);
+ f.put('source.mjs','export default true;\n');f.commit();
+ for(const name of ['sanity','acceptance'])assert.equal(v.executeCategory(f.root,name).exit_code,0);
+ assert.throws(()=>v.verifyCategoryAssessment(f.root,f.git('rev-parse','HEAD^{tree}'),{validation_contract:contract},response,bindings),/dependent input/);
+ const omitted={...response,coverage:[{...response.coverage[0],dependencies:dependencies.filter(p=>p!==v.catalogPath)}]};
+ assert.throws(()=>v.verifyCategoryAssessment(f.root,f.git('rev-parse','HEAD^{tree}'),{validation_contract:contract},omitted,bindings),/mandatory/);
+});
+
+test('functional environment changes cannot replace a real fail-before reproduction',t=>{
+ const f=fixture(t);f.publish();const key='MYCRM_SYNTHETIC_REPRODUCTION',previous=process.env[key];
+ t.after(()=>previous===undefined?delete process.env[key]:process.env[key]=previous);
+ f.put('tests/reproduction.test.mjs',"import test from 'node:test';import assert from 'node:assert/strict';test('configured reproduction',()=>assert.equal(process.env.MYCRM_SYNTHETIC_REPRODUCTION,'synthetic-after'));");f.commit();
+ process.env[key]='synthetic-before';const before=v.executeCategory(f.root,'focused','before');assert.equal(before.exit_code,0);const original=readFileSync(before.filename);
+ process.env[key]='synthetic-after';
+ assert.throws(()=>v.executeCategory(f.root,'focused'),/environment|unchanged-test/);
+ assert.deepEqual(readFileSync(before.filename),original);assert.equal(original.includes(Buffer.from('synthetic-before')),false);
+});
