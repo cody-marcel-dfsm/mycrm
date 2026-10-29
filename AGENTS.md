@@ -196,7 +196,7 @@ never load the Projects approver skill directly.
 - Public product contracts, executable source, examples, license files, and the
   customer-facing README remain Git-visible.
 
-Establish the complete integrated `npm test` baseline before completing an implementation change. During repair follow-ups, retain verified unchanged baseline observations and run the checks affected by changed source, dependencies, configuration, environment or uncovered behavior.
+Execute every category of the fixed Oracle-selected contract before completing an implementation change. During repair follow-ups, retain verified unchanged observations and execute complete affected selected categories. A change to scope or risk requires an explicit contract revision before implementation; a whole-suite baseline is not automatic.
 
 Every repository mutation requires review of the complete staged tree through
 `npm run oracle:review`. A mutation is incomplete until the Oracle utility
@@ -259,7 +259,7 @@ reusable result. A verified captured pass satisfies the requirement to execute
 that check for those exact inputs; preserve it in the review result and repeat
 it only for an invalidated input or a concrete new coverage gap. Rerun affected
 checks when these inputs change; shared
-behavior changes can require broader regression checks. The complete initial `npm test` baseline remains required; verified unaffected observations carry forward through focused repair checks. Evidence reuse
+behavior changes can require broader regression checks. The complete selected contract remains required; verified unaffected observations carry forward through complete affected category checks. Evidence reuse
 never carries an approval forward: every updated candidate requires a fresh
 independent whole-candidate decision and exact staged-tree receipt. Public API
 version requests, specifically protected deployment authority, provenance and verifier gates

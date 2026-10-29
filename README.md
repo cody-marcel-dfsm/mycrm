@@ -91,7 +91,7 @@ General searches omit a source so BOS owns federation. Explicit-source requests 
 
 The distributable contains source-first record, pipeline, activity, federation, customer-journey, automation, and cache-maintenance skills, examples, and My CRM client helpers. Its `.bos-product.json` metadata requires BOS, names BOS as the connection owner, declares automatic authentication handoff, and advertises the canonical `lead_director_*` package-verification tools through that dependency. It contains no `.mcp.json`, resource URL, token, second MCP connection, OAuth binding, BOS Service or BOS Operations Center contract, schema, manifest, archive, provenance record, or executable adapter. My CRM knows only the configured BOS discovery URL, discovers current operations and schemas dynamically from authenticated BOS discovery APIs, and invokes the advertised endpoints through BOS authenticated transport.
 
-`npm run build` generates all five client distributions and creates a deterministic release candidate under `dist/my-crm`, retaining the root Codex layout for existing installers. The candidate includes every client distribution, complete skills and references, examples, My CRM client helpers, license, and notice. `npm run release:check` rebuilds it, runs the full suite, and verifies package-boundary conformance. The repository-local marketplace at `.agents/plugins/marketplace.json` points only to this built candidate. It adds no MCP or authentication binding and carries no frozen BOS server or client artifact.
+`npm run build` generates all five client distributions and creates a deterministic release candidate under `dist/my-crm`, retaining the root Codex layout for existing installers. The candidate includes every client distribution, complete skills and references, examples, My CRM client helpers, license, and notice. `npm run release:check` executes the exact Oracle-selected validation categories; the initial selector bootstrap uses its explicit scoped policy/transport/review checks plus package build and release conformance. The repository-local marketplace at `.agents/plugins/marketplace.json` points only to this built candidate. It adds no MCP or authentication binding and carries no frozen BOS server or client artifact.
 
 Local contract tests generate tenant-neutral synthetic discovery-service responses at test time. They exercise discovery and Describe recovery through BOS readiness, fresh schema selection, exact advertised endpoint invocation, My CRM-owned bounded continuation, response validation, and contract evolution without loading a frozen BOS Service or BOS Operations Center copy.
 
@@ -104,12 +104,12 @@ The [CRM consumer examples](examples/crm/README.md) distinguish values copied at
 ## Validate
 
 ```bash
-npm test
 npm run release:check
 npm run vault:sync
 ```
 
-`npm test` runs the privacy gate across source, tests, fixtures, documentation,
+`npm test` remains an explicit broad diagnostic, not an automatic release baseline.
+It runs the privacy gate across source, tests, fixtures, documentation,
 and Vault; release build/check run it again against the generated package. The
 gate rejects non-reserved email addresses, UUID values, BOS context-handle
 values, and identity-bearing evidence fields. A centrally managed customer

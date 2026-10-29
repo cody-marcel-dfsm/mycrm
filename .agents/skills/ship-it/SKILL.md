@@ -164,8 +164,9 @@ and matching dispositions, and rejects identity/status conflicts or local duplic
    commit or batched range, covering real entrypoints, dependencies, consumers,
    publication and failure/recovery paths. Return every established finding
    together with stable identities, reproduction and acceptance evidence.
-3. Establish the complete integrated `npm test` baseline once. Capture reusable
-   execution with `npm run oracle:validate -- -- npm test`; for a focused check,
+3. Execute the complete fixed Oracle-selected contract. Capture each category
+   with `npm run oracle:validate -- -- node scripts/validation-contract.mjs run
+   --category <selected-name>`; for a selected focused category,
    repeat `--input <exact-project-file>` for its complete consumed dependency
    closure before `-- <command>`. Capture build and package checks as needed.
    Supply the emitted original `--validation @<record>` to `oracle:review`.
