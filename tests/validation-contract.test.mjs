@@ -102,3 +102,7 @@ test('hard end-to-end policy is immutable and simple bugs cannot expand into int
  f.commit();const next=f.selection();next.revision_of=c.contract_sha256;
  assert.deepEqual(v.sealSelection(f.root,next,'Revision',{}).delivery_policy,c.delivery_policy);
 });
+
+test('catalog introduction is an explicit new scoped epoch, never relabeled npm-test proof',()=>{
+ assert.equal(v.bootstrapEpoch,'my-crm.validation-contract-introduction/v1');assert.deepEqual(v.requiredFor(null),v.bootstrapCommands);assert.equal(v.bootstrapCommands.some(command=>JSON.stringify(command)===JSON.stringify(['npm','test'])),false);assert.ok(v.bootstrapCommands[1].includes('tests/native-review-settings.test.mjs'));
+});

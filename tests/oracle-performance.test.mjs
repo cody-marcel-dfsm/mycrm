@@ -1551,7 +1551,7 @@ test("terminal separators preserve OS directory lookup and reject invalid select
   assert.equal((await pathCustody(repo, 'safe-directory')).resolved_path, path.join(repo, 'directory'));
 });
 
-test("native default effort round-trips actual launch environment into sessionless child selection", async (t) => {
+test("owner-bounded default effort round-trips actual launch environment into sessionless child selection", async (t) => {
   const {repo, root, env, git} = await fixture(t);
   const home = path.join(root, 'task-home'), childHome = path.join(root, 'child-home');
   await mkdir(path.join(home, 'sessions'), {recursive: true}); await mkdir(childHome);
@@ -1564,13 +1564,13 @@ test("native default effort round-trips actual launch environment into sessionle
   for (const mode of ['proposal', 'review']) {
     await command(repo, mode === 'proposal' ? ['proposal', 'Problem: synthetic settings. Cause: synthetic. Recommended change: preserve default.'] : ['review'], taskEnv);
     const argv = JSON.parse(await readFile(capturedArgs)), inherited = JSON.parse(await readFile(capturedEnv));
-    assert.equal(argv.some(value => value.startsWith('model_reasoning_effort=')), false);
-    assert.equal(inherited.CODEX_SELECTED_REASONING_EFFORT, '');
+    assert.ok(argv.includes('model_reasoning_effort="medium"'));
+    assert.equal(inherited.CODEX_SELECTED_REASONING_EFFORT, 'medium');
     const record = JSON.parse(await readFile(path.join(repo, '.git/oracle', mode === 'proposal' ? 'proposal.json' : 'approval.json')));
     assert.equal(record.reviewer.reasoning_effort, 'medium');
     assert.equal(record.reviewer_metadata_sha256, sha256(`${JSON.stringify(record.reviewer, null, 2)}\n`));
     const child = await execute(process.execPath, ['--input-type=module', '-e', `import {selectedSettings} from ${JSON.stringify(helper)}; console.log(JSON.stringify(await selectedSettings()));`], {cwd: repo, env: {...process.env, CODEX_HOME: childHome, CODEX_THREAD_ID: 'sessionless-child', ...inherited}});
-    assert.deepEqual(JSON.parse(child.stdout), {model: 'synthetic-test-model', reasoning_effort: null});
+    assert.deepEqual(JSON.parse(child.stdout), {model: 'synthetic-test-model', reasoning_effort: 'medium'});
     if (mode === 'proposal') { await writeFile(path.join(repo, 'candidate.txt'), 'after settings proposal\n'); await git('add', 'candidate.txt'); }
   }
 });

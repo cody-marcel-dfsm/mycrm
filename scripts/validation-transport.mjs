@@ -1,4 +1,4 @@
-import {publishedContract, requiredFor} from "./validation-contract.mjs";
+import {publishedContract, requiredFor, bootstrapEpoch} from "./validation-contract.mjs";
 import {createHash} from "node:crypto";
 import {execFile, spawn} from "node:child_process";
 import {readFile} from "node:fs/promises";
@@ -16,7 +16,7 @@ export const requiredCommands = Object.freeze(requiredFor(selectedValidation));
 export const validationContext = "my-crm/native-validation";
 export const requiredCIWorkflow = ".github/workflows/ci.yml";
 export const requiredCIJob = "test";
-const contract = {...(selectedValidation ? {selection_sha256: selectedValidation.contract_sha256} : {}), required_commands: requiredCommands, execution_contract: "accept-original-supported-native-execution", additional_platform_executions: []};
+const contract = {...(selectedValidation ? {selection_sha256: selectedValidation.contract_sha256} : {bootstrap_epoch:bootstrapEpoch,preselected:false}), required_commands: requiredCommands, execution_contract: "accept-original-supported-native-execution", additional_platform_executions: []};
 export const validationContractHash = hash(canonical(contract));
 const commandKey = command => hash(canonical(command));
 const git = async (root, args) => (await execute("git", args, {cwd: root, maxBuffer: 16 * 1024 * 1024})).stdout.trim();

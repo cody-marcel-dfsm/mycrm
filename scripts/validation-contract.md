@@ -65,8 +65,13 @@ Implementation and `release:check` use those same category commands. CI imports
 only the existing independently approved, exact-source native command evidence or
 executes those same commands; it cannot invent a partial green result.
 
-The initial catalog/tooling bootstrap retains its original already-approved
-proposal and existing broad checks because its base predates this selector. Once
+The initial catalog/tooling introduction retains its original approved proposal
+and records the explicit `my-crm.validation-contract-introduction/v1` policy epoch.
+Its fixed checks are package build, the complete selector/policy/transport/review
+and native-settings test files, and package release check. This is a new scoped
+bootstrap capture, not preimplementation selection and not a passing replacement
+for the historical failed whole-suite run. Native transport preserves those
+original failures and requires actual passing executions of the new exact commands. Once
 the catalog exists in a proposal base, absent selection is a hard error. This
 transition is not a permanent fallback for ordinary new work.
 

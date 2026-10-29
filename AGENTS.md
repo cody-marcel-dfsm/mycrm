@@ -23,7 +23,8 @@ cancelled or todo test run is a pass. Source, catalog, runtime and original resu
 remain bound; scope changes require an explicit independently reviewed revision.
 Keep a small curated recurrence registry instead of accumulating feature tests.
 This supersedes a blanket whole-suite baseline only for valid selected contracts;
-the initial selector bootstrap retains its existing proposal and broad checks.
+the initial selector bootstrap retains its existing proposal and records a new
+explicit scoped bootstrap epoch; original broad failures remain failures.
 Privacy, boundary, independent review and publication gates remain in force.
 Ordinary implementers do not adopt the independent approver skill.
 
