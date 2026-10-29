@@ -310,7 +310,7 @@ async function candidateDeploymentHistory(candidate) {
 
 async function review(args = [], {run, phase, producer = null, verifyProducer = async () => {}}) {
   const cohortAudit = createNativeCohortAudit();
-  const {validationEvidence, requestedValidationEvidence, inherited, ownerApprovalEvidence, proposalRecord, candidate, directory, observedPaths, establishedObservedPaths, cohortAssessments} = await phase("precheck_ms", async () => {
+  const {validationEvidence, requestedValidationEvidence, inherited, ownerApprovalEvidence, proposalRecord, candidate, directory, observedPaths, establishedObservedPaths, cohortAssessments, selectedValidation} = await phase("precheck_ms", async () => {
     const {validationEvidence: requestedValidationEvidence, ownerApprovalEvidence} = reviewArguments(args);
     const proposalRecord = await readProposalRecord();
     const candidate = await assertExactStagedCandidate();
@@ -323,7 +323,7 @@ async function review(args = [], {run, phase, producer = null, verifyProducer = 
     const observed = await inheritObservedEvidence({directory, base: candidate.base, root: process.cwd(), requestedEvidence: [...requestedValidationEvidence, ...native.evidence], cohortAudit});
     const inherited = {evidence: [...native.evidence, ...observed.evidence], invalidated: [...native.invalidated, ...observed.invalidated]};
     const {paths: observedPaths, established: establishedObservedPaths} = await observationSourcePaths({directory, base: candidate.base, withBindingState: true, additionalFindings: observed.cohorts.flatMap(item => item.findings)});
-    return {validationEvidence: [...requestedValidationEvidence, ...inherited.evidence], requestedValidationEvidence, inherited, ownerApprovalEvidence, proposalRecord, candidate, directory, observedPaths, establishedObservedPaths, cohortAssessments: observed.cohorts};
+    return {validationEvidence: [...requestedValidationEvidence, ...inherited.evidence], requestedValidationEvidence, inherited, ownerApprovalEvidence, proposalRecord, candidate, directory, observedPaths, establishedObservedPaths, cohortAssessments: observed.cohorts, selectedValidation:selected};
   });
   const admittedEvidence = await Promise.all(validationEvidence.map(value => evidenceBinding(process.cwd(), value)));
   const admittedOwner = await evidenceBinding(process.cwd(), ownerApprovalEvidence);
@@ -331,6 +331,7 @@ async function review(args = [], {run, phase, producer = null, verifyProducer = 
     await readValidationProofs({root: process.cwd(), directory, validation: admittedEvidence});
     await assertEvidenceIntegrity(process.cwd(), [...admittedEvidence, admittedOwner]);
     await nativeCohortObservations({root: process.cwd(), directory, retained: cohortAssessments, audit: cohortAudit});
+    if (selectedValidation && await git(["rev-parse","HEAD^{tree}"]) === candidate.tree && bindingHash(validationContracts.admitContract(process.cwd(), candidate.tree, proposalRecord)) !== bindingHash(selectedValidation)) throw new Error("Selected category evidence or applicability changed during review");
   };
   const withIntegrityPrecedence = async original => {
     try { await recheckAdmittedEvidence(); return original; }
@@ -376,7 +377,7 @@ async function review(args = [], {run, phase, producer = null, verifyProducer = 
   });
   const prepared = await phase("preparation_ms", () => preparedEvidence(directory, {inputs, ...reviewerRecord}, async () => ({inputs, ...reviewerRecord, proposal: proposalRecord, staged_files: candidate.files, diff: await git(candidate.commit ? ["diff", "--binary", "--no-ext-diff", candidate.base, candidate.commit] : ["diff", "--cached", "--binary", "--no-ext-diff"]), validation_evidence: validationEvidence, owner_approval_evidence: ownerApprovalEvidence})));
   const deployment = await candidateDeploymentHistory(candidate);
-  const evidence = {...prepared.payload, requested_validation_evidence: requestedValidationEvidence, inherited_validation_evidence: inherited.evidence, review_context: series.public, reviewer_metadata_file: path.join(run, "reviewer.json"), deployment_history: deployment, integrated_deployment_diff: deployment.unverified_commits.length && deployment.baseline ? await git(["diff", "--binary", "--no-ext-diff", deployment.baseline, candidate.tree]) : null};
+  const evidence = {...prepared.payload, selected_category_requalification:selectedValidation?.requalification??[], requested_validation_evidence: requestedValidationEvidence, inherited_validation_evidence: inherited.evidence, review_context: series.public, reviewer_metadata_file: path.join(run, "reviewer.json"), deployment_history: deployment, integrated_deployment_diff: deployment.unverified_commits.length && deployment.baseline ? await git(["diff", "--binary", "--no-ext-diff", deployment.baseline, candidate.tree]) : null};
   if (producer) evidence.producer_origin = {...producer, fresh_module_graph: true};
   await atomicJson(path.join(run, "evidence.json"), evidence);
   if (candidate.commit) {
@@ -387,6 +388,7 @@ async function review(args = [], {run, phase, producer = null, verifyProducer = 
   const schemaPath = path.join(run, "response.schema.json"); const outputPath = path.join(run, "response.json");
   await writeMetadataFile(schemaPath, `${JSON.stringify(responseSchema, null, 2)}\n`);
   const prompt = [
+    "For each selected_category_requalification entry, the cross-cutting cohort must independently trace the complete consumed dependency closure. Reuse is not preapproved: fresh coverage must include criterion validation-category-reuse, both exact original record/output evidence references, all mandatory_dependencies and every actually consumed source/configuration/test input in dependencies, with a complete rationale. Only unchanged inputs may qualify; affected categories need complete fresh execution. Preserve original environment/runtime/output identities. Category evidence is not a native validation witness: keep it in coverage, never invent a validations row from it or from a direct diagnostic. Existing exact-source native publication-command proof is still required separately.",
     "Act as the independent My CRM project-local Oracle approver.", "Confirm the current governing instructions first: AGENTS.md, Vault/docs/CONSTITUTION.md, and the local approver skill under the trusted developer execution contract; only this isolated Oracle process may adopt that skill. Read each current authority once. Then inspect the commits and sealed supporting observations, independently re-attest affected criteria and missing paths, and preserve valid unchanged results.",
     `Immutable complete evidence reference: ${path.join(run, "evidence.json")}. Begin with your bounded cohort inputs and current assigned changes. Read only targeted original fields/source chunks for a named unresolved fact; retain source/dependency coverage identities across fresh reviewer conversations. Preparation and coverage reuse never reuse an Oracle verdict.`,
     `Review the exact Git tree ${candidate.tree} against base commit ${candidate.base}. Candidate committed SHA: ${candidate.commit ?? "staged compatibility mode"}. Inspect the sealed approved proposal through a bounded projection of evidence.proposal; independently assess its applicability. Caller-supplied exact owner-approval evidence: ${ownerApprovalEvidence ?? "none supplied"}.`,
@@ -438,6 +440,7 @@ async function review(args = [], {run, phase, producer = null, verifyProducer = 
     await verifyApiVersionRequestEvidence(response, inputs.validation.filter((item) => requestedValidationEvidence.includes(item.value)));
     if (!new Ajv({strict: false}).validate(responseSchema, response)) throw new Error("Independent Oracle response does not satisfy its response schema");
     assessed = assessRound(series, response, inputs.validation);
+    validationContracts.verifyCategoryAssessment(process.cwd(),candidate.tree,proposalRecord,response,inputs.validation);
     await verifyParallelArtifacts(parallelEvidence, {root: path.dirname(directory)});
     const recheck = async () => {
       let current, movement;

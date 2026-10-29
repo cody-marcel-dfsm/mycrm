@@ -118,6 +118,7 @@ export function partitionPayload(plan, cohort, evidence) {
       authority_manifest_reference: {file: "../../evidence.json", pointer: "/inputs/authorities"}, candidate_commit: plan.candidate_commit,
       reviewed_tree: plan.candidate_tree, owner: evidence.inputs.owner},
     staged_files: evidence.staged_files,
+    selected_category_requalification: primary ? evidence.selected_category_requalification ?? [] : [],
     review_context: {required_paths: cohort.required_paths, eligible_coverage: summarize(context.eligible_coverage ?? [], "/review_context/eligible_coverage"),
       supporting_coverage: summarize(context.supporting_coverage ?? [], "/review_context/supporting_coverage"),
       requalification_candidates: summarize(context.requalification_candidates ?? [], "/review_context/requalification_candidates"),

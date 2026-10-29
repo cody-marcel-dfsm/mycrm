@@ -57,18 +57,36 @@ explicit contract/reproduction.
 Run each selected category through `oracle:validate`, for example
 `npm run oracle:validate -- -- node scripts/validation-contract.mjs run --category
 focused`. The runner executes the exact selected command, captures immutable
-source/catalog/runtime/output identities and requires the complete TAP totals:
+source/catalog/runtime/output identities and the hash of the complete actual
+functional child environment, without recording environment values. Dispatch-only
+values are removed from the child itself; all remaining configuration is bound.
+Changing that configuration cannot replace a fail-before reproduction. The runner
+uses the same executable whose bytes are bound in the contract and requires complete TAP totals:
 positive tests, all passed, zero skipped/todo/cancelled. A zero exit code alone is
-insufficient. The full selected set must pass for the exact current tree before
-source review; later failures supersede earlier passing attempts for admission.
+insufficient. Complete affected categories must pass on the current tree; later
+failures supersede earlier passing attempts. Sanity always checks the full current
+candidate. Intact prior passing category records may reach review as pending reuse
+candidates when their tests, fixtures, runtime and functional environment match.
+They supply no automatic coverage: the independent current cross-cutting reviewer
+must trace every consumed dependency and cite both original record and output in
+fresh `validation-category-reuse` coverage. The final native verifier checks those
+hash-bound originals, mandatory harness/catalog/selection/package/test inputs and
+every independently identified source/configuration dependency against both Git
+trees. Changed or unavailable dependencies require fresh complete execution.
+Unknown closures cannot be qualified. Preserve originals and the original SLA
+clock; never copy a prior approval or relabel an old run as a current execution.
 Implementation and `release:check` use those same category commands. CI imports
 only the existing independently approved, exact-source native command evidence or
-executes those same commands; it cannot invent a partial green result.
+executes those same commands; it cannot invent a partial green result. Category
+qualification alone is not a launcher-owned native command proof. Publication
+still requires the existing exact-source native execution or independently
+qualified required-command manifest, including every actual changed dependency
+and complete affected repair execution; the category gate does not waive it.
 
 The initial catalog/tooling introduction retains its original approved proposal
 and records the explicit `my-crm.validation-contract-introduction/v1` policy epoch.
 Its fixed checks are package build, the complete selector/policy/transport/review
-and native-settings test files, and package release check. This is a new scoped
+parallel-dispatch and native-settings test files, and package release check. This is a new scoped
 bootstrap capture, not preimplementation selection and not a passing replacement
 for the historical failed whole-suite run. Native transport preserves those
 original failures and requires actual passing executions of the new exact commands. Once

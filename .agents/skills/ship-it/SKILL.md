@@ -110,6 +110,13 @@ Vault changes. A technical review governs release readiness.
 
 ## 3. Validate
 
+On a repair, execute complete affected selected categories and current-candidate
+sanity. Intact unchanged category executions may be supplied for fresh independent
+`validation-category-reuse` assessment; they are pending evidence, never an
+author-issued pass. Preserve full functional environment, runtime, fixture and
+original-output identities. The native verifier checks every consumed dependency
+before approval; existing publication command-proof requirements remain separate.
+
 Run the entire lifecycle in parallel with the other changed family members.
 The native completed review also runs three independent cohorts concurrently:
 cross-cutting criteria/integration, implementation/consumers, and

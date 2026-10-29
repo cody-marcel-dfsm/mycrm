@@ -132,12 +132,29 @@ test('unchanged category reaches independent repair assessment without repeating
  assert.throws(()=>v.verifyCategoryAssessment(f.root,tree,{validation_contract:contract},{...response,coverage:[]},bindings),/independent/);
  assert.throws(()=>v.verifyCategoryAssessment(f.root,tree,{validation_contract:contract},response,[]),/bound/);
  assert.doesNotThrow(()=>v.verifyCategoryAssessment(f.root,tree,{validation_contract:contract},response,bindings));
+ assert.throws(()=>v.verifyCategoryAssessment(f.root,tree,{validation_contract:contract},{...response,coverage:[response.coverage[0],response.coverage[0]]},bindings),/one fresh/);
+ const duplicateSource={...response,coverage:[{...response.coverage[0],dependencies:[...dependencies,'missing.mjs']}]};
+ assert.throws(()=>v.verifyCategoryAssessment(f.root,tree,{validation_contract:contract},duplicateSource,bindings),/unavailable/);
+ const alteredEnv={...v.categoryEnvironment(),MYCRM_SYNTHETIC_CHANGED:'synthetic'};
+ assert.throws(()=>v.admitContract(f.root,tree,{validation_contract:contract},{environment:alteredEnv}),/environment/);
  assert.deepEqual(readFileSync(records.interactions.filename),original);
  f.put('source.mjs','export default true;\n');f.commit();
  for(const name of ['sanity','acceptance'])assert.equal(v.executeCategory(f.root,name).exit_code,0);
  assert.throws(()=>v.verifyCategoryAssessment(f.root,f.git('rev-parse','HEAD^{tree}'),{validation_contract:contract},response,bindings),/dependent input/);
  const omitted={...response,coverage:[{...response.coverage[0],dependencies:dependencies.filter(p=>p!==v.catalogPath)}]};
  assert.throws(()=>v.verifyCategoryAssessment(f.root,f.git('rev-parse','HEAD^{tree}'),{validation_contract:contract},omitted,bindings),/mandatory/);
+ const failed=v.executeCategory(f.root,'interactions');assert.equal(failed.exit_code,1);
+ assert.throws(()=>v.admitContract(f.root,f.git('rev-parse','HEAD^{tree}'),{validation_contract:contract}),/incomplete or failed/);
+ assert.deepEqual(readFileSync(records.interactions.filename),original);
+});
+
+test('actual child receives the fully bound functional environment and no dispatch identity',t=>{
+ const f=fixture(t);f.publish('feature');f.put('tests/reproduction.test.mjs',"import test from 'node:test';test('synthetic',()=>{});");f.commit();
+ let observed;const tap=['tests 1','pass 1','fail 0','cancelled 0','skipped 0','todo 0'].map(s=>`# ${s}\n`).join('');
+ const result=v.executeCategory(f.root,'interactions','after',(program,args,options)=>{observed={program,args,env:options.env};return {status:0,stdout:tap,stderr:''};});
+ assert.equal(observed.program,process.execPath);assert.deepEqual(observed.env,v.categoryEnvironment());assert.equal(result.record.environment_sha256,v.hash(observed.env));
+ for(const name of ['NODE_TEST_CONTEXT','CODEX_THREAD_ID','CODEX_SELECTED_MODEL'])assert.equal(Object.hasOwn(observed.env,name),false);
+ assert.equal(Object.hasOwn(result.record,'environment'),false);assert.equal(typeof result.record.environment_provenance_sha256,'string');
 });
 
 test('functional environment changes cannot replace a real fail-before reproduction',t=>{

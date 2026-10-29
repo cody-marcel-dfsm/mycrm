@@ -10,6 +10,12 @@ const canonical=v=>Array.isArray(v)?`[${v.map(canonical).join(',')}]`:v&&typeof 
 export const hash=v=>createHash('sha256').update(typeof v==='string'?v:canonical(v)).digest('hex');
 const git=(root,...args)=>execFileSync('git',args,{cwd:root,encoding:'utf8',maxBuffer:16*1024*1024}).trim();
 export const runtime=()=>({node:process.version,node_sha256:createHash('sha256').update(readFileSync(process.execPath)).digest('hex'),platform:process.platform,architecture:process.arch,options_sha256:hash(Object.fromEntries(['NODE_OPTIONS','NODE_PATH'].map(k=>[k,process.env[k]??null])))});
+// Remove dispatch-only values from the actual child as well as its identity.
+// Every remaining value is bound, but no environment value is persisted.
+export function categoryEnvironment(environment=process.env){
+ const dispatch=new Set(['NODE_TEST_CONTEXT','CODEX_THREAD_ID','CODEX_PARENT_THREAD_ID','CODEX_SESSION_ID','CODEX_SELECTED_MODEL','CODEX_SELECTED_REASONING_EFFORT','PWD','OLDPWD','SHLVL','_']);
+ return Object.fromEntries(Object.entries(environment).filter(([name])=>!dispatch.has(name)&&!name.startsWith('npm_lifecycle_')));
+}
 const same=(a,b)=>canonical(a)===canonical(b);
 export const classes={docs_only:['sanity'],bug_fix:['sanity','focused'],deep_bug_fix:['sanity','focused','interactions'],feature:['sanity','interactions','acceptance']};
 export const slaSeconds={docs_only:120,bug_fix:180,deep_bug_fix:300,feature:300};
@@ -74,7 +80,7 @@ export function publishedContract(root=rootDefault){
  return existsSync(file)?validateContract(JSON.parse(readFileSync(file,'utf8')),JSON.parse(readFileSync(path.join(root,catalogPath),'utf8'))):null;
 }
 export const bootstrapEpoch='my-crm.validation-contract-introduction/v1';
-export const bootstrapCommands=[['npm','run','build'],['node','--test','tests/validation-contract.test.mjs','tests/oracle-policy.test.mjs','tests/validation-transport.test.mjs','tests/oracle-review.test.mjs','tests/native-review-settings.test.mjs'],['npm','run','check:release']];
+export const bootstrapCommands=[['npm','run','build'],['node','--test','tests/validation-contract.test.mjs','tests/oracle-policy.test.mjs','tests/validation-transport.test.mjs','tests/oracle-review.test.mjs','tests/oracle-parallel.test.mjs','tests/native-review-settings.test.mjs'],['npm','run','check:release']];
 export function requiredFor(contract){return contract?contract.commands.map(r=>['node','scripts/validation-contract.mjs','run','--category',r.category]):structuredClone(bootstrapCommands);}
 export function verifyContract(root,tree='HEAD',proposal){
  const contract=validateContract(blob(root,tree,selectionPath),blob(root,tree,catalogPath));if(!contract)return null;
@@ -109,26 +115,49 @@ export function executeCategory(root,category,phase='after',run=spawnSync){
  if(git(root,'status','--porcelain=v1','--untracked-files=all'))throw Error('Use a clean committed candidate');
  const commit=git(root,'rev-parse','HEAD'),contract=verifyContract(root,commit);if(!contract||!same(runtime(),contract.runtime))throw Error('Missing contract or changed runtime');
  const row=contract.commands.find(r=>r.category===category);if(!row)throw Error('Category was not selected');
+ const environment=categoryEnvironment(),environment_sha256=hash(environment),environment_provenance_sha256=hash(process.env);
  const fixtures=Object.fromEntries([...row.tests,...row.fixtures].map(p=>[p,git(root,'rev-parse',`${commit}:${p}`)]));
  if(phase==='before'){
   if(category!=='focused'||!['bug_fix','deep_bug_fix'].includes(contract.selection.change_class))throw Error('Only selected bug reproduction has a before phase');
   if(git(root,'diff','--name-only',contract.base_commit,commit).split('\n').filter(Boolean).some(p=>p!==selectionPath&&!Object.hasOwn(fixtures,p)))throw Error('Fail-before includes implementation changes');
  }else if(category==='focused'&&['bug_fix','deep_bug_fix'].includes(contract.selection.change_class)){
-  if(!originals(root,contract,'before').some(r=>r.inputs_unchanged===true&&r.category===category&&same(r.fixtures,fixtures)&&same(r.runtime,contract.runtime)&&r.exit_code!==0&&r.summary.complete&&r.summary.fail>0&&readFileSync(r.output_file,'utf8').includes('ERR_ASSERTION')&&['skipped','todo','cancelled'].every(k=>r.summary[k]===0)))throw Error('Missing unchanged-test fail-before; an infrastructure error is not a reproduction');
+  if(!originals(root,contract,'before').some(r=>r.inputs_unchanged===true&&r.category===category&&same(r.fixtures,fixtures)&&same(r.runtime,contract.runtime)&&r.environment_sha256===environment_sha256&&r.exit_code!==0&&r.summary.complete&&r.summary.fail>0&&readFileSync(r.output_file,'utf8').includes('ERR_ASSERTION')&&['skipped','todo','cancelled'].every(k=>r.summary[k]===0)))throw Error('Missing unchanged-test fail-before with the same functional environment; an infrastructure error is not a reproduction');
  }
- const result=run(row.argv[0],row.argv.slice(1),{cwd:root,encoding:'utf8',maxBuffer:16*1024*1024,env:Object.fromEntries(Object.entries(process.env).filter(([k])=>k!=='NODE_TEST_CONTEXT'))}),output=(result.stdout??'')+(result.stderr??''),summary=testSummary(output,result.status,!!row.tests.length);
- const stable=git(root,'rev-parse','HEAD')===commit&&!git(root,'status','--porcelain=v1','--untracked-files=all')&&same(runtime(),contract.runtime);
+ const result=run(process.execPath,row.argv.slice(1),{cwd:root,encoding:'utf8',maxBuffer:16*1024*1024,env:environment}),output=(result.stdout??'')+(result.stderr??''),summary=testSummary(output,result.status,!!row.tests.length);
+ const stable=git(root,'rev-parse','HEAD')===commit&&!git(root,'status','--porcelain=v1','--untracked-files=all')&&same(runtime(),contract.runtime)&&hash(categoryEnvironment())===environment_sha256;
  const folder=path.join(git(root,'rev-parse','--absolute-git-dir'),'oracle','validation-contract-results',contract.contract_sha256,commit);mkdirSync(folder,{recursive:true});const log=path.join(folder,`${hash(output)}.log`);if(!existsSync(log))writeFileSync(log,output);
- const record={schema:'my-crm.validation-execution/v1',result_scope:'validation_phase',e2e_status:'NOT_EVALUATED',delivery_policy:contract.delivery_policy,contract_sha256:contract.contract_sha256,catalog_sha256:contract.catalog_sha256,commit,tree:git(root,'rev-parse',`${commit}^{tree}`),category,phase,command:row.argv,fixtures,runtime:contract.runtime,finished_at:new Date().toISOString(),exit_code:result.status,signal:result.signal,error:result.error?.message??null,summary,inputs_unchanged:stable,passed:phase==='after'&&summary.passed&&stable,output_file:log,output_sha256:hash(output)};record.record_sha256=hash(record);const filename=path.join(folder,`${category}-${phase}-${record.record_sha256}.json`);writeFileSync(filename,`${JSON.stringify(record,null,2)}\n`,{flag:'wx'});
+ const record={schema:'my-crm.validation-execution/v1',result_scope:'validation_phase',e2e_status:'NOT_EVALUATED',delivery_policy:contract.delivery_policy,contract_sha256:contract.contract_sha256,catalog_sha256:contract.catalog_sha256,commit,tree:git(root,'rev-parse',`${commit}^{tree}`),category,phase,command:row.argv,fixtures,runtime:contract.runtime,environment_sha256,environment_provenance_sha256,finished_at:new Date().toISOString(),exit_code:result.status,signal:result.signal,error:result.error?.message??null,summary,inputs_unchanged:stable,passed:phase==='after'&&summary.passed&&stable,output_file:log,output_sha256:hash(output)};record.record_sha256=hash(record);const filename=path.join(folder,`${category}-${phase}-${record.record_sha256}.json`);writeFileSync(filename,`${JSON.stringify(record,null,2)}\n`,{flag:'wx'});
  return {record,filename,exit_code:record.passed||phase==='before'&&stable&&summary.complete&&summary.fail>0&&['skipped','todo','cancelled'].every(k=>summary[k]===0)&&output.includes('ERR_ASSERTION')&&result.status!==0?0:1};
 }
-export function admitContract(root,tree,proposal){
+const inputIdentity=(root,tree,name)=>git(root,'ls-tree',tree,'--',name)||null;
+const mandatoryInputs=(root,tree,row)=>[catalogPath,selectionPath,'scripts/validation-contract.mjs',...row.tests,...row.fixtures,...['package.json','package-lock.json'].filter(p=>inputIdentity(root,tree,p))];
+export function admitContract(root,tree,proposal,{environment=categoryEnvironment()}={}){
  const contract=verifyContract(root,tree,proposal);
  if(!contract){if(blob(root,proposal.base_commit,catalogPath))throw Error('Oracle must select validation before implementation');return null;}
- const all=originals(root,contract,'after'),results=contract.commands.map(row=>{
-  const r=all.filter(v=>v.tree===tree&&v.category===row.category&&same(v.command,row.argv)&&same(v.runtime,contract.runtime)&&v.catalog_sha256===contract.catalog_sha256).sort((a,b)=>a.finished_at.localeCompare(b.finished_at)).at(-1);
-  if(!r?.passed)throw Error(`Selected category incomplete or failed: ${row.category}`);return r;
- });return {contract,results,before:originals(root,contract,'before')};
+ const all=originals(root,contract,'after'),requalification=[],results=contract.commands.map(row=>{
+  const r=all.filter(v=>v.category===row.category&&same(v.command,row.argv)&&v.contract_sha256===contract.contract_sha256&&spawnSync('git',['merge-base','--is-ancestor',v.commit,'HEAD'],{cwd:root}).status===0).sort((a,b)=>a.finished_at.localeCompare(b.finished_at)).at(-1);
+  const fixtures=Object.fromEntries([...row.tests,...row.fixtures].map(p=>[p,git(root,'rev-parse',`${tree}:${p}`)]));
+  if(!r?.passed||r.inputs_unchanged!==true||!same(r.runtime,contract.runtime)||!same(runtime(),contract.runtime)||r.environment_sha256!==hash(environment)||r.catalog_sha256!==contract.catalog_sha256||!same(r.fixtures,fixtures)||git(root,'rev-parse',`${r.commit}^{tree}`)!==r.tree)throw Error(`Selected category incomplete or failed, or its inputs/environment changed: ${row.category}`);
+  if(r.tree!==tree){
+   if(row.category==='sanity')throw Error('Selected category incomplete or failed: sanity requires the current full candidate');
+   requalification.push({category:row.category,record_sha256:r.record_sha256,original_tree:r.tree,current_tree:tree,record:`@${r._record_path}`,output:`@${r.output_file}`,mandatory_dependencies:mandatoryInputs(root,tree,row),changed_paths:git(root,'diff','--name-only',r.tree,tree).split('\n').filter(Boolean),grants_coverage:false});
+  }return r;
+ });return {contract,results,requalification,before:originals(root,contract,'before')};
+}
+
+// Admission exposes originals for assessment; only the independent current
+// response can qualify reuse. No author-side manifest or old approval suffices.
+export function verifyCategoryAssessment(root,tree,proposal,response,bindings=[]){
+ const admitted=admitContract(root,tree,proposal);if(!admitted||response.review_status!=='COMPLETE'||response.verdict!=='APPROVED')return admitted;
+ for(const item of admitted.requalification){
+  for(const value of [item.record,item.output]){const binding=bindings.find(v=>v.kind==='file'&&v.value===value);if(!binding||binding.sha256!==hash(readFileSync(value.slice(1),'utf8')))throw Error('Category reuse requires unchanged hash-bound original evidence');}
+  const decisions=(response.coverage??[]).filter(v=>v.criteria?.includes('validation-category-reuse')&&[item.record,item.output].every(value=>v.evidence?.includes(value)));
+  if(decisions.length!==1)throw Error(`Category reuse needs one fresh independent applicability assessment: ${item.category}`);
+  const decision=decisions[0];
+  if(!decision.assessment?.trim()||!decision.dependency_rationale?.trim()||!Array.isArray(decision.dependencies)||item.mandatory_dependencies.some(p=>!decision.dependencies.includes(p)))throw Error('Category reuse omits mandatory consumed inputs or a complete dependency rationale');
+  for(const p of decision.dependencies)if(!safe(p)||!inputIdentity(root,tree,p)||inputIdentity(root,item.original_tree,p)!==inputIdentity(root,tree,p))throw Error(`Category dependent input changed or is unavailable: ${p}`);
+ }
+ return admitted;
 }
 if(process.argv[1]&&path.resolve(process.argv[1])===fileURLToPath(import.meta.url)){
  try{const action=process.argv[2];if(action==='sanity'){

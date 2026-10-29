@@ -352,6 +352,20 @@ test("native dispatch starts all three independent assessments before any finish
   assert.equal(result.verdict, "APPROVED");
 });
 
+test("native dispatch assigns pending category reuse to independent cross-cutting assessment",async()=>{
+ const retained=evidence();retained.selected_category_requalification=[{category:'interactions',record_sha256:'a'.repeat(64),original_tree:'4'.repeat(40),current_tree:candidate.tree,record:'@synthetic-original.json',output:'@synthetic-output.log',mandatory_dependencies:['tests/flow.test.mjs'],changed_paths:['src/service.mjs'],grants_coverage:false}];
+ const original=JSON.stringify(retained);let seen=0;
+ const {result}=await runFixture(async area=>{
+  const payload=JSON.parse(await readFile(path.join(area.directory,'evidence.json'),'utf8'));
+  if(payload.cohort.id==='cross-cutting'){assert.deepEqual(payload.selected_category_requalification,retained.selected_category_requalification);seen++;}
+  else assert.deepEqual(payload.selected_category_requalification,[]);
+ },null,retained);
+ assert.equal(seen,1);assert.equal(result.verdict,'APPROVED');assert.equal(JSON.stringify(retained),original);
+ // This synthetic dispatch grants no category qualification: the actual
+ // post-response verifier still requires current explicit coverage/evidence.
+ assert.equal(result.coverage.some(row=>row.criteria.includes('validation-category-reuse')),false);
+});
+
 test("native dispatch exposes authenticated current qualification and collector navigation to every cohort", {timeout: 10000}, async () => {
   const root = await mkdtemp(path.join(os.tmpdir(), "mycrm-requested-evidence-"));
   try {
