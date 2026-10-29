@@ -143,11 +143,11 @@ test("spawned CLI transports complete review execution policy as trusted develop
     assert.equal(argv[0], "-c");
     assert.ok(argv[1].startsWith("developer_instructions="));
     const developer = JSON.parse(argv[1].slice("developer_instructions=".length));
-    assert.ok(argv.includes('model_reasoning_effort="high"'), `${index}: selected reasoning effort was dropped`);
+    assert.ok(argv.includes('model_reasoning_effort="medium"'), `${index}: owner reasoning maximum was not applied`);
     for (const clause of ["initial assessment completes the full relevant scope", "actual source/control delta", "Mechanical guard invalidation", "new re-attestation of sealed unchanged facts", "FAILED or ERROR", "strict-ineligible native records", "current green aggregate", "outside the preverified subset", "Before any command", "concrete changed consumed dependency", "include that reason in the result", "stable IDs", "origin missed", "INCOMPLETE", "fresh independent whole-candidate verdict", "Source work by every implementation and author continues", "every arrived change", "path_dispositions", "observed_assessments", "no eligible coverage"]) assert.ok(developer.includes(clause), `${index}: missing trusted clause ${clause}`);
     if (index !== "proposal") assert.ok(!argv.at(-1).includes("Read AGENTS.md, Vault/docs/CONSTITUTION.md, and .agents/skills/oracle/SKILL.md completely"));
     const record = JSON.parse(await readFile(path.join(repo, '.git/oracle', index === 'proposal' ? 'proposal.json' : 'approval.json')));
-    assert.equal(record.reviewer.reasoning_effort, 'high');
+    assert.equal(record.reviewer.reasoning_effort, 'medium');
     assert.equal(record.reviewer_metadata_sha256, sha256(`${JSON.stringify(record.reviewer, null, 2)}\n`));
   }
 });
@@ -1567,7 +1567,7 @@ test("native default effort round-trips actual launch environment into sessionle
     assert.equal(argv.some(value => value.startsWith('model_reasoning_effort=')), false);
     assert.equal(inherited.CODEX_SELECTED_REASONING_EFFORT, '');
     const record = JSON.parse(await readFile(path.join(repo, '.git/oracle', mode === 'proposal' ? 'proposal.json' : 'approval.json')));
-    assert.equal(record.reviewer.reasoning_effort, null);
+    assert.equal(record.reviewer.reasoning_effort, 'medium');
     assert.equal(record.reviewer_metadata_sha256, sha256(`${JSON.stringify(record.reviewer, null, 2)}\n`));
     const child = await execute(process.execPath, ['--input-type=module', '-e', `import {selectedSettings} from ${JSON.stringify(helper)}; console.log(JSON.stringify(await selectedSettings()));`], {cwd: repo, env: {...process.env, CODEX_HOME: childHome, CODEX_THREAD_ID: 'sessionless-child', ...inherited}});
     assert.deepEqual(JSON.parse(child.stdout), {model: 'synthetic-test-model', reasoning_effort: null});

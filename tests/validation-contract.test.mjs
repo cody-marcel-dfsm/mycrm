@@ -13,7 +13,7 @@ function fixture(t) {
   const git=(...args)=>execFileSync('git',args,{cwd:root,encoding:'utf8',stdio:['ignore','pipe','pipe']}).trim();
   const put=(name,text)=>writeFileSync(path.join(root,name),text);
   for(const dir of ['scripts','tests'])mkdirSync(path.join(root,dir));
-  const catalog={schema:'my-crm.validation-catalog/v1',classes:structuredClone(v.classes),regression:[{test:'tests/regression.test.mjs',recurrence:'Synthetic recurrence',boundary:'Synthetic boundary'}]};
+  const catalog={schema:'my-crm.validation-catalog/v1',classes:structuredClone(v.classes),sla_seconds:structuredClone(v.slaSeconds),maximum_reasoning_effort:'medium',regression:[{test:'tests/regression.test.mjs',recurrence:'Synthetic recurrence',boundary:'Synthetic boundary'}]};
   put(v.catalogPath,JSON.stringify(catalog));
   for(const name of ['validation-contract.mjs','release-validation.mjs'])put(`scripts/${name}`,readFileSync(new URL(`../scripts/${name}`,import.meta.url)));
   put('package.json',JSON.stringify({type:'module',scripts:{'check:privacy':'node -e "process.exit(0)"','check:boundary':'node -e "process.exit(0)"'}}));
@@ -51,15 +51,15 @@ test('real unchanged reproduction fails then passes; release uses every selected
   const original=readFileSync(before.filename);
   f.put('source.mjs','export default true;\n');f.commit();const tree=f.git('rev-parse','HEAD^{tree}');
   assert.throws(()=>v.admitContract(f.root,tree,{validation_contract:contract}),/incomplete/);
-  for(const category of ['sanity','focused','regression'])assert.equal(v.executeCategory(f.root,category).exit_code,0);
-  assert.equal(v.admitContract(f.root,tree,{validation_contract:contract}).results.length,3);
+  for(const category of ['sanity','focused'])assert.equal(v.executeCategory(f.root,category).exit_code,0);
+  assert.equal(v.admitContract(f.root,tree,{validation_contract:contract}).results.length,2);
   assert.deepEqual(readFileSync(before.filename),original);
   const release=await import(pathToFileURL(path.join(f.root,'scripts/release-validation.mjs')));
   const executed=[];await release.validateRelease({nativeEvidence:false,priorCoverage:{covered:[],invalidated:[]},execute:async argv=>executed.push(argv)});
   assert.deepEqual(executed,v.requiredFor(contract));
   // Reuse is exact-command only: all uncovered selected commands still run.
   const remaining=[];await release.validateRelease({nativeEvidence:false,priorCoverage:{covered:[{command:executed[1],coverage:'EXACT_INPUT_EXECUTION'}],invalidated:[]},execute:async argv=>remaining.push(argv)});
-  assert.deepEqual(remaining,[executed[0],executed[2]]);
+  assert.deepEqual(remaining,[executed[0]]);
 });
 
 test('syntax failures and changed reproduction do not supply bug-before evidence',t=>{
@@ -93,3 +93,12 @@ test('bootstrap is limited to original bases lacking catalog; executable instruc
   assert.deepEqual(v.proposalSelection(`Independent response\n${marker}ORACLE_VERDICT=APPROVED`),s);
   for(const text of ['ORACLE_VERDICT=APPROVED',marker+marker,'VALIDATION_SELECTION=not-json'])assert.throws(()=>v.proposalSelection(text));
  });
+
+test('hard end-to-end policy is immutable and simple bugs cannot expand into integration',t=>{
+ const f=fixture(t);assert.deepEqual(v.slaSeconds,{docs_only:120,bug_fix:180,deep_bug_fix:300,feature:300});
+ const selected=f.selection();selected.categories.push({name:'interactions',tests:['tests/extra.test.mjs'],fixtures:[]});assert.throws(()=>v.checkSelection(selected,f.catalog));
+ const c=f.publish();assert.equal(c.delivery_policy.sla_seconds,180);assert.equal(c.delivery_policy.retries_reset_clock,false);
+ assert.equal(v.boundedSettings({model:'selected',reasoning_effort:'ultra'},f.root).reasoning_effort,'low');
+ f.commit();const next=f.selection();next.revision_of=c.contract_sha256;
+ assert.deepEqual(v.sealSelection(f.root,next,'Revision',{}).delivery_policy,c.delivery_policy);
+});

@@ -5,6 +5,17 @@ description: Ship outstanding MyCRM commits through bootstrap, direct Git prepar
 
 ## Fixed validation selected before implementation
 
+The controlling delivery budgets are docs_only120s, bug_fix180s,
+deep_bug_fix300s and feature300s end to end, including network/build/effects and
+verification (verified Git publication for source-only work). The host's original
+request clock survives retries and revisions; local PASS is only phase PASS.
+Rank/pare checks before freezing the contract, then run the whole selected set.
+Small bugs get deterministic focused tests only; auth/cross-area work is deep.
+No automatic broader regression or partial/empty/skipped PASS. Use low reasoning
+for simple work and medium for hard work, never above medium or paid fallback.
+Authenticated platform JEV may assist prioritization without granting authority.
+
+
 The controlling maintainer validation contract is documented in
 `scripts/validation-contract.md`. The independent native proposal fixes a change
 class, exact executable categories and planned scope before implementation.

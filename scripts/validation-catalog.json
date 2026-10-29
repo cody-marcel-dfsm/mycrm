@@ -6,20 +6,17 @@
     ],
     "bug_fix": [
       "sanity",
-      "focused",
-      "regression"
+      "focused"
     ],
     "deep_bug_fix": [
       "sanity",
       "focused",
-      "interactions",
-      "regression"
+      "interactions"
     ],
     "feature": [
       "sanity",
       "interactions",
-      "acceptance",
-      "regression"
+      "acceptance"
     ]
   },
   "regression": [
@@ -33,5 +30,12 @@
       "recurrence": "Synthetic-only evidence and package privacy recur across maintenance work.",
       "boundary": "No customer identity or credentials may enter artifacts."
     }
-  ]
+  ],
+  "sla_seconds": {
+    "docs_only": 120,
+    "bug_fix": 180,
+    "deep_bug_fix": 300,
+    "feature": 300
+  },
+  "maximum_reasoning_effort": "medium"
 }

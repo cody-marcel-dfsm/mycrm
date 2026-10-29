@@ -11,11 +11,17 @@ export const hash=v=>createHash('sha256').update(typeof v==='string'?v:canonical
 const git=(root,...args)=>execFileSync('git',args,{cwd:root,encoding:'utf8',maxBuffer:16*1024*1024}).trim();
 export const runtime=()=>({node:process.version,node_sha256:createHash('sha256').update(readFileSync(process.execPath)).digest('hex'),platform:process.platform,architecture:process.arch,options_sha256:hash(Object.fromEntries(['NODE_OPTIONS','NODE_PATH'].map(k=>[k,process.env[k]??null])))});
 const same=(a,b)=>canonical(a)===canonical(b);
-export const classes={docs_only:['sanity'],bug_fix:['sanity','focused','regression'],deep_bug_fix:['sanity','focused','interactions','regression'],feature:['sanity','interactions','acceptance','regression']};
+export const classes={docs_only:['sanity'],bug_fix:['sanity','focused'],deep_bug_fix:['sanity','focused','interactions'],feature:['sanity','interactions','acceptance']};
+export const slaSeconds={docs_only:120,bug_fix:180,deep_bug_fix:300,feature:300};
+export const deliveryPolicy=kind=>({sla_seconds:slaSeconds[kind],clock_owner:'build_host',clock_start:'original_insertion',completion:'verified_remote_git',retries_reset_clock:false,reasoning_effort:['docs_only','bug_fix'].includes(kind)?'low':'medium',maximum_reasoning_effort:'medium'});
+export function boundedSettings(settings,root=rootDefault){
+ const file=path.join(root,selectionPath),kind=existsSync(file)?JSON.parse(readFileSync(file,'utf8')).selection.change_class:'deep_bug_fix';
+ return {...settings,reasoning_effort:['none','minimal','low'].includes(settings.reasoning_effort)?settings.reasoning_effort:deliveryPolicy(kind).reasoning_effort};
+}
 const safe=p=>typeof p==='string'&&p.length&&!p.startsWith('/')&&!p.startsWith('-')&&!/[\\\r\n\0]/.test(p)&&!p.split('/').includes('..');
 function blob(root,tree,name){const r=spawnSync('git',['show',`${tree}:${name}`],{cwd:root,encoding:'utf8'});if(r.status!==0)return null;return JSON.parse(r.stdout);}
 export function checkCatalog(c){
- if(c?.schema!=='my-crm.validation-catalog/v1'||!same(c.classes,classes)||!Array.isArray(c.regression)||!c.regression.length||c.regression.length>8)throw Error('Invalid class catalog or uncurated regression registry');
+ if(c?.schema!=='my-crm.validation-catalog/v1'||!same(c.sla_seconds,slaSeconds)||c.maximum_reasoning_effort!=='medium'||!same(c.classes,classes)||!Array.isArray(c.regression)||!c.regression.length||c.regression.length>8)throw Error('Invalid class catalog or uncurated regression registry');
  if(new Set(c.regression.map(r=>r.test)).size!==c.regression.length)throw Error('Duplicate regression test');
  for(const r of c.regression)if(!safe(r.test)||!r.test.startsWith('tests/')||!r.test.endsWith('.test.mjs')||/[*?\[\]]/.test(r.test)||!r.recurrence?.trim()||!r.boundary?.trim())throw Error('Regression needs an exact test, recurrence and boundary rationale');
  return c;
@@ -27,7 +33,7 @@ export function checkSelection(s,c){
  if(s.revision_of!==null&&!/^[a-f0-9]{64}$/.test(s.revision_of))throw Error('Revision must bind the previous contract');
  if(!Array.isArray(s.categories)||!s.categories.length)throw Error('No selected categories');
  const names=s.categories.map(r=>r.name);
- if(new Set(names).size!==names.length||classes[s.change_class].some(n=>!names.includes(n))||s.change_class==='docs_only'&&!same(names,['sanity']))throw Error('Missing or duplicate selected category');
+ if(new Set(names).size!==names.length||classes[s.change_class].some(n=>!names.includes(n))||['docs_only','bug_fix'].includes(s.change_class)&&!same(names,classes[s.change_class]))throw Error('Missing or duplicate selected category');
  for(const r of s.categories){
   if(!same(Object.keys(r).sort(),['fixtures','name','tests'])||!['sanity','focused','interactions','acceptance','regression'].includes(r.name)||!Array.isArray(r.tests)||new Set(r.tests).size!==r.tests.length)throw Error('Malformed category');
   if(!Array.isArray(r.fixtures)||new Set(r.fixtures).size!==r.fixtures.length||r.fixtures.some(p=>!safe(p)||!p.startsWith('tests/')||/[*?\[\]]/.test(p))||r.fixtures.some(p=>r.tests.includes(p)))throw Error('Fixtures need distinct exact test-input paths');
@@ -46,7 +52,7 @@ export function sealSelection(root,selection,proposal,review){
  const catalog=JSON.parse(readFileSync(path.join(root,catalogPath),'utf8'));checkSelection(selection,catalog);
  const filename=path.join(root,selectionPath),previous=existsSync(filename)?JSON.parse(readFileSync(filename,'utf8')):null;
  if(selection.revision_of!==(previous?.contract_sha256??null))throw Error('Revision does not name current original contract');
- const base=git(root,'rev-parse','HEAD'),value={schema:'my-crm.validation-contract/v1',selection,base_commit:base,base_tree:git(root,'rev-parse',`${base}^{tree}`),catalog_sha256:hash(catalog),runtime:runtime(),proposal_sha256:hash(proposal),review_sha256:hash(review),commands:selectedCommands(selection,catalog)};
+ const base=git(root,'rev-parse','HEAD'),value={schema:'my-crm.validation-contract/v1',selection,base_commit:base,base_tree:git(root,'rev-parse',`${base}^{tree}`),catalog_sha256:hash(catalog),runtime:runtime(),proposal_sha256:hash(proposal),review_sha256:hash(review),commands:selectedCommands(selection,catalog),delivery_policy:deliveryPolicy(selection.change_class)};
  return {...value,contract_sha256:hash(value)};
 }
 export function writeSelection(root,value){
@@ -59,6 +65,7 @@ export function validateContract(contract,catalog){
  const {contract_sha256,...body}=contract;
  if(contract.schema!=='my-crm.validation-contract/v1'||hash(body)!==contract_sha256)throw Error('Contract identity changed');
  checkSelection(contract.selection,catalog);
+ if(!same(contract.delivery_policy,deliveryPolicy(contract.selection.change_class)))throw Error('Delivery policy changed; preserve the original host clock');
  if(contract.catalog_sha256!==hash(catalog)||!same(contract.commands,selectedCommands(contract.selection,catalog)))throw Error('Catalog or exact commands changed; obtain explicit revision');
  return contract;
 }
@@ -110,7 +117,7 @@ export function executeCategory(root,category,phase='after',run=spawnSync){
  const result=run(row.argv[0],row.argv.slice(1),{cwd:root,encoding:'utf8',maxBuffer:16*1024*1024,env:Object.fromEntries(Object.entries(process.env).filter(([k])=>k!=='NODE_TEST_CONTEXT'))}),output=(result.stdout??'')+(result.stderr??''),summary=testSummary(output,result.status,!!row.tests.length);
  const stable=git(root,'rev-parse','HEAD')===commit&&!git(root,'status','--porcelain=v1','--untracked-files=all')&&same(runtime(),contract.runtime);
  const folder=path.join(git(root,'rev-parse','--absolute-git-dir'),'oracle','validation-contract-results',contract.contract_sha256,commit);mkdirSync(folder,{recursive:true});const log=path.join(folder,`${hash(output)}.log`);if(!existsSync(log))writeFileSync(log,output);
- const record={schema:'my-crm.validation-execution/v1',contract_sha256:contract.contract_sha256,catalog_sha256:contract.catalog_sha256,commit,tree:git(root,'rev-parse',`${commit}^{tree}`),category,phase,command:row.argv,fixtures,runtime:contract.runtime,finished_at:new Date().toISOString(),exit_code:result.status,signal:result.signal,error:result.error?.message??null,summary,inputs_unchanged:stable,passed:phase==='after'&&summary.passed&&stable,output_file:log,output_sha256:hash(output)};record.record_sha256=hash(record);const filename=path.join(folder,`${category}-${phase}-${record.record_sha256}.json`);writeFileSync(filename,`${JSON.stringify(record,null,2)}\n`,{flag:'wx'});
+ const record={schema:'my-crm.validation-execution/v1',result_scope:'validation_phase',e2e_status:'NOT_EVALUATED',delivery_policy:contract.delivery_policy,contract_sha256:contract.contract_sha256,catalog_sha256:contract.catalog_sha256,commit,tree:git(root,'rev-parse',`${commit}^{tree}`),category,phase,command:row.argv,fixtures,runtime:contract.runtime,finished_at:new Date().toISOString(),exit_code:result.status,signal:result.signal,error:result.error?.message??null,summary,inputs_unchanged:stable,passed:phase==='after'&&summary.passed&&stable,output_file:log,output_sha256:hash(output)};record.record_sha256=hash(record);const filename=path.join(folder,`${category}-${phase}-${record.record_sha256}.json`);writeFileSync(filename,`${JSON.stringify(record,null,2)}\n`,{flag:'wx'});
  return {record,filename,exit_code:record.passed||phase==='before'&&stable&&summary.complete&&summary.fail>0&&['skipped','todo','cancelled'].every(k=>summary[k]===0)&&output.includes('ERR_ASSERTION')&&result.status!==0?0:1};
 }
 export function admitContract(root,tree,proposal){
