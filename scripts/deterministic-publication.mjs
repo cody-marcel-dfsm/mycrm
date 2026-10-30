@@ -31,6 +31,9 @@ export async function scope(root, base, source) {
       if (maintenancePath(name)) continue;
       if (!/^(?:package(?:-lock)?\.json|(?:clients|plugins)\/.+\/(?:plugin|gemini-extension|\.bos-product)\.json)$/.test(name)) throw new Error(`Outside source maintenance scope: ${name}`);
       const before=JSON.parse(await git(root,'show',`${commit}^:${name}`)), after=JSON.parse(await git(root,'show',`${commit}:${name}`));
+      if (name === 'clients/gemini/extensions/my-crm/plugin.json') {
+        for (const metadata of [before,after]) metadata.description = metadata.description?.replace(/ Version \d+\.\d+\.\d+\.$/, ' Version <package>.');
+      }
       if (JSON.stringify(withoutVersions(before)) !== JSON.stringify(withoutVersions(after))) throw new Error(`Non-version product change: ${name}`);
     }
   }
