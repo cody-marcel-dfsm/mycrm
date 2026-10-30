@@ -215,6 +215,7 @@ async function admittedCoverage(current, decision) {
     return (await import("./oracle-deployment.mjs")).admitDeploymentPlan({root: current.root, plan: coverage.plan});
   }
   if (coverage.admitted?.protected_effects?.length) throw new Error("Protected effect admission requires its sealed native effect plan");
+  if (coverage.admitted?.technical_mode === "DETERMINISTIC_SOURCE_MAINTENANCE") return (await import("./deterministic-publication.mjs")).verify({root:current.root,reference:decision.source_commit});
   return coverage.admitted;
 }
 
@@ -223,6 +224,7 @@ export async function publicationDecisionStatus({root = process.cwd(), sourceCom
 }
 
 async function assertDecision(current, record) {
+  if (record.admission.technical_mode === "DETERMINISTIC_SOURCE_MAINTENANCE") await (await import("./deterministic-publication.mjs")).verify({root:current.root,reference:record.source_commit});
   const decision = await readDecision(current, record.source_commit, record.source_tree);
   const original = decision.record_sha256 === record.decision_sha256 ? decision
     : await readDecision(current, record.source_commit, record.source_tree, path.join(current.directory, `${record.decision_sha256}.decision.json`));

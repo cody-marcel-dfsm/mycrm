@@ -3,6 +3,28 @@ name: ship-it
 description: Ship outstanding MyCRM commits through bootstrap, direct Git preparation, independent validation, and exact validated-commit delivery. Repeated unchanged shipments finish without a new release.
 ---
 
+## Deterministic source-maintenance publication
+
+For the validation-selector bootstrap and its maintenance repairs, the native
+`node scripts/deterministic-publication.mjs` workflow performs deterministic
+validation without dispatching model reviewers. Its scope is linear maintainer
+source/test/document changes and version-only package metadata; product behavior,
+workflow or infrastructure changes remain outside this admission path. This is
+source publication only, not protected deployment authorization.
+
+Commit the complete clean candidate, run `validate <full-base-SHA>
+<original-request-ISO-time-or-unknown>`, then `prepare`. Preserve original clocks
+and failures; an unknown or exceeded clock establishes no timing success. The
+runner executes the entire fixed bootstrap plus privacy, boundary and public
+contract checks; source, runtime, dependency and output drift invalidate evidence.
+Preparation triggers and verifies the existing exact-source GitHub CI job, with
+no imported passing result. Follow its returned native publish command only after
+CI succeeds. The normal pre-push gate rechecks deterministic custody. Never
+fabricate legacy Oracle review stamps or disable hooks. For other change classes,
+retain the existing selected-contract and publication requirements.
+
+
+
 ## Fixed validation selected before implementation
 
 The controlling delivery budgets are docs_only120s, bug_fix180s,

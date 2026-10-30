@@ -80,7 +80,7 @@ export function publishedContract(root=rootDefault){
  return existsSync(file)?validateContract(JSON.parse(readFileSync(file,'utf8')),JSON.parse(readFileSync(path.join(root,catalogPath),'utf8'))):null;
 }
 export const bootstrapEpoch='my-crm.validation-contract-introduction/v1';
-export const bootstrapCommands=[['npm','run','build'],['node','--test','tests/validation-contract.test.mjs','tests/oracle-policy.test.mjs','tests/validation-transport.test.mjs','tests/oracle-review.test.mjs','tests/oracle-parallel.test.mjs','tests/native-review-settings.test.mjs'],['npm','run','check:release']];
+export const bootstrapCommands=[['npm','run','build'],['node','--test','tests/validation-contract.test.mjs','tests/oracle-policy.test.mjs','tests/validation-transport.test.mjs','tests/oracle-review.test.mjs','tests/oracle-parallel.test.mjs','tests/native-review-settings.test.mjs','tests/deterministic-publication.test.mjs','tests/publication-checkpoint.test.mjs'],['npm','run','check:release']];
 export function requiredFor(contract){return contract?contract.commands.map(r=>['node','scripts/validation-contract.mjs','run','--category',r.category]):structuredClone(bootstrapCommands);}
 export function verifyContract(root,tree='HEAD',proposal){
  const contract=validateContract(blob(root,tree,selectionPath),blob(root,tree,catalogPath));if(!contract)return null;
