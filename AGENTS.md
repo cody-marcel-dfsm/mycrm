@@ -4,7 +4,7 @@
 For the validation-selector bootstrap and its maintenance repairs, the native
 `node scripts/deterministic-publication.mjs` workflow performs deterministic
 validation without dispatching model reviewers. Its scope is linear maintainer
-source/test/document changes and version-only package metadata; product behavior,
+validation/publication modules, tests/documents and version-only package metadata; product behavior,
 workflow or infrastructure changes remain outside this admission path. This is
 source publication only, not protected deployment authorization.
 

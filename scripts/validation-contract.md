@@ -103,7 +103,7 @@ regression. Local source validation does not prove live-client acceptance.
 
 The source-maintenance bootstrap may use `deterministic-publication.mjs` instead
 of model review. This narrow path rejects product implementation, workflow and
-infrastructure changes, checks every outgoing intermediate commit and admits
+infrastructure and unrelated maintainer modules, checks every outgoing intermediate commit and admits
 package metadata changes only when version fields are the sole difference.
 It executes the fixed bootstrap and privacy/boundary/contract checks, retains
 immutable original output and failed attempts, and binds the clean commit/tree,

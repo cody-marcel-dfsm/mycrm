@@ -6,7 +6,7 @@ import path from 'node:path';
 import {execFileSync} from 'node:child_process';
 import {maintenancePath,scope,checks} from '../scripts/deterministic-publication.mjs';
 test('maintenance admission excludes workflow, product source, private and deployment paths',()=>{
- for(const name of ['src/client.mjs','.github/workflows/ci.yml','.env','Vault/private.md','infra/main.tf','scripts/nested/deploy.mjs']) assert.equal(maintenancePath(name),false,name);
+ for(const name of ['src/client.mjs','.github/workflows/ci.yml','.env','Vault/private.md','infra/main.tf','scripts/nested/deploy.mjs','scripts/codex-maintainer-install.mjs','scripts/build-release.mjs','scripts/unknown.mjs']) assert.equal(maintenancePath(name),false,name);
  assert.equal(maintenancePath('scripts/validation-contract.mjs'),true);
  assert(checks.some(command=>command.includes('check:privacy')));
  assert(checks.some(command=>command.includes('tests/publication-checkpoint.test.mjs')));

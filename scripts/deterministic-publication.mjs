@@ -12,7 +12,7 @@ const jsonHash = value => hash(JSON.stringify(value));
 const git = async (root, ...args) => (await exec('git', args, {cwd: root, maxBuffer: 16*1024*1024})).stdout.trim();
 export const checks = [['npm','run','check:privacy'], ['npm','run','check:boundary'], ['npm','run','check:contracts'], ...bootstrapCommands];
 export function maintenancePath(name) {
-  return /^(?:scripts\/[^/]+\.(?:mjs|json|md)|tests\/[^/]+\.test\.mjs|\.agents\/skills\/[^/]+\/SKILL\.md|AGENTS\.md|README\.md)$/.test(name);
+  return /^(?:scripts\/(?:(?:deterministic-publication|oracle-inputs|oracle-parallel|oracle-policy|oracle-review|publication-checkpoint|release-validation|validation-contract|validation-transport)\.mjs|validation-catalog\.json|validation-contract\.md)|tests\/[^/]+\.test\.mjs|\.agents\/skills\/[^/]+\/SKILL\.md|AGENTS\.md|README\.md)$/.test(name);
 }
 function withoutVersions(value) {
   if (Array.isArray(value)) return value.map(withoutVersions);
