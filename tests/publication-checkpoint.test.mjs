@@ -307,7 +307,7 @@ test("every required release command participates in native evidence discovery; 
   const native = [], publicRunner = [];
   await validateRelease({nativeEvidence: true, execute: async argv => native.push(argv)});
   await validateRelease({nativeEvidence: false, execute: async argv => publicRunner.push(argv)});
-  const required = [["npm", "run", "build"], ["npm", "test"], ["npm", "run", "check:release"]];
+  const required = requiredCommands;
   assert.deepEqual(native.map(argv => argv.slice(4)), required);
   assert.deepEqual(publicRunner, required);
 });

@@ -67,7 +67,12 @@ export async function validate({root=process.cwd(),base,requestStartedAt}={}) {
   for (const command of checks) {
     const began=new Date().toISOString(); let result;
     try { result=await exec(command[0],command.slice(1),{cwd:root,maxBuffer:32*1024*1024,timeout:300000,env:{...process.env,NO_COLOR:'1'}}); }
-    catch(error) {await writeFile(path.join(directory,`${before.source}-${Date.now()}.failure.log`),`${error.stdout??''}\n${error.stderr??''}`,{mode:0o600}); throw error;}
+    catch(error) {
+      const output=`${error.stdout??''}\n${error.stderr??''}`, attempt=`${before.source}-${Date.now()}`;
+      await writeFile(path.join(directory,attempt+'.failure.log'),output,{mode:0o600});
+      await writeFile(path.join(directory,attempt+'.failure.json'),JSON.stringify({schema:'my-crm.deterministic-publication-failure/v1',...before,base,request_started_at:started===null?null:requestStartedAt,command,started_at:began,completed_at:new Date().toISOString(),exit_code:error.code??null,signal:error.signal??null,output_sha256:hash(output)}),{mode:0o600});
+      throw error;
+    }
     const output=result.stdout+'\n'+result.stderr;
     if (command.includes('--test') && (!/(?:#|ℹ) tests [1-9]\d*/.test(output) || !/(?:#|ℹ) fail 0\b/.test(output) || !/(?:#|ℹ) skipped 0\b/.test(output) || !/(?:#|ℹ) cancelled 0\b/.test(output) || !/(?:#|ℹ) todo 0\b/.test(output))) throw new Error('Incomplete or skipped test execution');
     const outputHash=hash(output); await writeFile(path.join(directory,outputHash+'.log'),output,{mode:0o600});
