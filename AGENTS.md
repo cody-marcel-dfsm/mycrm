@@ -48,6 +48,8 @@ the initial selector bootstrap retains its existing proposal and records a new
 explicit scoped bootstrap epoch; original broad failures remain failures.
 Privacy, boundary, independent review and publication gates remain in force.
 Ordinary implementers do not adopt the independent approver skill.
+A feature design includes a test plan: the Oracle refuses a `feature` contract
+without a plan bound to that exact design, as `scripts/validation-contract.md` defines.
 
 # My CRM repository contract
 

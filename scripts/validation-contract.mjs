@@ -1,6 +1,6 @@
 // Native maintainer validation. No business execution or authentication owner.
 import {createHash} from 'node:crypto';
-import {readFileSync,existsSync,writeFileSync,renameSync,mkdirSync,readdirSync} from 'node:fs';
+import {readFileSync,existsSync,writeFileSync,renameSync,mkdirSync,readdirSync,lstatSync} from 'node:fs';
 import {execFileSync,spawnSync} from 'node:child_process';
 import path from 'node:path';
 import {fileURLToPath} from 'node:url';
@@ -24,6 +24,8 @@ export function boundedSettings(settings,root=rootDefault){
  const file=path.join(root,selectionPath),kind=existsSync(file)?JSON.parse(readFileSync(file,'utf8')).selection.change_class:'deep_bug_fix';
  return {...settings,reasoning_effort:['none','minimal','low'].includes(settings.reasoning_effort)?settings.reasoning_effort:deliveryPolicy(kind).reasoning_effort};
 }
+const planKind='my-crm.feature-test-plan/v1',planLimit=65536,selectionKeys=['categories','change_class','reason','revision_of','scope_paths'];
+const planKeys=['design','design_sha256','feature','kind','runtime_paths','tests'],planTestKeys=['covers','module','purpose'],bindingKeys=['design','design_sha256','plan','plan_sha256','tests'];
 const safe=p=>typeof p==='string'&&p.length&&!p.startsWith('/')&&!p.startsWith('-')&&!/[\\\r\n\0]/.test(p)&&!p.split('/').includes('..');
 function blob(root,tree,name){const r=spawnSync('git',['show',`${tree}:${name}`],{cwd:root,encoding:'utf8'});if(r.status!==0)return null;return JSON.parse(r.stdout);}
 export function checkCatalog(c){
@@ -34,7 +36,9 @@ export function checkCatalog(c){
 }
 export function checkSelection(s,c){
  checkCatalog(c);
- if(!s||!same(Object.keys(s).sort(),['change_class','scope_paths','categories','reason','revision_of'].sort())||!Object.hasOwn(classes,s.change_class)||!s.reason?.trim())throw Error('Invalid Oracle validation selection');
+ if(!s||!same(Object.keys(s).filter(k=>k!=='design').sort(),selectionKeys)||!Object.hasOwn(classes,s.change_class)||!s.reason?.trim())throw Error('Invalid Oracle validation selection');
+ if(s.change_class==='feature'){if(!safe(s.design)||!s.design.endsWith('.md'))throw Error('A feature selection must name its design document');}
+ else if(s.design!==undefined&&s.design!==null)throw Error('Only a feature selection names a design');
  if(!Array.isArray(s.scope_paths)||!s.scope_paths.length||s.scope_paths.some(p=>!safe(p)))throw Error('Selection needs bounded planned source paths');
  if(s.revision_of!==null&&!/^[a-f0-9]{64}$/.test(s.revision_of))throw Error('Revision must bind the previous contract');
  if(!Array.isArray(s.categories)||!s.categories.length)throw Error('No selected categories');
@@ -48,6 +52,50 @@ export function checkSelection(s,c){
  }
  return s;
 }
+export const planPath=design=>`${design.slice(0,-'.md'.length)}.test-plan.json`;
+const text=v=>typeof v==='string'&&v.trim().length>0;
+const isFile=name=>existsSync(name)&&lstatSync(name).isFile();
+const glob=(name,pattern)=>new RegExp(`^${pattern.split('*').map(v=>v.replace(/[.+?^${}()|[\]\\]/g,'\\$&')).join('.*')}$`).test(name);
+const planned=s=>new Set(s.categories.filter(r=>['interactions','acceptance'].includes(r.name)).flatMap(r=>r.tests));
+// Refuse a feature design without its bound test plan. Shape only; no model judges quality.
+export function designBinding(root,s){
+ const plan=planPath(s.design),designFile=path.join(root,s.design),planFile=path.join(root,plan);
+ if(!isFile(designFile))throw Error(`Feature design document is missing: ${s.design}`);
+ if(!isFile(planFile))throw Error(`A feature design must include a test plan document: ${plan}`);
+ const raw=readFileSync(planFile),design_sha256=hash(readFileSync(designFile,'utf8'));let v;
+ if(raw.length>planLimit)throw Error('Test plan is too large');
+ try{v=JSON.parse(raw.toString('utf8'));}catch{throw Error('Test plan is not valid JSON');}
+ if(!v||typeof v!=='object'||Array.isArray(v)||!same(Object.keys(v).sort(),planKeys)||v.kind!==planKind)throw Error(`Test plan requires exactly: ${planKeys.join(', ')}`);
+ if(v.design!==s.design)throw Error(`Test plan is bound to a different design: ${v.design}`);
+ if(v.design_sha256!==design_sha256)throw Error('Test plan is bound to a different revision of its design');
+ if(!text(v.feature))throw Error('Test plan must name its feature');
+ const covered=v.runtime_paths;
+ if(!Array.isArray(covered)||!covered.length||!covered.every(safe))throw Error('Test plan must list the runtime paths it covers');
+ const outside=covered.filter(p=>!s.scope_paths.some(q=>glob(p,q))).sort();
+ if(outside.length)throw Error(`Test plan covers paths outside the selected scope: ${outside.join(', ')}`);
+ if(!Array.isArray(v.tests)||!v.tests.length)throw Error('Test plan must name its tests');
+ const reached=new Set(),names=[],selected=planned(s);
+ for(const row of v.tests){
+  if(!row||typeof row!=='object'||Array.isArray(row)||!same(Object.keys(row).sort(),planTestKeys)||!text(row.module)||!text(row.purpose)||!Array.isArray(row.covers)||!row.covers.length||!row.covers.every(text))throw Error(`Each planned test requires: ${planTestKeys.join(', ')}`);
+  if(!selected.has(row.module))throw Error(`Planned test is not selected for execution: ${row.module}`);
+  const unknown=row.covers.filter(p=>!covered.includes(p)).sort();
+  if(unknown.length)throw Error(`Planned test covers unlisted paths: ${unknown.join(', ')}`);
+  row.covers.forEach(p=>reached.add(p));names.push(row.module);
+ }
+ if(new Set(names).size!==names.length)throw Error('Test plan repeats a test module');
+ const unreached=covered.filter(p=>!reached.has(p)).sort();
+ if(unreached.length)throw Error(`No planned test covers: ${unreached.join(', ')}`);
+ return {design:s.design,design_sha256,plan,plan_sha256:hash(raw.toString('utf8')),tests:names.sort()};
+}
+function verifyBinding(root,contract,tree){
+ const s=contract.selection,b=contract.design_binding;
+ if(s.change_class!=='feature'){if(b!==undefined)throw Error('Only a feature contract binds a design');return;}
+ const selected=planned(s);
+ if(!b||typeof b!=='object'||!same(Object.keys(b).sort(),bindingKeys)||b.design!==s.design||b.plan!==planPath(s.design)||!Array.isArray(b.tests)||!b.tests.length||!b.tests.every(t=>selected.has(t)))throw Error('Feature contract lacks its bound test plan');
+ for(const module of b.tests)if(spawnSync('git',['cat-file','-e',`${tree}:${module}`],{cwd:root}).status!==0)throw Error(`Planned test is missing from the candidate: ${module}`);
+ // Designs are private maintainer material, so a public checkout holds only the hashes.
+ for(const [name,expected] of [[b.design,b.design_sha256],[b.plan,b.plan_sha256]])if(isFile(path.join(root,name))&&hash(readFileSync(path.join(root,name),'utf8'))!==expected)throw Error(`Design or test plan changed after approval; obtain explicit revision: ${name}`);
+}
 export function selectedCommands(s,c){return s.categories.map(r=>{const tests=r.name==='regression'?c.regression.map(v=>v.test):r.tests;return {category:r.name,tests,fixtures:r.fixtures,argv:r.name==='sanity'?['node','scripts/validation-contract.mjs','sanity']:['node','--test','--test-reporter=tap',...tests]};});}
 export function proposalSelection(output){
  const lines=output.split(/\r?\n/).filter(line=>line.startsWith('VALIDATION_SELECTION='));
@@ -58,7 +106,7 @@ export function sealSelection(root,selection,proposal,review){
  const catalog=JSON.parse(readFileSync(path.join(root,catalogPath),'utf8'));checkSelection(selection,catalog);
  const filename=path.join(root,selectionPath),previous=existsSync(filename)?JSON.parse(readFileSync(filename,'utf8')):null;
  if(selection.revision_of!==(previous?.contract_sha256??null))throw Error('Revision does not name current original contract');
- const base=git(root,'rev-parse','HEAD'),value={schema:'my-crm.validation-contract/v1',selection,base_commit:base,base_tree:git(root,'rev-parse',`${base}^{tree}`),catalog_sha256:hash(catalog),runtime:runtime(),proposal_sha256:hash(proposal),review_sha256:hash(review),commands:selectedCommands(selection,catalog),delivery_policy:deliveryPolicy(selection.change_class)};
+ const base=git(root,'rev-parse','HEAD'),value={schema:'my-crm.validation-contract/v1',selection,base_commit:base,base_tree:git(root,'rev-parse',`${base}^{tree}`),catalog_sha256:hash(catalog),runtime:runtime(),proposal_sha256:hash(proposal),review_sha256:hash(review),commands:selectedCommands(selection,catalog),delivery_policy:deliveryPolicy(selection.change_class),...(selection.change_class==='feature'?{design_binding:designBinding(root,selection)}:{})};
  return {...value,contract_sha256:hash(value)};
 }
 export function writeSelection(root,value){
@@ -84,14 +132,14 @@ export const bootstrapCommands=[['npm','run','build'],['node','--test','tests/va
 export function requiredFor(contract){return contract?contract.commands.map(r=>['node','scripts/validation-contract.mjs','run','--category',r.category]):structuredClone(bootstrapCommands);}
 export function verifyContract(root,tree='HEAD',proposal){
  const contract=validateContract(blob(root,tree,selectionPath),blob(root,tree,catalogPath));if(!contract)return null;
+ verifyBinding(root,contract,tree);
  if(proposal&&!same(proposal.validation_contract,contract))throw Error('Selection lacks its exact original independent proposal');
  if(git(root,'rev-parse',`${contract.base_commit}^{tree}`)!==contract.base_tree)throw Error('Baseline differs');
  const candidate=git(root,'cat-file','-t',tree)==='commit'?tree:git(root,'rev-parse','HEAD');
  if(git(root,'rev-parse',`${candidate}^{tree}`)!==git(root,'rev-parse',`${tree}^{tree}`)||spawnSync('git',['merge-base','--is-ancestor',contract.base_commit,candidate],{cwd:root}).status!==0)throw Error('Candidate does not descend from contract baseline');
- const match=(name,pattern)=>new RegExp(`^${pattern.split('*').map(v=>v.replace(/[.+?^${}()|[\]\\]/g,'\\$&')).join('.*')}$`).test(name);
  for(const name of git(root,'diff','--name-only',contract.base_commit,tree).split('\n').filter(Boolean)){
   if(name===selectionPath)continue;
-  if(!contract.selection.scope_paths.some(p=>match(name,p)))throw Error(`Changed path outside selected scope: ${name}`);
+  if(!contract.selection.scope_paths.some(p=>glob(name,p)))throw Error(`Changed path outside selected scope: ${name}`);
   if(contract.selection.change_class==='docs_only'&&(!name.endsWith('.md')||name==='AGENTS.md'||name.startsWith('.agents/')||name.startsWith('plugins/')||name.startsWith('clients/')))throw Error('Executable guidance or non-document source cannot use docs_only');
  }
  return contract;

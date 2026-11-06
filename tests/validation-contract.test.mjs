@@ -21,9 +21,13 @@ function fixture(t) {
   put('tests/regression.test.mjs',"import test from 'node:test';test('recurrence',()=>{});\n");
   git('init','-q');git('config','user.email','synthetic@example.invalid');git('config','user.name','Synthetic');
   const commit=()=>{git('add','-A');git('commit','-qm','Synthetic fixture');return git('rev-parse','HEAD');};commit();
-  const selection=(kind='bug_fix')=>({change_class:kind,scope_paths:['source.mjs','tests/*'],categories:v.classes[kind].map(name=>({name,tests:['sanity','regression'].includes(name)?[]:['tests/reproduction.test.mjs'],fixtures:[]})),reason:'Synthetic exact contract',revision_of:null});
-  const publish=(kind='bug_fix',fixtures=[])=>{const selected=selection(kind);if(fixtures.length)selected.categories[1].fixtures=fixtures;const c=v.sealSelection(root,selected,'Synthetic proposal',{verdict:'APPROVED'});v.writeSelection(root,c);return c;};
-  return {root,git,put,commit,catalog,selection,publish};
+  const selection=(kind='bug_fix')=>({change_class:kind,scope_paths:['source.mjs','tests/*'],categories:v.classes[kind].map(name=>({name,tests:['sanity','regression'].includes(name)?[]:['tests/reproduction.test.mjs'],fixtures:[]})),reason:'Synthetic exact contract',revision_of:null,...(kind==='feature'?{design:'design/synthetic.md'}:{})});
+  const row={module:'tests/reproduction.test.mjs',covers:['source.mjs'],purpose:'Synthetic proof'};
+  const plan=(change={},design='design/synthetic.md')=>put('design/synthetic.test-plan.json',JSON.stringify({kind:'my-crm.feature-test-plan/v1',feature:'Synthetic feature',design,design_sha256:v.hash(readFileSync(path.join(root,design),'utf8')),runtime_paths:['source.mjs'],tests:[row],...change}));
+  // Designs stay private, as under Vault.
+  const designs=()=>{writeFileSync(path.join(root,'.git/info/exclude'),'design/\n');mkdirSync(path.join(root,'design'),{recursive:true});put('design/synthetic.md','# Synthetic design\n');put('design/other.md','# Other design\n');};
+  const publish=(kind='bug_fix',fixtures=[])=>{const selected=selection(kind);if(kind==='feature'){designs();plan();}if(fixtures.length)selected.categories[1].fixtures=fixtures;const c=v.sealSelection(root,selected,'Synthetic proposal',{verdict:'APPROVED'});v.writeSelection(root,c);return c;};
+  return {root,git,put,commit,catalog,selection,publish,plan,designs,row};
 }
 
 test('class minima, exact tests and explicit revisions fail closed',t=>{
@@ -115,7 +119,7 @@ test('catalog introduction is an explicit new scoped epoch, never relabeled npm-
 });
 
 test('unchanged category reaches independent repair assessment without repeating its tests',t=>{
- const f=fixture(t),selection=f.selection('feature');selection.categories[2].tests=['tests/acceptance.test.mjs'];
+ const f=fixture(t),selection=f.selection('feature');selection.categories[2].tests=['tests/acceptance.test.mjs'];f.designs();f.plan();
  const contract=v.sealSelection(f.root,selection,'Synthetic selected feature',{verdict:'APPROVED'});v.writeSelection(f.root,contract);
  f.put('tests/reproduction.test.mjs',"import test from 'node:test';import assert from 'node:assert/strict';import value from '../source.mjs';test('interaction',()=>assert.equal(value,false));");
  f.put('tests/acceptance.test.mjs',"import test from 'node:test';test('acceptance',()=>{});");f.commit();
@@ -165,4 +169,62 @@ test('functional environment changes cannot replace a real fail-before reproduct
  process.env[key]='synthetic-after';
  assert.throws(()=>v.executeCategory(f.root,'focused'),/environment|unchanged-test/);
  assert.deepEqual(readFileSync(before.filename),original);assert.equal(original.includes(Buffer.from('synthetic-before')),false);
+});
+
+function designFixture(t){
+  const f=fixture(t);f.designs();
+  return {...f,seal:()=>v.sealSelection(f.root,f.selection('feature'),'Synthetic proposal',{verdict:'APPROVED'})};
+}
+
+test('a feature design without a test plan is refused even after an approved verdict',t=>{
+  const f=designFixture(t);
+  assert.throws(f.seal,/must include a test plan document: design\/synthetic\.test-plan\.json/);
+});
+
+test('a feature design with its bound test plan seals both hashes',t=>{
+  const f=designFixture(t);f.plan();const b=f.seal().design_binding;
+  assert.deepEqual([b.design,b.plan,b.tests],['design/synthetic.md','design/synthetic.test-plan.json',['tests/reproduction.test.mjs']]);
+  assert.equal(b.design_sha256,v.hash(readFileSync(path.join(f.root,'design/synthetic.md'),'utf8')));
+  assert.equal(b.plan_sha256,v.hash(readFileSync(path.join(f.root,'design/synthetic.test-plan.json'),'utf8')));
+});
+
+test('a test plan bound to a different design or revision is refused',t=>{
+  const f=designFixture(t);
+  f.plan({},'design/other.md');assert.throws(f.seal,/bound to a different design: design\/other\.md/);
+  f.plan({design_sha256:'0'.repeat(64)});assert.throws(f.seal,/different revision/);
+});
+
+test('test plan shape is refused without judging quality',t=>{
+  const f=designFixture(t),row=f.row;
+  for(const [change,message] of [[{tests:[]},/name its tests/],[{feature:' '},/name its feature/],[{runtime_paths:[]},/runtime paths/],[{runtime_paths:['elsewhere.mjs']},/outside the selected scope/],[{runtime_paths:['source.mjs','tests/x.mjs']},/No planned test covers/],[{tests:[{...row,module:'tests/unselected.test.mjs'}]},/not selected for execution/],[{tests:[row,row]},/repeats/],[{tests:[{...row,covers:['tests/x.mjs']}]},/unlisted paths/],[{tests:[{module:row.module}]},/Each planned test/],[{tests:[{...row,covers:[['source.mjs']]}]},/Each planned test/],[{extra:true},/requires exactly/],[{kind:'other'},/requires exactly/]]){
+    f.plan(change);assert.throws(f.seal,message);
+  }
+  f.put('design/synthetic.test-plan.json','[');assert.throws(f.seal,/not valid JSON/);
+  f.put('design/synthetic.test-plan.json','['.repeat(200000));assert.throws(f.seal,/too large/);
+});
+
+test('only a feature names a design and a feature must',t=>{
+  const f=designFixture(t);
+  for(const [kind,change] of [['feature',{design:null}],['feature',{design:'../design.md'}],['feature',{design:'design/synthetic.txt'}],['bug_fix',{design:'design/synthetic.md'}]])assert.throws(()=>v.checkSelection({...f.selection(kind),...change},f.catalog));
+  assert.equal(v.checkSelection({...f.selection(),design:null},f.catalog).design,null);
+});
+
+test('a feature contract verifies its binding on the candidate',t=>{
+  const f=designFixture(t);f.plan();const c=f.seal();v.writeSelection(f.root,c);f.commit();
+  assert.throws(()=>v.verifyContract(f.root),/Planned test is missing from the candidate/);
+  f.put('tests/reproduction.test.mjs',"import test from 'node:test';test('p',()=>{});\n");f.commit();
+  assert.equal(v.verifyContract(f.root).contract_sha256,c.contract_sha256);
+  f.put('design/synthetic.md','# Changed design\n');assert.throws(()=>v.verifyContract(f.root),/changed after approval/);
+});
+
+test('a public checkout without the private design still needs the binding',t=>{
+  const f=designFixture(t);f.plan();const c=f.seal();v.writeSelection(f.root,c);
+  f.put('tests/reproduction.test.mjs',"import test from 'node:test';test('p',()=>{});\n");
+  rmSync(path.join(f.root,'design'),{recursive:true});f.commit();
+  assert.equal(v.verifyContract(f.root).contract_sha256,c.contract_sha256);
+  for(const forge of [x=>{delete x.design_binding;},x=>{x.design_binding.tests=[];},x=>{x.design_binding.design='design/other.md';}]){
+    const value=structuredClone(c);forge(value);delete value.contract_sha256;value.contract_sha256=v.hash(value);
+    f.put(v.selectionPath,JSON.stringify(value));f.commit();
+    assert.throws(()=>v.verifyContract(f.root),/lacks its bound test plan/);
+  }
 });
