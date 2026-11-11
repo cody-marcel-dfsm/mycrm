@@ -6,16 +6,20 @@ import path from 'node:path';
 import {execFileSync} from 'node:child_process';
 import {pathToFileURL} from 'node:url';
 import * as v from '../scripts/validation-contract.mjs';
+import {buildSpec} from '../scripts/oracle-spec.mjs';
 
 function fixture(t) {
   const root=mkdtempSync(path.join(os.tmpdir(),'crm-contract-'));
   t.after(()=>rmSync(root,{recursive:true,force:true}));
   const git=(...args)=>execFileSync('git',args,{cwd:root,encoding:'utf8',stdio:['ignore','pipe','pipe']}).trim();
   const put=(name,text)=>writeFileSync(path.join(root,name),text);
+  // Every non-docs contract embeds the sealed spec the Oracle would output.
+  const specFor=(selected,proposal)=>selected.change_class==='docs_only'?undefined:buildSpec({answer:{title:'Synthetic spec',runtime_paths:[],acceptance:['Synthetic criterion'],tests:[...new Set(selected.categories.filter(r=>['focused','interactions','acceptance'].includes(r.name)).flatMap(r=>r.tests))].map(module=>({module,covers:[0],purpose:'Synthetic proof'})),findings:[]},selection:selected,base:git('rev-parse','HEAD'),engine:'codex',model:'synthetic-model',oracle:'0'.repeat(64),host:'synthetic-host',proposal});
+  const sealed=(selected,proposal,review)=>v.sealSelection(root,selected,proposal,review,{spec:specFor(selected,proposal)});
   for(const dir of ['scripts','tests'])mkdirSync(path.join(root,dir));
   const catalog={schema:'my-crm.validation-catalog/v1',classes:structuredClone(v.classes),sla_seconds:structuredClone(v.slaSeconds),maximum_reasoning_effort:'medium',regression:[{test:'tests/regression.test.mjs',recurrence:'Synthetic recurrence',boundary:'Synthetic boundary'}]};
   put(v.catalogPath,JSON.stringify(catalog));
-  for(const name of ['validation-contract.mjs','release-validation.mjs'])put(`scripts/${name}`,readFileSync(new URL(`../scripts/${name}`,import.meta.url)));
+  for(const name of ['validation-contract.mjs','release-validation.mjs','oracle-spec.mjs'])put(`scripts/${name}`,readFileSync(new URL(`../scripts/${name}`,import.meta.url)));
   put('package.json',JSON.stringify({type:'module',scripts:{'check:privacy':'node -e "process.exit(0)"','check:boundary':'node -e "process.exit(0)"'}}));
   put('source.mjs','export default false;\n');
   put('tests/regression.test.mjs',"import test from 'node:test';test('recurrence',()=>{});\n");
@@ -26,8 +30,8 @@ function fixture(t) {
   const plan=(change={},design='design/synthetic.md')=>put('design/synthetic.test-plan.json',JSON.stringify({kind:'my-crm.feature-test-plan/v1',feature:'Synthetic feature',design,design_sha256:v.hash(readFileSync(path.join(root,design),'utf8')),runtime_paths:['source.mjs'],tests:[row],...change}));
   // Designs stay private, as under Vault.
   const designs=()=>{writeFileSync(path.join(root,'.git/info/exclude'),'design/\n');mkdirSync(path.join(root,'design'),{recursive:true});put('design/synthetic.md','# Synthetic design\n');put('design/other.md','# Other design\n');};
-  const publish=(kind='bug_fix',fixtures=[])=>{const selected=selection(kind);if(kind==='feature'){designs();plan();}if(fixtures.length)selected.categories[1].fixtures=fixtures;const c=v.sealSelection(root,selected,'Synthetic proposal',{verdict:'APPROVED'});v.writeSelection(root,c);return c;};
-  return {root,git,put,commit,catalog,selection,publish,plan,designs,row};
+  const publish=(kind='bug_fix',fixtures=[])=>{const selected=selection(kind);if(kind==='feature'){designs();plan();}if(fixtures.length)selected.categories[1].fixtures=fixtures;const c=sealed(selected,'Synthetic proposal',{verdict:'APPROVED'});v.writeSelection(root,c);return c;};
+  return {root,git,put,commit,catalog,selection,publish,plan,designs,row,sealed,specFor};
 }
 
 test('class minima, exact tests and explicit revisions fail closed',t=>{
@@ -38,7 +42,7 @@ test('class minima, exact tests and explicit revisions fail closed',t=>{
   }
   const c=f.publish();assert.throws(()=>f.publish(),/Revision/);
   f.commit();const next=f.selection();next.revision_of=c.contract_sha256;
-  assert.equal(v.sealSelection(f.root,next,'Revised proposal',{}).selection.revision_of,c.contract_sha256);
+  assert.equal(f.sealed(next,'Revised proposal',{}).selection.revision_of,c.contract_sha256);
 });
 
 test('zero exit, partial, empty, skipped and ambiguous TAP cannot pass',()=>{
@@ -111,7 +115,7 @@ test('hard end-to-end policy is immutable and simple bugs cannot expand into int
  const c=f.publish();assert.equal(c.delivery_policy.sla_seconds,180);assert.equal(c.delivery_policy.retries_reset_clock,false);
  assert.equal(v.boundedSettings({model:'selected',reasoning_effort:'ultra'},f.root).reasoning_effort,'low');
  f.commit();const next=f.selection();next.revision_of=c.contract_sha256;
- assert.deepEqual(v.sealSelection(f.root,next,'Revision',{}).delivery_policy,c.delivery_policy);
+ assert.deepEqual(f.sealed(next,'Revision',{}).delivery_policy,c.delivery_policy);
 });
 
 test('catalog introduction is an explicit new scoped epoch, never relabeled npm-test proof',()=>{
@@ -120,7 +124,7 @@ test('catalog introduction is an explicit new scoped epoch, never relabeled npm-
 
 test('unchanged category reaches independent repair assessment without repeating its tests',t=>{
  const f=fixture(t),selection=f.selection('feature');selection.categories[2].tests=['tests/acceptance.test.mjs'];f.designs();f.plan();
- const contract=v.sealSelection(f.root,selection,'Synthetic selected feature',{verdict:'APPROVED'});v.writeSelection(f.root,contract);
+ const contract=f.sealed(selection,'Synthetic selected feature',{verdict:'APPROVED'});v.writeSelection(f.root,contract);
  f.put('tests/reproduction.test.mjs',"import test from 'node:test';import assert from 'node:assert/strict';import value from '../source.mjs';test('interaction',()=>assert.equal(value,false));");
  f.put('tests/acceptance.test.mjs',"import test from 'node:test';test('acceptance',()=>{});");f.commit();
  const records=Object.fromEntries(['sanity','interactions','acceptance'].map(name=>[name,v.executeCategory(f.root,name)]));
@@ -173,7 +177,7 @@ test('functional environment changes cannot replace a real fail-before reproduct
 
 function designFixture(t){
   const f=fixture(t);f.designs();
-  return {...f,seal:()=>v.sealSelection(f.root,f.selection('feature'),'Synthetic proposal',{verdict:'APPROVED'})};
+  return {...f,seal:()=>f.sealed(f.selection('feature'),'Synthetic proposal',{verdict:'APPROVED'})};
 }
 
 test('a feature design without a test plan is refused even after an approved verdict',t=>{

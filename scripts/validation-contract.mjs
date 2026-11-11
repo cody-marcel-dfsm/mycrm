@@ -4,6 +4,7 @@ import {readFileSync,existsSync,writeFileSync,renameSync,mkdirSync,readdirSync,l
 import {execFileSync,spawnSync} from 'node:child_process';
 import path from 'node:path';
 import {fileURLToPath} from 'node:url';
+import {verifyContractSpec} from './oracle-spec.mjs';
 export const catalogPath='scripts/validation-catalog.json', selectionPath='scripts/validation-selection.json';
 const rootDefault=fileURLToPath(new URL('..',import.meta.url));
 const canonical=v=>Array.isArray(v)?`[${v.map(canonical).join(',')}]`:v&&typeof v==='object'?`{${Object.keys(v).sort().map(k=>`${JSON.stringify(k)}:${canonical(v[k])}`).join(',')}}`:JSON.stringify(v);
@@ -102,11 +103,15 @@ export function proposalSelection(output){
  if(lines.length!==1)throw Error('Independent proposal omitted or duplicated validation selection');
  return JSON.parse(lines[0].slice('VALIDATION_SELECTION='.length));
 }
-export function sealSelection(root,selection,proposal,review){
+// The sealed oracle-spec/1 implementation spec is the contract's `spec` member:
+// one executable test contract, required for every class except docs_only.
+export function sealSelection(root,selection,proposal,review,{base=git(root,'rev-parse','HEAD'),spec}={}){
  const catalog=JSON.parse(readFileSync(path.join(root,catalogPath),'utf8'));checkSelection(selection,catalog);
  const filename=path.join(root,selectionPath),previous=existsSync(filename)?JSON.parse(readFileSync(filename,'utf8')):null;
  if(selection.revision_of!==(previous?.contract_sha256??null))throw Error('Revision does not name current original contract');
- const base=git(root,'rev-parse','HEAD'),value={schema:'my-crm.validation-contract/v1',selection,base_commit:base,base_tree:git(root,'rev-parse',`${base}^{tree}`),catalog_sha256:hash(catalog),runtime:runtime(),proposal_sha256:hash(proposal),review_sha256:hash(review),commands:selectedCommands(selection,catalog),delivery_policy:deliveryPolicy(selection.change_class),...(selection.change_class==='feature'?{design_binding:designBinding(root,selection)}:{})};
+ if(spawnSync('git',['merge-base','--is-ancestor',base,'HEAD'],{cwd:root}).status!==0)throw Error('Contract base is not an ancestor of the checkout');
+ const value={schema:'my-crm.validation-contract/v1',selection,base_commit:base,base_tree:git(root,'rev-parse',`${base}^{tree}`),catalog_sha256:hash(catalog),runtime:runtime(),proposal_sha256:hash(proposal),review_sha256:hash(review),commands:selectedCommands(selection,catalog),delivery_policy:deliveryPolicy(selection.change_class),...(selection.change_class==='feature'?{design_binding:designBinding(root,selection)}:{}),...(spec===undefined?{}:{spec})};
+ verifyContractSpec(value);
  return {...value,contract_sha256:hash(value)};
 }
 export function writeSelection(root,value){

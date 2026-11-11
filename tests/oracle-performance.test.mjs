@@ -16,7 +16,7 @@ import {installReviewed} from "../scripts/codex-maintainer-install.mjs";
 
 const execute = promisify(execFile);
 const launcher = fileURLToPath(new URL("../scripts/oracle-review.mjs", import.meta.url));
-async function command(cwd, args, env = {}, options = {}) { return execute(process.execPath, [launcher, ...args], {...options, cwd, env: {...process.env, CODEX_THREAD_ID: "", CODEX_SELECTED_MODEL: "synthetic-test-model", CODEX_SELECTED_REASONING_EFFORT: "high", ...env}}); }
+async function command(cwd, args, env = {}, options = {}) { return execute(process.execPath, [launcher, ...args], {...options, cwd, env: {...process.env, CLAUDECODE: "", CODEX_THREAD_ID: "", CODEX_SELECTED_MODEL: "synthetic-test-model", CODEX_SELECTED_REASONING_EFFORT: "high", ...env}}); }
 async function fixture(t) {
   const root = await realpath(await mkdtemp(path.join(os.tmpdir(), "my-crm-oracle-test-")));
   t.after(() => rm(root, {recursive: true, force: true}));
@@ -1049,7 +1049,7 @@ test("selected Git input batching preserves filtered bytes, quoted names, all in
     assert.deepEqual((await readFile(log, "utf8")).trim().split("\n").sort(), ["hash-object --stdin-paths", "ls-files --stage"]);
     assert.match(current.snapshot.selected_index["indexed-link.txt"], /^120000 /); assert.equal(current.snapshot.selected_index["conflict.txt"].split("\n").length, 3);
     console.log(`MYCRM_SELECTED_INPUT_BATCH_COMPARISON=${JSON.stringify({files: names.length, quote_path: quotePath, previous_git_processes: names.length * 2 + 1, current_git_processes: 2, previous_ms: priorMs, current_ms: current.elapsed_ms})}`);
-    const auditEnv = {...process.env, CODEX_THREAD_ID: "", CODEX_SELECTED_MODEL: "synthetic-test-model", CODEX_SELECTED_REASONING_EFFORT: "high", PATH: `${bin}${path.delimiter}${process.env.PATH}`};
+    const auditEnv = {...process.env, CLAUDECODE: "", CODEX_THREAD_ID: "", CODEX_SELECTED_MODEL: "synthetic-test-model", CODEX_SELECTED_REASONING_EFFORT: "high", PATH: `${bin}${path.delimiter}${process.env.PATH}`};
     await writeFile(path.join(repo, "missing.txt"), "synthetic indexed missing bytes");
     const captured = await command(repo, ["validate", ...[...names, "missing.txt"].flatMap(name => ["--input", name]), "--", process.execPath, "-e", "console.log('Synthetic exact selected inputs')"], auditEnv);
     const reference = captured.stdout.match(/ORACLE_VALIDATION_EVIDENCE=(.+)/)[1].trim();
@@ -1151,7 +1151,7 @@ test("native validation cannot turn a failed command or input drift into a passi
 test("cancellation terminates child review and releases lock without approval", async (t) => {
   const {repo, env, prepare, root} = await fixture(t); await prepare();
   const ready = path.join(root, "ready");
-  const child = spawn(process.execPath, [launcher, "review"], {cwd: repo, env: {...process.env, CODEX_THREAD_ID: "", CODEX_SELECTED_MODEL: "synthetic-test-model", ...env, ORACLE_READY: ready, ORACLE_DELAY: "30000"}, stdio: ["ignore", "pipe", "pipe"]});
+  const child = spawn(process.execPath, [launcher, "review"], {cwd: repo, env: {...process.env, CLAUDECODE: "", CODEX_THREAD_ID: "", CODEX_SELECTED_MODEL: "synthetic-test-model", ...env, ORACLE_READY: ready, ORACLE_DELAY: "30000"}, stdio: ["ignore", "pipe", "pipe"]});
   const ended = new Promise((resolve) => child.once("close", resolve));
   await waitFor(ready); child.kill("SIGTERM");
   assert.equal(await ended, 1);
