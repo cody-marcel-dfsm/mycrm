@@ -6,7 +6,7 @@ import * as s from "../scripts/oracle-spec.mjs";
 
 const sha = value => createHash("sha256").update(value).digest("hex");
 const selection = (change = {}) => ({change_class: "bug_fix", scope_paths: ["src/example.mjs", "tests/*"], categories: [{name: "sanity", tests: [], fixtures: []}, {name: "focused", tests: ["tests/example.test.mjs"], fixtures: []}], reason: "Synthetic focused repair", revision_of: null, ...change});
-const answer = (change = {}) => ({title: "Synthetic repair", runtime_paths: ["src/example.mjs"], acceptance: ["The example returns the corrected value."], tests: [{module: "tests/example.test.mjs", covers: [0], purpose: "Prove the corrected value."}], findings: [{severity: "warning", message: "Synthetic warning."}], ...change});
+const answer = (change = {}) => ({title: "Synthetic repair", runtime_paths: ["src/example.mjs"], acceptance: [{criterion: "The example returns the corrected value.", tests: ["tests/example.test.mjs"]}], tests: [{module: "tests/example.test.mjs", purpose: "Prove the corrected value."}], findings: [{severity: "warning", message: "Synthetic warning."}], ...change});
 const base = "a".repeat(40), proposal = "Problem: synthetic. Cause: synthetic. Recommended change: synthetic.";
 const build = (change = {}) => s.buildSpec({answer: answer(), selection: selection(), base, engine: "codex", model: "synthetic-model", oracle: "b".repeat(64), host: "synthetic-host", time: "2026-11-11T00:00:00Z", proposal, ...change});
 const contract = (spec = build(), change = {}) => ({selection: selection(), base_commit: base, proposal_sha256: sha(proposal), spec, ...change});
@@ -35,7 +35,8 @@ test("tampering with content, stamp or seal fails and only APPROVED specs verify
 });
 
 test("malformed answers and specs are refused with their exact shape problems", () => {
-  for (const change of [{tests: []}, {acceptance: []}, {acceptance: ["one", "two"]}, {tests: [{module: "tests/example.test.mjs", covers: [true], purpose: "x"}]}, {tests: [{module: "tests/../x.test.mjs", covers: [0], purpose: "x"}]}, {tests: [{module: "--test-only", covers: [0], purpose: "x"}]}, {tests: [{module: "tests/example.test.mjs", covers: [0], purpose: "x", extra: 1}]}, {findings: [{severity: "blocking", message: "Stop."}]}, {findings: [{severity: "info", message: "x"}]}, {runtime_paths: ["/abs.mjs"]}, {extra: true}]) {
+  const criterion = tests => [{criterion: "A criterion.", tests}];
+  for (const change of [{tests: []}, {acceptance: []}, {acceptance: ["one"]}, {acceptance: criterion([])}, {acceptance: criterion(["tests/other.test.mjs"])}, {acceptance: [...criterion(["tests/example.test.mjs"]), {criterion: " ", tests: ["tests/example.test.mjs"]}]}, {tests: [{module: "tests/example.test.mjs", purpose: "x"}, {module: "tests/unused.test.mjs", purpose: "Covers nothing."}]}, {acceptance: criterion(["tests/../x.test.mjs"]), tests: [{module: "tests/../x.test.mjs", purpose: "x"}]}, {acceptance: criterion(["--test-only"]), tests: [{module: "--test-only", purpose: "x"}]}, {tests: [{module: "tests/example.test.mjs", covers: [0], purpose: "x"}]}, {findings: [{severity: "blocking", message: "Stop."}]}, {findings: [{severity: "info", message: "x"}]}, {runtime_paths: ["/abs.mjs"]}, {extra: true}]) {
     assert.ok(s.answerProblems(answer(change)).length, JSON.stringify(change));
   }
   assert.deepEqual(s.answerProblems(answer()), []);
@@ -61,12 +62,12 @@ test("parent stamp binds engine, model, Oracle files, host, UTC time and exact i
 
 test("privacy boundary rejects credentials, addresses, home paths and copied private text", () => {
   for (const text of ["Authorization: Bearer abcdefghijklmnop", "password = hunter2hunter2", "Contact someone@example.com.", "Read /home/someone/private.md", "token sk_live_abcdefghijklmnop", "-----BEGIN PRIVATE KEY-----"]) {
-    assert.throws(() => build({answer: answer({acceptance: [text]})}), /not publishable|credential|address|home path/, text);
+    assert.throws(() => build({answer: answer({acceptance: [{criterion: text, tests: ["tests/example.test.mjs"]}]})}), /not publishable|credential|address|home path/, text);
   }
   const privateText = "the private feedback says the quarterly retention workflow for this account must never send reminders on weekends";
-  assert.throws(() => build({proposal: `Problem: ${privateText}.`, answer: answer({acceptance: [`Ensure ${privateText}.`]})}), /copies 12/);
+  assert.throws(() => build({proposal: `Problem: ${privateText}.`, answer: answer({acceptance: [{criterion: `Ensure ${privateText}.`, tests: ["tests/example.test.mjs"]}]})}), /copies 12/);
   assert.throws(() => build({privateTexts: [privateText], answer: answer({findings: [{severity: "warning", message: privateText}]})}), /copies 12/);
-  assert.ok(build({privateTexts: [privateText], answer: answer({acceptance: ["Reminders respect the configured weekend schedule."]})}));
+  assert.ok(build({privateTexts: [privateText], answer: answer({acceptance: [{criterion: "Reminders respect the configured weekend schedule.", tests: ["tests/example.test.mjs"]}]})}));
   assert.throws(() => s.verifyContractSpec(contract(build(), {selection: selection({reason: "Mail someone@example.com"})})), /not publishable/);
 });
 

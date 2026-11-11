@@ -105,10 +105,19 @@ const plain = value => !!value && typeof value === "object" && !Array.isArray(va
 const exactKeys = (value, keys) => plain(value) && JSON.stringify(Object.keys(value).sort()) === JSON.stringify([...keys].sort());
 
 // Shape of the reviewer's ORACLE_SPEC answer (the parent adds everything else).
+// The reviewer names the tests of each criterion; the parent derives the
+// spec's acceptance indices, so the mapping cannot drift by an index.
 export function answerProblems(answer) {
   if (!exactKeys(answer, ANSWER_KEYS)) return [`Oracle spec answer requires exactly: ${ANSWER_KEYS.join(", ")}`];
-  return specProblems({kind: KIND, title: answer.title, design: null, base: "0".repeat(40), scope: ["placeholder"], runtime_paths: answer.runtime_paths, acceptance: answer.acceptance, tests: answer.tests, findings: answer.findings, verdict: "APPROVED", stamp: {engine: "codex", model: "placeholder", oracle_sha256: "0".repeat(64), host: "placeholder", time: "2026-01-01T00:00:00Z", request_sha256: null, proposal_sha256: "0".repeat(64)}, seal: "0".repeat(64)}).filter(problem => !problem.startsWith("runtime path outside scope"));
+  if (!Array.isArray(answer.acceptance) || !answer.acceptance.every(item => exactKeys(item, ["criterion", "tests"]) && text(item.criterion) && Array.isArray(item.tests) && item.tests.length && item.tests.every(text))) return ["acceptance must be [{criterion, tests: [module, ...]}] with at least one test per criterion"];
+  if (!Array.isArray(answer.tests) || !answer.tests.every(row => exactKeys(row, ["module", "purpose"]))) return ["tests must be [{module, purpose}]"];
+  const modules = answer.tests.map(row => row.module), unknown = [...new Set(answer.acceptance.flatMap(item => item.tests).filter(module => !modules.includes(module)))];
+  if (unknown.length) return [`Acceptance names tests absent from tests: ${unknown.join(", ")}`];
+  return specProblems(placeholderSpec(answer)).filter(problem => !problem.startsWith("runtime path outside scope"));
 }
+const placeholderSpec = answer => ({kind: KIND, title: answer.title, design: null, base: "0".repeat(40), scope: ["placeholder"], ...specBody(answer), verdict: "APPROVED", stamp: {engine: "codex", model: "placeholder", oracle_sha256: "0".repeat(64), host: "placeholder", time: "2026-01-01T00:00:00Z", request_sha256: null, proposal_sha256: "0".repeat(64)}, seal: "0".repeat(64)});
+// oracle-spec/1 body: acceptance strings and tests [{module, covers, purpose}].
+export const specBody = answer => ({runtime_paths: answer.runtime_paths, acceptance: answer.acceptance.map(item => item.criterion), tests: answer.tests.map(row => ({module: row.module, covers: answer.acceptance.flatMap((item, index) => item.tests.includes(row.module) ? [index] : []), purpose: row.purpose})), findings: answer.findings});
 
 // Shape problems of a complete spec; the seal is checked separately.
 export function specProblems(spec) {
@@ -173,10 +182,12 @@ const utcNow = () => new Date().toISOString().replace(/\.\d+Z$/, "Z");
 // The parent owns kind, base, scope, design, verdict, stamp and seal; the child
 // supplies only its publishable answer.
 export function buildSpec({answer, selection, base, engine, model, oracle, host, time = utcNow(), proposal, request = null, privateTexts = []}) {
+  const shape = answerProblems(answer);
+  if (shape.length) throw new SpecError(`Oracle spec answer is invalid: ${shape.join("; ")}`);
   if (!ENGINES.includes(engine)) throw new SpecError(`Unknown Oracle engine: ${engine}`);
   if (!text(model)) throw new SpecError("The Oracle engine reported no model identity");
   if (typeof proposal !== "string" || !proposal.trim()) throw new SpecError("The proposal is empty");
-  const spec = {kind: KIND, title: answer.title, design: selection.design ?? null, base, scope: [...selection.scope_paths], runtime_paths: answer.runtime_paths, acceptance: answer.acceptance, tests: answer.tests, findings: answer.findings, verdict: "APPROVED",
+  const spec = {kind: KIND, title: answer.title, design: selection.design ?? null, base, scope: [...selection.scope_paths], ...specBody(answer), verdict: "APPROVED",
     stamp: {engine, model, oracle_sha256: oracle, host, time, request_sha256: request === null || request === undefined ? null : sha256(request), proposal_sha256: sha256(proposal)}};
   spec.seal = computeSeal(spec);
   const problems = [...specProblems(spec), ...privacyProblems({title: spec.title, acceptance: spec.acceptance, tests: spec.tests, findings: spec.findings, reason: selection.reason}, {privateTexts: [proposal, request, ...privateTexts]})];

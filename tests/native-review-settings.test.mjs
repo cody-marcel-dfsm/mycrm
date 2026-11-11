@@ -34,7 +34,7 @@ async function contractRepository(t){
  await git('init','-q','-b','main');await git('add','.');await git('-c','user.name=Synthetic','-c','user.email=synthetic@example.invalid','commit','-qm','Synthetic baseline');
  await execute('git',['init','-q','-b','main','--bare',origin]);await git('remote','add','origin',origin);await git('push','-q','origin','main');
  const selection={change_class:'bug_fix',scope_paths:['candidate.mjs','tests/*'],categories:[{name:'sanity',tests:[],fixtures:[]},{name:'focused',tests:['tests/candidate.test.mjs'],fixtures:[]}],reason:'Synthetic focused repair.',revision_of:null,design:null};
- const spec={title:'Synthetic candidate repair',runtime_paths:['candidate.mjs'],acceptance:['The candidate exports the corrected value.'],tests:[{module:'tests/candidate.test.mjs',covers:[0],purpose:'Prove the corrected export.'}],findings:[{severity:'warning',message:'Synthetic warning.'}]};
+ const spec={title:'Synthetic candidate repair',runtime_paths:['candidate.mjs'],acceptance:[{criterion:'The candidate exports the corrected value.',tests:['tests/candidate.test.mjs']}],tests:[{module:'tests/candidate.test.mjs',purpose:'Prove the corrected export.'}],findings:[{severity:'warning',message:'Synthetic warning.'}]};
  const api={impact:'NONE',request_kind:'NOT_REQUIRED',requested_change:null,request_quote:null,request_evidence:null};
  const env={...process.env,CLAUDECODE:'',PATH:`${bin}${path.delimiter}${process.env.PATH}`,CODEX_THREAD_ID:'',CODEX_SELECTED_MODEL:'synthetic-selected-model',CODEX_SELECTED_REASONING_EFFORT:'low',SYNTHETIC_CAPTURE:path.join(repo,'Vault/tmp/capture.json')};
  return {repo,bin,git,selection,spec,api,env};

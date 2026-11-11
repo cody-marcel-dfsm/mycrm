@@ -159,3 +159,53 @@ serializedReleaseTest("maintainer mutations bind the built artifact and current 
     }
   }
 });
+
+// A synthetic checkout with the real contract modules, as CI sees a candidate.
+async function sealedSpecRepository(t) {
+  const root = await mkdtemp(path.join(os.tmpdir(), "crm-sealed-spec-")); t.after(() => rm(root, {recursive: true, force: true}));
+  const run = async (...args) => (await promisify(execFile)("git", args, {cwd: root})).stdout.trim();
+  await cp(new URL("../scripts/validation-catalog.json", import.meta.url), path.join(root, "scripts/validation-catalog.json"));
+  for (const name of ["validation-contract.mjs", "release-validation.mjs", "oracle-spec.mjs"]) await cp(new URL(`../scripts/${name}`, import.meta.url), path.join(root, "scripts", name));
+  await writeFile(path.join(root, "package.json"), JSON.stringify({type: "module"}));
+  await writeFile(path.join(root, "README.md"), "# Synthetic\n"); await writeFile(path.join(root, "source.mjs"), "export default 1;\n");
+  await run("init", "-q", "-b", "main"); await run("config", "user.name", "Synthetic"); await run("config", "user.email", "synthetic@example.invalid");
+  const commit = async message => { await run("add", "-A"); await run("commit", "-qm", message); return run("rev-parse", "HEAD"); };
+  await commit("Synthetic baseline");
+  const modules = {contract: await import(pathToFileURL(path.join(root, "scripts/validation-contract.mjs"))), release: await import(pathToFileURL(path.join(root, "scripts/release-validation.mjs"))), spec: await import(pathToFileURL(path.join(root, "scripts/oracle-spec.mjs")))};
+  const selection = {change_class: "bug_fix", scope_paths: ["source.mjs", "tests/*"], categories: [{name: "sanity", tests: [], fixtures: []}, {name: "focused", tests: ["tests/source.test.mjs"], fixtures: []}], reason: "Synthetic focused repair", revision_of: null};
+  const spec = base => modules.spec.buildSpec({answer: {title: "Synthetic", runtime_paths: ["source.mjs"], acceptance: [{criterion: "The source exports the corrected value.", tests: ["tests/source.test.mjs"]}], tests: [{module: "tests/source.test.mjs", purpose: "Prove the export."}], findings: []}, selection, base, engine: "codex", model: "synthetic-model", oracle: "0".repeat(64), host: "synthetic-host", proposal: "Synthetic proposal"});
+  return {root, run, commit, modules, selection, spec};
+}
+
+test("release:check fails immediately when a non-documentation change has no sealed spec", async t => {
+  const f = await sealedSpecRepository(t);
+  await writeFile(path.join(f.root, "README.md"), "# Synthetic documentation change\n"); await f.commit("Documentation only");
+  assert.equal(f.modules.release.assertSealedSpec(f.root), null);
+  for (const name of ["source.mjs", "AGENTS.md", "CLAUDE.md", ".agents/skills/x/SKILL.md", "plugins/x/README.md"]) assert.equal(f.modules.release.documentationPath(name), false, name);
+  await writeFile(path.join(f.root, "source.mjs"), "export default 2;\n"); await f.commit("Executable change without a spec");
+  assert.throws(() => f.modules.release.assertSealedSpec(f.root), /Sealed Oracle spec is missing for non-documentation changes: source\.mjs/);
+  const executed = [];
+  await assert.rejects(f.modules.release.validateRelease({nativeEvidence: false, priorCoverage: {covered: [], invalidated: []}, execute: async argv => executed.push(argv), sealed: () => f.modules.release.assertSealedSpec(f.root)}), /missing/);
+  assert.deepEqual(executed, []);
+  const cli = await promisify(execFile)(process.execPath, [path.join(f.root, "scripts/release-validation.mjs")], {cwd: f.root, env: {...process.env, GITHUB_ACTIONS: ""}}).then(() => null, error => error);
+  assert.equal(cli?.code, 1); assert.match(cli.stderr, /^MYCRM_RELEASE_CHECK=FAILED Sealed Oracle spec is missing/m);
+});
+
+test("release:check refuses a contract whose spec is missing or does not recompute, and runs a sealed contract's tests", async t => {
+  const f = await sealedSpecRepository(t), base = await f.run("rev-parse", "HEAD");
+  const {spec: _missing, ...unsealed} = f.modules.contract.sealSelection(f.root, f.selection, "Synthetic proposal", {verdict: "APPROVED"}, {spec: f.spec(base)});
+  const write = async value => writeFile(path.join(f.root, "scripts/validation-selection.json"), `${JSON.stringify(value, null, 2)}\n`);
+  const reseal = value => { const {contract_sha256: _old, ...body} = value; return {...body, contract_sha256: f.modules.contract.hash(body)}; };
+  await write(reseal(unsealed)); await f.commit("Contract without spec");
+  assert.throws(() => f.modules.release.assertSealedSpec(f.root), /Sealed Oracle spec is missing from the validation contract/);
+  const tampered = f.spec(base); tampered.acceptance = ["Changed after sealing."];
+  await write(reseal({...unsealed, spec: tampered})); await f.commit("Contract with a mismatched seal");
+  assert.throws(() => f.modules.release.assertSealedSpec(f.root), /Seal does not recompute/);
+  await rm(path.join(f.root, "scripts/validation-selection.json"));
+  await write(f.modules.contract.sealSelection(f.root, f.selection, "Synthetic proposal", {verdict: "APPROVED"}, {base, spec: f.spec(base)})); await f.commit("Sealed contract");
+  const contract = f.modules.release.assertSealedSpec(f.root);
+  assert.equal(contract.spec.seal, f.spec(base).seal);
+  const executed = [];
+  await f.modules.release.validateRelease({nativeEvidence: false, priorCoverage: {covered: [], invalidated: []}, execute: async argv => executed.push(argv), sealed: () => f.modules.release.assertSealedSpec(f.root)});
+  assert.deepEqual(executed, [["node", "scripts/validation-contract.mjs", "run", "--category", "sanity"], ["node", "scripts/validation-contract.mjs", "run", "--category", "focused"]]);
+});
