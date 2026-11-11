@@ -3,6 +3,58 @@ name: ship-it
 description: Ship outstanding MyCRM commits through bootstrap, direct Git preparation, independent validation, and exact validated-commit delivery. Repeated unchanged shipments finish without a new release.
 ---
 
+## Deterministic source-maintenance publication
+
+For the validation-selector bootstrap and its maintenance repairs, the native
+`node scripts/deterministic-publication.mjs` workflow performs deterministic
+validation without dispatching model reviewers. Its scope is linear maintainer
+validation/publication modules, tests/documents and version-only package metadata; product behavior,
+workflow or infrastructure changes remain outside this admission path. This is
+source publication only, not protected deployment authorization.
+
+Commit the complete clean candidate, run `validate <full-base-SHA>
+<original-request-ISO-time-or-unknown>`, then `prepare`. Preserve original clocks
+and failures; an unknown or exceeded clock establishes no timing success. The
+runner executes the entire fixed bootstrap plus privacy, boundary and public
+contract checks; source, runtime, dependency and output drift invalidate evidence.
+Preparation triggers and verifies the existing exact-source GitHub CI job, with
+no imported passing result. Follow its returned native publish command only after
+CI succeeds. The normal pre-push gate rechecks deterministic custody. Never
+fabricate legacy Oracle review stamps or disable hooks. For other change classes,
+retain the existing selected-contract and publication requirements.
+
+
+
+## Fixed validation selected before implementation
+
+The controlling delivery budgets are docs_only120s, bug_fix180s,
+deep_bug_fix300s and feature300s end to end, including network/build/effects and
+verification (verified Git publication for source-only work). The host's original
+request clock survives retries and revisions; local PASS is only phase PASS.
+Rank/pare checks before freezing the contract, then run the whole selected set.
+Small bugs get deterministic focused tests only; auth/cross-area work is deep.
+No automatic broader regression or partial/empty/skipped PASS. Use low reasoning
+for simple work and medium for hard work, never above medium or paid fallback.
+Authenticated platform JEV may assist prioritization without granting authority.
+
+
+The controlling maintainer validation contract is documented in
+`scripts/validation-contract.md`. The independent native proposal fixes a change
+class, exact executable categories and planned scope before implementation.
+`docs_only` uses minimal genuine-document sanity; `bug_fix` requires the focused
+assertion to fail before and pass after; `deep_bug_fix` adds complete relevant
+interactions; `feature` requires thorough relevant acceptance. Implementation,
+release and CI consume that same immutable selection. No empty, skipped, partial,
+cancelled or todo test run is a pass. Source, catalog, runtime and original results
+remain bound; scope changes require an explicit independently reviewed revision.
+Keep a small curated recurrence registry instead of accumulating feature tests.
+This supersedes a blanket whole-suite baseline only for valid selected contracts;
+the initial selector bootstrap retains its existing proposal and records a new
+explicit scoped bootstrap epoch; original broad failures remain failures.
+Privacy, boundary, independent review and publication gates remain in force.
+Ordinary implementers do not adopt the independent approver skill.
+
+
 # Ship It
 
 Run in canonical `/Users/cody/Development/Projects/MyCRM` on `main`. Read the
@@ -80,6 +132,13 @@ Vault changes. A technical review governs release readiness.
 
 ## 3. Validate
 
+On a repair, execute complete affected selected categories and current-candidate
+sanity. Intact unchanged category executions may be supplied for fresh independent
+`validation-category-reuse` assessment; they are pending evidence, never an
+author-issued pass. Preserve full functional environment, runtime, fixture and
+original-output identities. The native verifier checks every consumed dependency
+before approval; existing publication command-proof requirements remain separate.
+
 Run the entire lifecycle in parallel with the other changed family members.
 The native completed review also runs three independent cohorts concurrently:
 cross-cutting criteria/integration, implementation/consumers, and
@@ -134,8 +193,9 @@ and matching dispositions, and rejects identity/status conflicts or local duplic
    commit or batched range, covering real entrypoints, dependencies, consumers,
    publication and failure/recovery paths. Return every established finding
    together with stable identities, reproduction and acceptance evidence.
-3. Establish the complete integrated `npm test` baseline once. Capture reusable
-   execution with `npm run oracle:validate -- -- npm test`; for a focused check,
+3. Execute the complete fixed Oracle-selected contract. Capture each category
+   with `npm run oracle:validate -- -- node scripts/validation-contract.mjs run
+   --category <selected-name>`; for a selected focused category,
    repeat `--input <exact-project-file>` for its complete consumed dependency
    closure before `-- <command>`. Capture build and package checks as needed.
    Supply the emitted original `--validation @<record>` to `oracle:review`.
