@@ -46,6 +46,38 @@ Unknown impact is classified as deep work before scope is fixed. User input, int
 security and prompt-injection boundaries receive the appropriate full scrutiny.
 Preserve independent source, privacy and publication gates.
 
+## Sealed implementation spec
+
+Owner direction of 2026-11-11 makes proposal to spec a model step; completed-source
+review is unchanged and documentation-only changes need no spec. For every class
+except `docs_only`, the approved proposal also outputs a self-contained
+`oracle-spec/1` implementation spec, embedded as the contract's `spec` member and
+covered by `contract_sha256`. It is the same executable test contract, not a second
+one: its `scope` equals `selection.scope_paths`, its test modules equal exactly the
+selected `focused`, `interactions` and `acceptance` tests, its `design` equals the
+selection design, its `base` equals `base_commit` (the freshly fetched
+`origin/main`, which the proposal requires local `main` to contain), and its stamp's
+`proposal_sha256` equals the contract's. The reviewer maps each acceptance criterion
+to its tests; the launcher derives the indices, writes the stamp (engine, model,
+Oracle file digest, host, UTC time, request and proposal digests) and computes
+`seal = sha256("oracle-spec/1\0" + canonical JSON without seal)`, byte-identical to
+the BOS reference. The seal is a sanity check that the Oracle step ran, not
+security. `docs_only` contracts carry no spec.
+
+Choose the engine with `--engine claude|codex|auto` (`auto`: `CLAUDECODE` selects
+claude, otherwise codex). claude runs restricted to Read, Grep and Glob with
+structured output, no MCP servers, and the bound external authorities and
+evidence supplied on stdin; a missing CLI fails without fallback.
+
+Privacy: the committed spec carries only digests plus publishable criteria, test
+purposes and findings. `scripts/oracle-spec.mjs` rejects credential patterns,
+e-mail addresses and absolute home paths in the spec and selection reason at
+sealing, verification and CI, and at sealing rejects any 12-word run copied from
+the proposal, request or design. `node scripts/oracle-spec.mjs verify` checks the
+committed contract. `release:check` fails before any test when the contract's spec
+is missing or does not recompute, or when no contract exists for a commit that
+changes any non-documentation path.
+
 ## Feature design approval
 
 A feature design includes a test plan. A `feature` selection names its design

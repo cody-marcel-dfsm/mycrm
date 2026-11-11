@@ -54,8 +54,8 @@
         ]
       }
     ],
-    "reason": "Feature acceptance covers sealing, privacy, engine dispatch, bound external context and drift rejection; interactions cover category execution, launcher behavior and publication continuity. Execute complete selected categories, preserve the original feature300s clock, use at most medium reasoning and no paid fallback. Claude acceptance uses fake runners and CLIs.",
-    "revision_of": null,
+    "reason": "Retain the bounded feature selection: seven modules cover proposal adapters, specification integrity, contract enforcement and publication behavior. Sanity retains privacy and repository boundaries. Run all categories completely; preserve the original feature300s delivery clock and failed attempts, cap reasoning at medium, and use synthetic engine doubles without paid fallback. No recurrence expansion is justified.",
+    "revision_of": "84b0cd87d1a562b60432a26ec50255b53a4f02ac9baf56a1691fe01c3a6bd1c4",
     "design": "Vault/docs/design/oracle-implementation-spec.md"
   },
   "base_commit": "a6f2ec01abb8c8ddb47fc1b85710c99054128e6b",
@@ -68,8 +68,8 @@
     "architecture": "x64",
     "options_sha256": "abe606b43ec20381d6290b1098ca6fb5ccdf4666008979be2a2c892605ca8eb2"
   },
-  "proposal_sha256": "f3be894783ff8b6e35db2f2631d8ee99bc3bb2196e01089b02aeec4ead1ad554",
-  "review_sha256": "6da4c029c26007758f91410b43cacf65052b429e3f73a4fa3473c9cac7cc99e9",
+  "proposal_sha256": "1e1838f6230f5ccb879671bfd2409ddf02fd539f221f404daa6bec70c990978c",
+  "review_sha256": "084345ffc0e32936b5a06b3fd731f0b6c271683466138f159d88bb71f5d55c7c",
   "commands": [
     {
       "category": "sanity",
@@ -144,5 +144,131 @@
       "tests/validation-transport.test.mjs"
     ]
   },
-  "contract_sha256": "84b0cd87d1a562b60432a26ec50255b53a4f02ac9baf56a1691fe01c3a6bd1c4"
+  "spec": {
+    "kind": "oracle-spec/1",
+    "title": "Sealed proposal specifications",
+    "design": "Vault/docs/design/oracle-implementation-spec.md",
+    "base": "a6f2ec01abb8c8ddb47fc1b85710c99054128e6b",
+    "scope": [
+      "AGENTS.md",
+      "CLAUDE.md",
+      ".agents/skills/my-crm-implementation/SKILL.md",
+      ".claude/skills/my-crm-implementation/SKILL.md",
+      ".claude/skills/ship-it/SKILL.md",
+      "scripts/oracle-review.mjs",
+      "scripts/oracle-engine.mjs",
+      "scripts/oracle-spec.mjs",
+      "scripts/validation-contract.mjs",
+      "scripts/validation-contract.md",
+      "scripts/validation-selection.json",
+      "scripts/release-validation.mjs",
+      "tests/oracle-spec.test.mjs",
+      "tests/oracle-engine.test.mjs",
+      "tests/support/oracle-spec-bos-vector.json",
+      "tests/native-review-settings.test.mjs",
+      "tests/oracle-performance.test.mjs",
+      "tests/validation-contract.test.mjs",
+      "tests/release-tooling.test.mjs",
+      "tests/validation-transport.test.mjs",
+      "Vault/docs/design/oracle-implementation-spec.md",
+      "Vault/docs/design/oracle-implementation-spec.test-plan.json"
+    ],
+    "runtime_paths": [
+      "scripts/oracle-spec.mjs",
+      "scripts/oracle-engine.mjs",
+      "scripts/oracle-review.mjs",
+      "scripts/validation-contract.mjs",
+      "scripts/release-validation.mjs"
+    ],
+    "acceptance": [
+      "Explicit engine selection supports codex and claude; automatic dispatch follows the active harness. An unavailable selected executable causes failure without switching engines or invoking a paid alternative.",
+      "The claude adapter accepts structured decisions using file inspection tools only, disables MCP access and persistence, removes inherited harness identity, and rejects missing model identity or ambiguous decision markers. External governing documents and supplied evidence enter through verified content and custody bindings; changed bindings abort dispatch.",
+      "Proposal admission fetches main from origin and uses the fetched commit throughout the proposal, specification and contract. A different branch, unresolved merge, failed fetch or local history lacking that commit prevents contract creation.",
+      "Canonical serialization reproduces the reference fixture's seal, handles Unicode consistently and refuses unsupported numeric forms or duplicate JSON keys. Changes to sealed fields invalidate verification.",
+      "The launcher constructs provenance from the selected engine, reported model, governing implementation digests, execution host, UTC timestamp and exact input digests. Reviewer output supplies behavioral requirements rather than authoritative provenance fields.",
+      "Every executable change class requires an approved, well-formed specification whose seal verifies. Contract admission rejects absent specifications, inconsistent base or proposal digests, differing design or scope, runtime paths beyond scope, and any difference between specification modules and selected executable test modules.",
+      "Publication-safe text excludes credential material, address values and private filesystem locations. Sealing rejects prohibited reuse of private input wording; verification retains deterministic privacy checks without requiring private inputs.",
+      "A bug_fix contract executes its selected reproduction category with the embedded specification, retaining genuine before-and-after evidence requirements. A docs_only contract uses document sanity without a specification and refuses an attached specification.",
+      "Release validation rejects executable changes lacking a contract and rejects missing, malformed or inconsistent specifications before dispatching checks. Genuine documentation remains admissible under its document contract. Exact-source native evidence import and complete required-command coverage remain enforced.",
+      "Both proposal adapters produce one contract containing the specification, and the established completed-review lifecycle retains its candidate integrity, failure handling and publication checkpoints.",
+      "Implementation instructions and Claude entry guidance describe synchronization, proposal generation, sealed-contract consumption, complete category execution, source review and native publication consistently. Canonical implementation guidance and its mirror agree, and ordinary authors continue to invoke the independent reviewer through its command."
+    ],
+    "tests": [
+      {
+        "module": "tests/validation-contract.test.mjs",
+        "covers": [
+          5,
+          7
+        ],
+        "purpose": "Exercise sealed contract admission, class-specific execution, document exceptions and retained validation bindings."
+      },
+      {
+        "module": "tests/release-tooling.test.mjs",
+        "covers": [
+          8
+        ],
+        "purpose": "Prove early release refusal for invalid specification state and admission of genuine document changes."
+      },
+      {
+        "module": "tests/validation-transport.test.mjs",
+        "covers": [
+          8,
+          9
+        ],
+        "purpose": "Preserve exact-source evidence transport and required-command publication checks."
+      },
+      {
+        "module": "tests/oracle-performance.test.mjs",
+        "covers": [
+          9
+        ],
+        "purpose": "Protect existing reviewer lifecycle and failure-continuation behavior across proposal adapter changes."
+      },
+      {
+        "module": "tests/oracle-spec.test.mjs",
+        "covers": [
+          3,
+          4,
+          5,
+          6,
+          7
+        ],
+        "purpose": "Verify canonical seals, provenance shape, privacy rejection and specification-to-selection consistency."
+      },
+      {
+        "module": "tests/oracle-engine.test.mjs",
+        "covers": [
+          0,
+          1,
+          2
+        ],
+        "purpose": "Check adapter selection, restricted structured dispatch, external input custody and fetched-base admission."
+      },
+      {
+        "module": "tests/native-review-settings.test.mjs",
+        "covers": [
+          0,
+          1,
+          2,
+          4,
+          9,
+          10
+        ],
+        "purpose": "Exercise proposal generation through synthetic CLIs and verify consistent implementation guidance."
+      }
+    ],
+    "findings": [],
+    "verdict": "APPROVED",
+    "stamp": {
+      "engine": "codex",
+      "model": "gpt-6.1-sol",
+      "oracle_sha256": "7886e5e0779504013844380b26ab2fb941aafac5bb16cc431ee9282884fe4a30",
+      "host": "aio",
+      "time": "2026-11-11T18:42:39Z",
+      "request_sha256": null,
+      "proposal_sha256": "1e1838f6230f5ccb879671bfd2409ddf02fd539f221f404daa6bec70c990978c"
+    },
+    "seal": "71f08f9ee05634fd35c52981938b6ac0a0dec0191f537a94298a6802f868d262"
+  },
+  "contract_sha256": "432d3ef166e3dba93c799e1de831b8e11d8c9011d6f964f841393e0c46d62c19"
 }
