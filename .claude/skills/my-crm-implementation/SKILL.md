@@ -23,7 +23,8 @@ git merge-base --is-ancestor origin/main HEAD      # must succeed
 
 Resolve a merge semantically and commit it before continuing. Keep every working
 file (request, proposal, notes, outputs) under the Git-ignored
-`Vault/tmp/oracle-spec/`, never in system temporary storage.
+`Vault/tmp/oracle-spec/`, never in system temporary storage. `check:privacy` scans that
+directory, so delete saved test or run logs that contain run identifiers.
 
 ## 2. Analyze and propose
 
