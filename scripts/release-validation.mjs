@@ -1,5 +1,6 @@
 import {publishedContract, requiredFor} from "./validation-contract.mjs";
 import {access} from "node:fs/promises";
+import {readFileSync} from "node:fs";
 import {execFile, execFileSync, spawn, spawnSync} from "node:child_process";
 import {promisify} from "node:util";
 import {fileURLToPath} from "node:url";
@@ -13,17 +14,35 @@ const run = args => new Promise((resolve, reject) => {
 });
 // Genuine documentation; executable guidance and client/plugin text are not.
 export const documentationPath = name => name.endsWith(".md") && !["AGENTS.md", "CLAUDE.md"].includes(name) && !/^(?:\.agents|\.claude|plugins|clients)\//.test(name);
-function changedPaths(directory) {
-  const git = args => execFileSync("git", args, {cwd: directory, encoding: "utf8", maxBuffer: 16 * 1024 * 1024}).trim();
-  const parent = spawnSync("git", ["rev-parse", "--verify", "--quiet", "HEAD^"], {cwd: directory, encoding: "utf8"}).status === 0;
-  return (parent ? git(["diff", "--name-only", "HEAD^", "HEAD"]) : git(["ls-tree", "-r", "--name-only", "HEAD"])).split("\n").filter(Boolean);
+const zeros = /^0{40}$/, oid = /^[a-f0-9]{40}$/;
+// The complete submitted range: the CI event's own baseline (push `before` or
+// pull-request base), otherwise the fetched origin/main. A missing, unfetched or
+// non-ancestor baseline fails closed instead of shrinking to the last commit.
+export function releaseBaseline(directory = root, environment = process.env) {
+  let base = null;
+  if (environment.GITHUB_EVENT_PATH) {
+    let event; try { event = JSON.parse(readFileSync(environment.GITHUB_EVENT_PATH, "utf8")); } catch { event = null; }
+    base = event?.pull_request?.base?.sha ?? event?.before ?? null;
+  } else {
+    const remote = spawnSync("git", ["rev-parse", "--verify", "--quiet", "refs/remotes/origin/main"], {cwd: directory, encoding: "utf8"});
+    base = remote.status === 0 ? remote.stdout.trim() : null;
+  }
+  if (typeof base !== "string" || !oid.test(base) || zeros.test(base)) return null;
+  if (spawnSync("git", ["cat-file", "-e", `${base}^{commit}`], {cwd: directory}).status !== 0) return null;
+  if (spawnSync("git", ["merge-base", "--is-ancestor", base, "HEAD"], {cwd: directory}).status !== 0) return null;
+  return base;
+}
+function changedPaths(directory, environment) {
+  const base = releaseBaseline(directory, environment);
+  if (!base) throw new Error("Sealed Oracle spec is missing and the submitted change range cannot be established; run the native proposal");
+  return execFileSync("git", ["diff", "--name-only", base, "HEAD"], {cwd: directory, encoding: "utf8", maxBuffer: 16 * 1024 * 1024}).split("\n").filter(Boolean);
 }
 // Fail before any test: a non-documentation change needs the contract's sealed
 // oracle-spec/1, and publishedContract rejects a missing or mismatched seal.
-export function assertSealedSpec(directory = root, {changed} = {}) {
+export function assertSealedSpec(directory = root, {changed, environment = process.env} = {}) {
   const contract = publishedContract(directory);
   if (contract) return contract;
-  const executable = (changed ?? changedPaths(directory)).filter(name => !documentationPath(name));
+  const executable = (changed ?? changedPaths(directory, environment)).filter(name => !documentationPath(name));
   if (executable.length) throw new Error(`Sealed Oracle spec is missing for non-documentation changes: ${executable.slice(0, 8).join(", ")}${executable.length > 8 ? ", ..." : ""}; run the native proposal`);
   return null;
 }

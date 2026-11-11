@@ -145,7 +145,8 @@ export function specProblems(spec) {
   if (spec.verdict === "APPROVED" && Array.isArray(spec.findings) && spec.findings.some(item => item?.severity === "blocking")) problems.push("An APPROVED spec cannot carry blocking findings");
   const stamp = spec.stamp;
   if (!exactKeys(stamp, STAMP_KEYS) || !ENGINES.includes(stamp.engine) || !text(stamp.model) || !text(stamp.host) || !HEX64.test(stamp.oracle_sha256 ?? "") || !HEX64.test(stamp.proposal_sha256 ?? "") || !(stamp.request_sha256 === null || HEX64.test(stamp.request_sha256 ?? "")) || !/^\d{4}-\d\d-\d\dT\d\d:\d\d:\d\d(?:\.\d+)?Z$/.test(stamp.time ?? "")) problems.push("stamp must hold engine, model, oracle_sha256, host, UTC Z time, proposal_sha256 and request_sha256 (or null)");
-  if (!problems.length) problems.push(...privacyProblems({title: spec.title, acceptance: spec.acceptance, tests: spec.tests, findings: spec.findings}));
+  // Every persisted string, structural paths and stamp provenance included.
+  if (!problems.length) { const {seal: _seal, ...persisted} = spec; problems.push(...privacyProblems(persisted)); }
   return problems;
 }
 
@@ -190,7 +191,7 @@ export function buildSpec({answer, selection, base, engine, model, oracle, host,
   const spec = {kind: KIND, title: answer.title, design: selection.design ?? null, base, scope: [...selection.scope_paths], ...specBody(answer), verdict: "APPROVED",
     stamp: {engine, model, oracle_sha256: oracle, host, time, request_sha256: request === null || request === undefined ? null : sha256(request), proposal_sha256: sha256(proposal)}};
   spec.seal = computeSeal(spec);
-  const problems = [...specProblems(spec), ...privacyProblems({title: spec.title, acceptance: spec.acceptance, tests: spec.tests, findings: spec.findings, reason: selection.reason}, {privateTexts: [proposal, request, ...privateTexts]})];
+  const problems = [...specProblems(spec), ...privacyProblems({...Object.fromEntries(Object.entries(spec).filter(([key]) => key !== "seal")), reason: selection.reason}, {privateTexts: [proposal, request, ...privateTexts]})];
   if (problems.length) throw new SpecError(`Oracle spec is not publishable: ${[...new Set(problems)].join("; ")}`);
   return assertSpec(spec);
 }

@@ -177,17 +177,27 @@ async function sealedSpecRepository(t) {
   return {root, run, commit, modules, selection, spec};
 }
 
-test("release:check fails immediately when a non-documentation change has no sealed spec", async t => {
-  const f = await sealedSpecRepository(t);
+test("release:check fails immediately when a non-documentation change in the submitted range has no sealed spec", async t => {
+  const f = await sealedSpecRepository(t), baseline = await f.run("rev-parse", "HEAD");
+  const event = path.join(f.root, "..", `${path.basename(f.root)}-event.json`); t.after(() => rm(event, {force: true}));
+  await writeFile(event, JSON.stringify({before: baseline})); const environment = {GITHUB_EVENT_PATH: event};
   await writeFile(path.join(f.root, "README.md"), "# Synthetic documentation change\n"); await f.commit("Documentation only");
-  assert.equal(f.modules.release.assertSealedSpec(f.root), null);
+  await writeFile(path.join(f.root, "GUIDE.md"), "# Second documentation commit\n"); await f.commit("More documentation");
+  assert.equal(f.modules.release.assertSealedSpec(f.root, {environment}), null, "a documentation-only multi-commit range keeps its exemption");
   for (const name of ["source.mjs", "AGENTS.md", "CLAUDE.md", ".agents/skills/x/SKILL.md", "plugins/x/README.md"]) assert.equal(f.modules.release.documentationPath(name), false, name);
   await writeFile(path.join(f.root, "source.mjs"), "export default 2;\n"); await f.commit("Executable change without a spec");
-  assert.throws(() => f.modules.release.assertSealedSpec(f.root), /Sealed Oracle spec is missing for non-documentation changes: source\.mjs/);
+  await writeFile(path.join(f.root, "README.md"), "# Documentation after source\n"); await f.commit("Documentation after the source change");
+  assert.throws(() => f.modules.release.assertSealedSpec(f.root, {environment}), /Sealed Oracle spec is missing for non-documentation changes: source\.mjs/);
+  // Missing, zero, unfetched and unrelated baselines fail closed.
+  for (const value of [{}, {before: "0".repeat(40)}, {before: "1".repeat(40)}]) { await writeFile(event, JSON.stringify(value)); assert.throws(() => f.modules.release.assertSealedSpec(f.root, {environment}), /range cannot be established/); }
+  assert.throws(() => f.modules.release.assertSealedSpec(f.root, {environment: {}}), /range cannot be established/);
+  await f.run("update-ref", "refs/remotes/origin/main", baseline);
+  assert.throws(() => f.modules.release.assertSealedSpec(f.root, {environment: {}}), /source\.mjs/);
+  await writeFile(event, JSON.stringify({pull_request: {base: {sha: baseline}}}));
   const executed = [];
-  await assert.rejects(f.modules.release.validateRelease({nativeEvidence: false, priorCoverage: {covered: [], invalidated: []}, execute: async argv => executed.push(argv), sealed: () => f.modules.release.assertSealedSpec(f.root)}), /missing/);
+  await assert.rejects(f.modules.release.validateRelease({nativeEvidence: false, priorCoverage: {covered: [], invalidated: []}, execute: async argv => executed.push(argv), sealed: () => f.modules.release.assertSealedSpec(f.root, {environment})}), /missing/);
   assert.deepEqual(executed, []);
-  const cli = await promisify(execFile)(process.execPath, [path.join(f.root, "scripts/release-validation.mjs")], {cwd: f.root, env: {...process.env, GITHUB_ACTIONS: ""}}).then(() => null, error => error);
+  const cli = await promisify(execFile)(process.execPath, [path.join(f.root, "scripts/release-validation.mjs")], {cwd: f.root, env: {...process.env, GITHUB_ACTIONS: "", GITHUB_EVENT_PATH: event}}).then(() => null, error => error);
   assert.equal(cli?.code, 1); assert.match(cli.stderr, /^MYCRM_RELEASE_CHECK=FAILED Sealed Oracle spec is missing/m);
 });
 

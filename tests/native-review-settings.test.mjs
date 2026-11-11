@@ -33,6 +33,8 @@ async function contractRepository(t){
  const git=async(...args)=>(await execute('git',args,{cwd:repo})).stdout.trim();
  await git('init','-q','-b','main');await git('add','.');await git('-c','user.name=Synthetic','-c','user.email=synthetic@example.invalid','commit','-qm','Synthetic baseline');
  await execute('git',['init','-q','-b','main','--bare',origin]);await git('remote','add','origin',origin);await git('push','-q','origin','main');
+ // Canonical main leads fetched origin/main with an unpublished local commit.
+ await writeFile(path.join(repo,'tests/local.test.mjs'),"import test from 'node:test';test('local',()=>{});\n");await git('add','.');await git('-c','user.name=Synthetic','-c','user.email=synthetic@example.invalid','commit','-qm','Unpublished local work');
  const selection={change_class:'bug_fix',scope_paths:['candidate.mjs','tests/*'],categories:[{name:'sanity',tests:[],fixtures:[]},{name:'focused',tests:['tests/candidate.test.mjs'],fixtures:[]}],reason:'Synthetic focused repair.',revision_of:null,design:null};
  const spec={title:'Synthetic candidate repair',runtime_paths:['candidate.mjs'],acceptance:[{criterion:'The candidate exports the corrected value.',tests:['tests/candidate.test.mjs']}],tests:[{module:'tests/candidate.test.mjs',purpose:'Prove the corrected export.'}],findings:[{severity:'warning',message:'Synthetic warning.'}]};
  const api={impact:'NONE',request_kind:'NOT_REQUIRED',requested_change:null,request_quote:null,request_evidence:null};
@@ -41,6 +43,15 @@ async function contractRepository(t){
 }
 const markers=(f,verdict='APPROVED')=>`Synthetic isolated review.\nVALIDATION_SELECTION=${JSON.stringify(f.selection)}\nORACLE_SPEC=${JSON.stringify(f.spec)}\nAPI_VERSION_ASSESSMENT=${JSON.stringify(f.api)}\nAUTHENTICATION_IMPACT=NONE\nOWNER_APPROVAL_STATUS=NOT_REQUIRED\nORACLE_VERDICT=${verdict}\n`;
 const proposalText='Problem: synthetic defect. Cause: synthetic cause. Recommended change: synthetic repair.';
+// verify-proposal admits the fetched base below unpublished local main and
+// still refuses once the checkout moves after issuance.
+async function proposalVerifies(f,env=f.env){
+ const verified=JSON.parse((await execute(process.execPath,[launcher,'verify-proposal'],{cwd:f.repo,env,timeout:30000})).stdout);
+ assert.equal(verified.verdict,'APPROVED');assert.equal(verified.base_commit,await f.git('rev-parse','refs/remotes/origin/main'));
+ assert.notEqual(verified.base_commit,await f.git('rev-parse','HEAD'));
+ await f.git('-c','user.name=Synthetic','-c','user.email=synthetic@example.invalid','commit','-q','--allow-empty','-m','Moved after the proposal');
+ await assert.rejects(execute(process.execPath,[launcher,'verify-proposal'],{cwd:f.repo,env,timeout:30000}),/different base commit|drifted/);
+}
 async function sealed(f){
  const contract=JSON.parse(await readFile(path.join(f.repo,'scripts/validation-selection.json'),'utf8')),spec=await import('../scripts/oracle-spec.mjs');
  assert.equal(spec.verifyContractSpec(contract).seal,contract.spec.seal);assert.equal(spec.computeSeal(contract.spec),contract.spec.seal);
@@ -55,6 +66,7 @@ test('codex proposal outputs a stamped sealed spec inside the contract with the 
  await writeFile(path.join(f.repo,'Vault/tmp/request.md'),'Synthetic request bytes.\n');
  await execute(process.execPath,[launcher,'proposal',proposalText,'--engine','codex','--request-file','Vault/tmp/request.md'],{cwd:f.repo,env:f.env,timeout:30000});
  const contract=await sealed(f),argv=JSON.parse(await readFile(f.env.SYNTHETIC_CAPTURE,'utf8'));
+ await proposalVerifies(f);
  assert.deepEqual([contract.spec.stamp.engine,contract.spec.stamp.model,contract.spec.stamp.request_sha256],['codex','synthetic-selected-model',(await import('node:crypto')).createHash('sha256').update('Synthetic request bytes.\n').digest('hex')]);
  assert.match(argv.at(-1),/ORACLE_SPEC=<single-line JSON/);assert.match(argv.at(-1),/<request>\nSynthetic request bytes/);
 });
@@ -65,6 +77,7 @@ test('claude proposal runs read-only from stdin and its structured answer seals 
  await writeFile(path.join(f.bin,'claude'),`#!${process.execPath}\nconst fs=require('node:fs');fs.writeFileSync(process.env.SYNTHETIC_CAPTURE,JSON.stringify({args:process.argv.slice(2),claudecode:process.env.CLAUDECODE??null}));fs.writeFileSync(${JSON.stringify(stdin)},fs.readFileSync(0));process.stdout.write(JSON.stringify({type:'result',is_error:false,structured_output:${JSON.stringify(answer)},modelUsage:{'synthetic-claude-model':{}}}));\n`);await chmod(path.join(f.bin,'claude'),0o700);
  await execute(process.execPath,[launcher,'proposal',proposalText],{cwd:f.repo,env:{...f.env,CLAUDECODE:'1'},timeout:30000});
  const contract=await sealed(f),capture=JSON.parse(await readFile(f.env.SYNTHETIC_CAPTURE,'utf8'));
+ await proposalVerifies(f,{...f.env,CLAUDECODE:'1'});
  assert.deepEqual([contract.spec.stamp.engine,contract.spec.stamp.model,contract.spec.stamp.request_sha256],['claude','synthetic-claude-model',null]);
  assert.equal(capture.claudecode,null);assert.equal(capture.args[capture.args.indexOf('--tools')+1],'Read,Grep,Glob');assert.ok(capture.args.includes('--restricted')&&capture.args.includes('--strict-mcp-config'));
  assert.equal(capture.args.includes(proposalText),false);assert.match(await readFile(stdin,'utf8'),/Synthetic defect|synthetic defect/);

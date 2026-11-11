@@ -265,6 +265,22 @@ test("native transitive witness custody rejects source crossings and middle move
   await assert.rejects(readValidationProofs({root: repo, directory: nativeDirectory, validation: [binding], checkCurrentExecutable: false}), /crosses owning source scope/);
 });
 
+test("the validated-commit fast path requires a fully verifying live receipt", async (t) => {
+  const {repo, env, git, prepare} = await fixture(t); await prepare(); await git("branch", "-m", "main");
+  await git("-c", "user.name=Synthetic", "-c", "user.email=synthetic@example.invalid", "commit", "-qm", "Fast-path candidate");
+  await command(repo, ["review"], env);
+  assert.match((await command(repo, ["review"], env)).stdout, /ORACLE_REVIEW=NO_UNVALIDATED_COMMITS/, "an intact receipt keeps the fast path");
+  const receipt = JSON.parse(await readFile(path.join(repo, ".git/oracle/approval.json")));
+  const series = path.join(repo, ".git/oracle/series"), held = path.join(path.dirname(repo), "held-series");
+  await rename(series, held);
+  const outcome = await command(repo, ["review"], env).then(value => value.stdout, error => `${error.stdout}${error.stderr}`);
+  assert.doesNotMatch(outcome, /NO_UNVALIDATED_COMMITS/, "missing dependent series custody prevents the fast path");
+  await rm(series, {recursive: true, force: true}); await rename(held, series);
+  await writeFile(path.join(repo, ".git/oracle/approval.json"), JSON.stringify(receipt));
+  await rm(path.join(repo, ".git/oracle/approval.json"));
+  assert.match((await command(repo, ["review"], env)).stdout, /ORACLE_REVIEW=NO_UNVALIDATED_COMMITS/, "an absent receipt keeps the documented checkpoint behaviour");
+});
+
 test("native raw outside-manifest finding requires current absence coverage and rejects late ignored source drift", async (t) => {
   const {repo, env, git, prepare} = await fixture(t); await prepare();
   const base = await git("rev-parse", "HEAD");

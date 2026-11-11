@@ -69,6 +69,15 @@ test("privacy boundary rejects credentials, addresses, home paths and copied pri
   assert.throws(() => build({privateTexts: [privateText], answer: answer({findings: [{severity: "warning", message: privateText}]})}), /copies 12/);
   assert.ok(build({privateTexts: [privateText], answer: answer({acceptance: [{criterion: "Reminders respect the configured weekend schedule.", tests: ["tests/example.test.mjs"]}]})}));
   assert.throws(() => s.verifyContractSpec(contract(build(), {selection: selection({reason: "Mail someone@example.com"})})), /not publishable/);
+  // Structural fields and stamp provenance are persisted strings too.
+  const structural = selection({scope_paths: ["src/*", "tests/*"]});
+  assert.throws(() => build({selection: structural, answer: answer({runtime_paths: ["src/someone@example.com/x.mjs"]})}), /address/);
+  assert.throws(() => build({selection: selection({scope_paths: ["src/example.mjs", "tests/*", "docs/password=hunter2hunter2.md"]})}), /credential/);
+  assert.throws(() => build({host: "someone@example.com"}), /address/);
+  assert.throws(() => build({model: "Bearer abcdefghijklmnopqrstu"}), /credential/);
+  const tamperedPath = build(); tamperedPath.runtime_paths = ["src/someone@example.com/x.mjs"]; tamperedPath.scope = [...tamperedPath.scope, "src/*"]; tamperedPath.seal = s.computeSeal(tamperedPath);
+  assert.throws(() => s.verifyContractSpec({...contract(tamperedPath), selection: selection({scope_paths: tamperedPath.scope})}), /address/);
+  assert.ok(build({selection: structural, answer: answer({runtime_paths: ["src/example.mjs"]})}));
 });
 
 test("contract and spec are one executable test contract", () => {

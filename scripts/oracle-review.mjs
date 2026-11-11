@@ -845,7 +845,12 @@ async function verifyProposal() {
   await assertPublishedInvocation(record.invocation, await oracleDirectory());
   // Explicit current-proposal admission is strict. Completed review separately
   // retains the sealed proposal as scope evidence and assesses current criteria.
-  verifyProposalRecord(record, await git(["rev-parse", "HEAD"]));
+  // A contract-producing proposal binds fetched origin/main, which unpublished
+  // local commits may lead; its contract and spec must name that same base and
+  // the proposal-time checkout must still be the current one.
+  const head = await git(["rev-parse", "HEAD"]), contract = record.validation_contract;
+  const fetchedBase = record.base_commit !== head && contract?.base_commit === record.base_commit && (contract.spec === undefined || contract.spec.base === record.base_commit) && record.input_binding?.base_commit === head;
+  verifyProposalRecord(record, fetchedBase ? record.base_commit : head);
   assertInputsMatch(record.input_binding, await captureInputs({root: process.cwd(), base: await git(["rev-parse", "HEAD"]), validationEvidence: record.validation_evidence, ownerApprovalEvidence: record.owner_approval_evidence, reviewerSettings: record.input_binding.reviewer_settings}));
   if (record.schema !== "my-crm.oracle-proposal/v2") throw new Error("Legacy Oracle proposal requires a fresh authority-bound proposal review");
   console.log(JSON.stringify({verdict: "APPROVED", base_commit: record.base_commit, proposal_sha256: record.proposal_sha256}));
@@ -949,9 +954,13 @@ async function authoredCandidateIdentity() {
   }))});
 }
 
+// An absent live receipt keeps the documented checkpoint behaviour; a present
+// receipt must verify completely, dependent custody (series, runs) included.
 async function liveReceiptStillCurrent() {
+  try { await readReceipt(); }
+  catch (error) { if (error.code === "ENOENT") return true; return false; }
   try { await verifyLiveReceipt(await git(["rev-parse", "HEAD^{tree}"])); return true; }
-  catch (error) { return error.code === "ENOENT"; }
+  catch { return false; }
 }
 
 async function continuousReview(args, controller) {

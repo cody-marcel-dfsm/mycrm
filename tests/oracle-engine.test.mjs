@@ -92,3 +92,17 @@ test("one launcher spawn still serves both engines inside the bound reviewer pol
   assert.match(source, /spawn\(claude \? "claude" : "codex"/);
   assert.match(source, /"--append-system-prompt", trustedReviewerRole/);
 });
+
+test("the engine and spec modules belong to the bound Oracle producer closure", async () => {
+  const {policyModules, policyFingerprint} = await import("../scripts/oracle-policy.mjs");
+  for (const name of ["oracle-engine.mjs", "oracle-spec.mjs"]) assert.ok(policyModules.includes(name), name);
+  const sources = Object.fromEntries(await Promise.all(policyModules.map(async name => [name, await readFile(new URL(`../scripts/${name}`, import.meta.url), "utf8")])));
+  const original = policyFingerprint(sources["oracle-review.mjs"], sources["oracle-series.mjs"], sources);
+  for (const name of ["oracle-engine.mjs", "oracle-spec.mjs"]) {
+    const drifted = {...sources, [name]: `${sources[name]}\n// Synthetic producer drift.\n`};
+    assert.notEqual(policyFingerprint(drifted["oracle-review.mjs"], drifted["oracle-series.mjs"], drifted), original, name);
+  }
+  const {captureInputs} = await import("../scripts/oracle-inputs.mjs");
+  const inputs = await captureInputs({root: new URL("..", import.meta.url).pathname, base: "HEAD"});
+  for (const name of ["oracle-engine.mjs", "oracle-spec.mjs"]) assert.ok(inputs.tool_source_files.includes(name), name);
+});
