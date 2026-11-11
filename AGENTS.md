@@ -51,6 +51,24 @@ Ordinary implementers do not adopt the independent approver skill.
 A feature design includes a test plan: the Oracle refuses a `feature` contract
 without a plan bound to that exact design, as `scripts/validation-contract.md` defines.
 
+## Local Oracle proposal to sealed spec — owner direction, 2026-11-11
+
+The project-local Oracle, run by the `claude` or `codex` CLI on this machine,
+reviews an implementation proposal and outputs a self-contained, stamped and
+sealed `oracle-spec/1` implementation spec inside the validation contract
+(`scripts/validation-selection.json`). This supersedes deterministic-only or
+"no model review" wording only for the proposal to spec step; completed-source
+review, receipts, CI evidence and publication checkpoints are unchanged.
+Documentation-only changes need no spec. Use
+`.agents/skills/my-crm-implementation/SKILL.md` for the lifecycle: sync in,
+`npm run oracle:proposal -- "<proposal>" [--engine claude|codex|auto]
+[--request-file <path>]`, build the spec's scope, commit the sealed contract, pass
+its selected categories, re-sync, then complete review and publication. The seal is
+a sanity check that the Oracle step ran, not security. The committed spec carries
+no raw request, proposal or private Vault content; working files stay under the
+Git-ignored `Vault/tmp/oracle-spec/`. CI fails immediately when a non-documentation
+change lacks its sealed spec or the seal does not recompute.
+
 # My CRM repository contract
 
 My CRM is an independent third-party BOS application and native GPT plugin.

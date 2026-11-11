@@ -197,7 +197,13 @@ test("export verifies actual native originals and composes only independently as
   await writeFile(path.join(root, "package.json"), JSON.stringify({name: "synthetic-native-transport", type: "module", scripts: {build: "node synthetic-check.mjs build", test: "node synthetic-check.mjs test", "check:release": "node synthetic-check.mjs package"}}));
   await writeFile(path.join(root, "synthetic-check.mjs"), "import{mkdir,writeFile}from'node:fs/promises';if(process.argv[2]==='build'){await mkdir('dist/my-crm',{recursive:true});await writeFile('dist/my-crm/artifact.txt','synthetic artifact');}console.log('Synthetic original command ran');if(process.argv[2]==='test'&&process.env.SYNTHETIC_FAIL_NATIVE_CHECK)process.exitCode=1;\n");
   await mkdir(path.join(root, "tests"));
-  for (const filename of requiredCommands[1].slice(2)) {
+  // The repository's own required commands decide the fixture: the bootstrap
+  // test-file list or a selected contract's category runner.
+  if (requiredCommands.some(command => command[1] === "scripts/validation-contract.mjs")) {
+    await mkdir(path.join(root, "scripts"));
+    await writeFile(path.join(root, "scripts/validation-contract.mjs"), "console.log('Synthetic original command ran');if(process.env.SYNTHETIC_FAIL_NATIVE_CHECK)process.exitCode=1;\n");
+  }
+  for (const filename of requiredCommands[1][1] === "--test" ? requiredCommands[1].slice(2) : []) {
     await writeFile(path.join(root, filename), "import test from 'node:test';import assert from 'node:assert/strict';test('synthetic native selected check',()=>assert.equal(Boolean(process.env.SYNTHETIC_FAIL_NATIVE_CHECK),false));\n");
   }
   await git("init", "-b", "main"); await git("config", "user.name", "Synthetic Maintainer"); await git("config", "user.email", "synthetic@example.invalid"); await git("add", "."); await git("commit", "-m", "Synthetic source baseline");

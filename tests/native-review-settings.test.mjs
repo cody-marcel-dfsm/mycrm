@@ -81,3 +81,12 @@ test('a proposal is refused before dispatch when main lacks fetched origin/main 
  await assert.rejects(readFile(f.env.SYNTHETIC_CAPTURE,'utf8'),{code:'ENOENT'});
  await assert.rejects(readFile(path.join(f.repo,'scripts/validation-selection.json'),'utf8'),{code:'ENOENT'});
 });
+
+test('implementation guidance, its plain mirrors and the Claude Code entry agree',async()=>{
+ const read=name=>readFile(new URL(`../${name}`,import.meta.url),'utf8');
+ for(const skill of ['my-crm-implementation','ship-it'])assert.equal(await read(`.claude/skills/${skill}/SKILL.md`),await read(`.agents/skills/${skill}/SKILL.md`),skill);
+ const implementation=await read('.agents/skills/my-crm-implementation/SKILL.md'),claude=await read('CLAUDE.md'),agents=await read('AGENTS.md');
+ for(const step of ['git fetch origin main','git merge-base --is-ancestor origin/main HEAD','npm run oracle:proposal','--engine claude|codex|auto','node scripts/oracle-spec.mjs verify','scripts/validation-contract.mjs run --category','npm run oracle:review','npm run publication:prepare','npm run publication:publish'])assert.ok(implementation.includes(step),step);
+ assert.match(implementation,/never load, adopt, quote\s+or\s+impersonate/);assert.match(claude,/AGENTS\.md/);assert.match(claude,/my-crm-implementation/);assert.match(claude,/never load, adopt, quote or impersonate/);
+ assert.match(agents,/oracle-spec\/1/);assert.match(agents,/my-crm-implementation\/SKILL\.md/);
+});

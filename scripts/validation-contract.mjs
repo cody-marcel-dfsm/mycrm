@@ -126,6 +126,7 @@ export function validateContract(contract,catalog){
  checkSelection(contract.selection,catalog);
  if(!same(contract.delivery_policy,deliveryPolicy(contract.selection.change_class)))throw Error('Delivery policy changed; preserve the original host clock');
  if(contract.catalog_sha256!==hash(catalog)||!same(contract.commands,selectedCommands(contract.selection,catalog)))throw Error('Catalog or exact commands changed; obtain explicit revision');
+ verifyContractSpec(contract);
  return contract;
 }
 export function publishedContract(root=rootDefault){
