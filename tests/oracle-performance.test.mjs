@@ -944,9 +944,13 @@ test("missing exact command intake waits idempotently and queued native evidence
   const {repo,root,env,prepare,git}=await fixture(t); await prepare();
   const old=await git("rev-parse","HEAD"),oldTree=await git("rev-parse","HEAD^{tree}");
   await writeFile(path.join(repo,"package.json"),JSON.stringify({name:"synthetic-intake",scripts:{build:"node -e \"process.stdout.write('synthetic build')\"",test:"node -e \"process.stdout.write('synthetic test')\"","check:release":"node -e \"process.stdout.write('synthetic package')\""}}));
+  // Follow the launcher's actual required commands (bootstrap or selected
+  // category runner) so exact intake can be satisfied by the synthetic proofs.
+  const commands=(await import("../scripts/validation-transport.mjs")).requiredCommands.map(item=>[...item]),proofs=[];
+  await mkdir(path.join(repo,"scripts"),{recursive:true});await writeFile(path.join(repo,"scripts/validation-contract.mjs"),"process.stdout.write('synthetic category');\n");
+  await mkdir(path.join(repo,"tests"),{recursive:true});for(const name of commands.flatMap(item=>item[1]==="--test"?item.slice(2):[]))await writeFile(path.join(repo,name),"import test from 'node:test';test('synthetic',()=>{});\n");
   await git("add",".");await git("-c","user.name=Synthetic","-c","user.email=synthetic@example.invalid","commit","-qm","Synthetic committed candidate");
   const calls=path.join(root,"intake-model-calls.jsonl"),runEnv={...env,ORACLE_OMIT_VALIDATION:"1",ORACLE_CALLS:calls};
-  const commands=[["npm","run","build"],["npm","test"],["npm","run","check:release"]],proofs=[];
   for(const item of commands){const captured=await command(repo,["validate","--",...item],runEnv),reference=captured.stdout.match(/ORACLE_VALIDATION_EVIDENCE=(.+)/)[1];proofs.push({reference,record:JSON.parse(await readFile(reference.slice(1)))});}
   const manifest={schema:"my-crm.required-command-coverage/v1",source_commit:old,source_tree:oldTree,checks:commands.map((item,index)=>({command:item,executions:[proofs[index].record.record_sha256]}))};
   const stale=path.join(repo,"Vault/tmp/stale-command-intake.json"),exact=path.join(repo,"Vault/tmp/exact-command-intake.json");await writeFile(stale,JSON.stringify(manifest));
