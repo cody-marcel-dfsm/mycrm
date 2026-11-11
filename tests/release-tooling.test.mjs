@@ -173,7 +173,7 @@ async function sealedSpecRepository(t) {
   await commit("Synthetic baseline");
   const modules = {contract: await import(pathToFileURL(path.join(root, "scripts/validation-contract.mjs"))), release: await import(pathToFileURL(path.join(root, "scripts/release-validation.mjs"))), spec: await import(pathToFileURL(path.join(root, "scripts/oracle-spec.mjs")))};
   const selection = {change_class: "bug_fix", scope_paths: ["source.mjs", "tests/*"], categories: [{name: "sanity", tests: [], fixtures: []}, {name: "focused", tests: ["tests/source.test.mjs"], fixtures: []}], reason: "Synthetic focused repair", revision_of: null};
-  const spec = base => modules.spec.buildSpec({answer: {title: "Synthetic", runtime_paths: ["source.mjs"], acceptance: [{criterion: "The source exports the corrected value.", tests: ["tests/source.test.mjs"]}], tests: [{module: "tests/source.test.mjs", purpose: "Prove the export."}], findings: []}, selection, base, engine: "codex", model: "synthetic-model", oracle: "0".repeat(64), host: "synthetic-host", proposal: "Synthetic proposal"});
+  const spec = base => modules.spec.buildSpec({answer: {title: "Synthetic", runtime_paths: ["source.mjs"], acceptance: [{criterion: "The source exports the corrected value.", tests: ["tests/source.test.mjs"]}], tests: [{module: "tests/source.test.mjs", purpose: "Prove the export."}], findings: []}, selection, base, engine: "codex", model: "synthetic-model", oracle: "0".repeat(64), host: "synthetic-host", time: "2026-11-11T00:00:00Z", proposal: "Synthetic proposal"});
   return {root, run, commit, modules, selection, spec};
 }
 
