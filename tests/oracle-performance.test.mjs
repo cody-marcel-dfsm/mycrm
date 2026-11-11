@@ -629,7 +629,7 @@ if(admitted && fs.existsSync(trigger)) {
   fs.writeFileSync(path.join(process.cwd(),'candidate.txt'),'source changed before dispatch');
   fs.writeFileSync(damage.target,'immutable evidence changed before dispatch');
 }
-try {process.stdout.write(cp.execFileSync(actual,args,{cwd:process.cwd()}));}
+try {process.stdout.write(cp.execFileSync(actual,args,{cwd:process.cwd(),stdio:['inherit','pipe','pipe']}));}
 catch(error){if(error.stderr)process.stderr.write(error.stderr);process.exitCode=error.status??1;}
 `); await chmod(shim, 0o700);
     let reference, target;
@@ -862,6 +862,13 @@ test("live gates bind all inputs, emit owner verifier JSON, and retain phase dia
   await writeFile(approvalFile, JSON.stringify(changedMode));
   await assert.rejects(command(repo, ["verify-index"], env), /digest/);
   // Existing content-bound read-only receipts retain their historical meaning.
+  // Such historical receipts predate native terminal admission, which binds a
+  // newly issued receipt to its own run outcome and refuses any rewrite.
+  const rewritten = {...changedMode, reviewer_metadata_sha256: sha256(`${JSON.stringify(changedMode.reviewer, null, 2)}\n`)};
+  rewritten.receipt_sha256 = receiptSha256(rewritten);
+  await writeFile(approvalFile, JSON.stringify(rewritten));
+  await assert.rejects(command(repo, ["verify-index"], env), /terminal admission differs from its receipt/);
+  delete changedMode.native_terminal_admission;
   changedMode.reviewer_metadata_sha256 = sha256(`${JSON.stringify(changedMode.reviewer, null, 2)}\n`);
   changedMode.receipt_sha256 = receiptSha256(changedMode);
   await writeFile(approvalFile, JSON.stringify(changedMode));
@@ -1859,7 +1866,7 @@ test("concurrent review requests attach to the live native parent without supers
 
 function runningReview(repo, env, args = [], entrypoint = launcher) {
   const child = spawn(process.execPath, [entrypoint, "review", ...args], {cwd: repo,
-    env: {...process.env, ...env, CODEX_THREAD_ID: "", CODEX_SELECTED_MODEL: "synthetic-test-model", CODEX_SELECTED_REASONING_EFFORT: "high"}, stdio: ["ignore", "pipe", "pipe"]});
+    env: {...process.env, ...env, CLAUDECODE: "", CODEX_THREAD_ID: "", CODEX_SELECTED_MODEL: "synthetic-test-model", CODEX_SELECTED_REASONING_EFFORT: "high"}, stdio: ["ignore", "pipe", "pipe"]});
   let stdout = "", stderr = "";
   child.stdout.on("data", (value) => { stdout += value; }); child.stderr.on("data", (value) => { stderr += value; });
   const done = new Promise((resolve, reject) => { child.once("error", reject); child.once("close", (code, signal) => resolve({code, signal, stdout, stderr})); });
@@ -2084,7 +2091,9 @@ test("precommit source arrival waits in the same parent before assessing the com
 
 test("tracked producer disappearance waits for its committed restoration in the same native owner", async (t) => {
   const {repo, root, env, git, prepare} = await fixture(t); await prepare(); await git("branch", "-m", "main");
-  await cp(new URL("../scripts", import.meta.url), path.join(repo,"scripts"), {recursive:true});
+  // Copy the producer modules only: the live checkout's own sealed validation
+  // contract names a base this synthetic repository does not contain.
+  await cp(new URL("../scripts", import.meta.url), path.join(repo,"scripts"), {recursive:true, filter:source=>path.basename(source)!=="validation-selection.json"});
   await cp(new URL("../package.json", import.meta.url), path.join(repo,"package.json"));
   await cp(new URL("../node_modules", import.meta.url), path.join(repo,"node_modules"), {recursive:true,dereference:true});
   await writeFile(path.join(repo,".gitignore"),"Vault/\nnode_modules/\n");await git("add",".");
@@ -2153,7 +2162,7 @@ if(fs.existsSync(trigger) && fs.existsSync(path.join(process.cwd(),'.git/oracle/
  fs.unlinkSync(trigger);
  cp.execFileSync(actual,['-c','user.name=Synthetic','-c','user.email=synthetic@example.invalid','commit','--allow-empty','-qm','Commit during actual checkpoint finalization'],{cwd:process.cwd()});
 }
-try { process.stdout.write(cp.execFileSync(actual,process.argv.slice(2),{cwd:process.cwd()})); }
+try { process.stdout.write(cp.execFileSync(actual,process.argv.slice(2),{cwd:process.cwd(),stdio:['inherit','pipe','pipe']})); }
 catch(e) { if(e.stderr) process.stderr.write(e.stderr); process.exitCode=e.status??1; }
 `); await chmod(shim, 0o700);
   const ready = path.join(root, "ready"), owner = runningReview(repo, {...env, ORACLE_DELAY: "600", ORACLE_READY: ready});

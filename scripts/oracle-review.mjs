@@ -520,7 +520,11 @@ async function review(args = [], {run, phase, producer = null, verifyProducer = 
     process.exitCode = 1; return {...response, input_binding: inputs};
   }
   const receipt = {schema: "my-crm.oracle-approval/v2", ...reviewerRecord, parallel_review_evidence: parallelEvidence, input_binding: inputs, proposal_record_sha256: proposalRecord.record_sha256, repository: "my-crm", invocation: currentInvocation(), reviewed_tree: candidate.tree, base_commit: candidate.base, ...(candidate.commit ? {candidate_commit: candidate.commit, deployment_history_base_commit: candidate.parent} : {}), ...response, deployment_baseline_commit: deployment.baseline, deployment_history_sha256: deployment.sha256, deployment_history_status: deployment.status, recovered_deployment_commits: deployment.recovered_commits, review_series_sha256: completedSeries.sha256, review_series_id: completedSeries.series_id, review_round: series.public.round, validation_evidence: validationEvidence, requested_validation_evidence: requestedValidationEvidence, inherited_validation_evidence: inherited.evidence, owner_approval_evidence: ownerApprovalEvidence};
-  receipt.native_terminal_admission = {invocation_id: currentInvocation().id, controller_id: (await activeReviewController())?.id ?? null};
+  // A controller registered for an orphaned (legacy) native attempt has that
+  // attempt's own run outcome as its terminal record; only a native parent
+  // controller writes a separate terminal outcome that admission must await.
+  const activeController = await activeReviewController();
+  receipt.native_terminal_admission = {invocation_id: currentInvocation().id, controller_id: activeController && !activeController.legacy_invocation && !activeController.legacy_unregistered ? activeController.id : null};
   receipt.receipt_sha256 = receiptSha256(receipt);
   // The final exact-input check precedes series publication above. Live receipt
   // verification independently rejects source movement after that observation.
@@ -945,6 +949,11 @@ async function authoredCandidateIdentity() {
   }))});
 }
 
+async function liveReceiptStillCurrent() {
+  try { await verifyLiveReceipt(await git(["rev-parse", "HEAD^{tree}"])); return true; }
+  catch (error) { return error.code === "ENOENT"; }
+}
+
 async function continuousReview(args, controller) {
   let requested;
   try { requested = reviewArguments(args); }
@@ -972,7 +981,9 @@ async function continuousReview(args, controller) {
       newEvidence ||= owner !== arrived.ownerApprovalEvidence; owner = arrived.ownerApprovalEvidence;
     }
     const selection = await shipmentPlan({observeReview: false});
-    if (!newEvidence && selection.last_validated_commit && ["DELIVER", "NO_CHANGES"].includes(selection.action)) {
+    // A validated commit needs no new review only while its live receipt still
+    // verifies; drifted observed inputs (such as ignored helpers) require one.
+    if (!newEvidence && selection.last_validated_commit && ["DELIVER", "NO_CHANGES"].includes(selection.action) && await liveReceiptStillCurrent()) {
       console.log(`ORACLE_REVIEW=NO_UNVALIDATED_COMMITS commit=${selection.last_validated_commit}`);
       return {action: "NO_UNVALIDATED_COMMITS", candidate_commit: selection.last_validated_commit};
     }
