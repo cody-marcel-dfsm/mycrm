@@ -54,8 +54,8 @@
         ]
       }
     ],
-    "reason": "Retain the bounded feature selection: seven modules cover proposal adapters, specification integrity, contract enforcement and publication behavior. Sanity retains privacy and repository boundaries. Run all categories completely; preserve the original feature300s delivery clock and failed attempts, cap reasoning at medium, and use synthetic engine doubles without paid fallback. No recurrence expansion is justified.",
-    "revision_of": "84b0cd87d1a562b60432a26ec50255b53a4f02ac9baf56a1691fe01c3a6bd1c4",
+    "reason": "Keep the seven-module feature selection and its bound design plan. Add explicit lifecycle repair requirements within existing scope; retain complete privacy and boundary sanity, original failures and the original feature300s publication clock. Execute every selected category without filtering, skipping or quarantine. Use medium maximum reasoning and synthetic engine adapters without paid fallback; leave the recurrence catalog unchanged.",
+    "revision_of": "432d3ef166e3dba93c799e1de831b8e11d8c9011d6f964f841393e0c46d62c19",
     "design": "Vault/docs/design/oracle-implementation-spec.md"
   },
   "base_commit": "a6f2ec01abb8c8ddb47fc1b85710c99054128e6b",
@@ -68,8 +68,8 @@
     "architecture": "x64",
     "options_sha256": "abe606b43ec20381d6290b1098ca6fb5ccdf4666008979be2a2c892605ca8eb2"
   },
-  "proposal_sha256": "1e1838f6230f5ccb879671bfd2409ddf02fd539f221f404daa6bec70c990978c",
-  "review_sha256": "084345ffc0e32936b5a06b3fd731f0b6c271683466138f159d88bb71f5d55c7c",
+  "proposal_sha256": "755663fb399ae4d9a0760fb1ed2a1ee4abdb3dfb807f6899eba72c923dcae520",
+  "review_sha256": "56ad52073161779dac203a0450072ae313b625cc643c9c9cc43bbffb273f2e74",
   "commands": [
     {
       "category": "sanity",
@@ -146,7 +146,7 @@
   },
   "spec": {
     "kind": "oracle-spec/1",
-    "title": "Sealed proposal specifications",
+    "title": "Sealed proposal specifications and reliable review completion",
     "design": "Vault/docs/design/oracle-implementation-spec.md",
     "base": "a6f2ec01abb8c8ddb47fc1b85710c99054128e6b",
     "scope": [
@@ -181,17 +181,20 @@
       "scripts/release-validation.mjs"
     ],
     "acceptance": [
-      "Explicit engine selection supports codex and claude; automatic dispatch follows the active harness. An unavailable selected executable causes failure without switching engines or invoking a paid alternative.",
-      "The claude adapter accepts structured decisions using file inspection tools only, disables MCP access and persistence, removes inherited harness identity, and rejects missing model identity or ambiguous decision markers. External governing documents and supplied evidence enter through verified content and custody bindings; changed bindings abort dispatch.",
-      "Proposal admission fetches main from origin and uses the fetched commit throughout the proposal, specification and contract. A different branch, unresolved merge, failed fetch or local history lacking that commit prevents contract creation.",
-      "Canonical serialization reproduces the reference fixture's seal, handles Unicode consistently and refuses unsupported numeric forms or duplicate JSON keys. Changes to sealed fields invalidate verification.",
-      "The launcher constructs provenance from the selected engine, reported model, governing implementation digests, execution host, UTC timestamp and exact input digests. Reviewer output supplies behavioral requirements rather than authoritative provenance fields.",
-      "Every executable change class requires an approved, well-formed specification whose seal verifies. Contract admission rejects absent specifications, inconsistent base or proposal digests, differing design or scope, runtime paths beyond scope, and any difference between specification modules and selected executable test modules.",
-      "Publication-safe text excludes credential material, address values and private filesystem locations. Sealing rejects prohibited reuse of private input wording; verification retains deterministic privacy checks without requiring private inputs.",
-      "A bug_fix contract executes its selected reproduction category with the embedded specification, retaining genuine before-and-after evidence requirements. A docs_only contract uses document sanity without a specification and refuses an attached specification.",
-      "Release validation rejects executable changes lacking a contract and rejects missing, malformed or inconsistent specifications before dispatching checks. Genuine documentation remains admissible under its document contract. Exact-source native evidence import and complete required-command coverage remain enforced.",
-      "Both proposal adapters produce one contract containing the specification, and the established completed-review lifecycle retains its candidate integrity, failure handling and publication checkpoints.",
-      "Implementation instructions and Claude entry guidance describe synchronization, proposal generation, sealed-contract consumption, complete category execution, source review and native publication consistently. Canonical implementation guidance and its mirror agree, and ordinary authors continue to invoke the independent reviewer through its command."
+      "Engine dispatch honors explicit selection and harness-based automatic selection. Missing executables terminate the request without alternate-engine or paid fallback execution.",
+      "Structured adapter execution exposes inspection tools only, disables MCP and persistent sessions, removes inherited harness markers, and requires an identifiable model and unambiguous decision. External inputs are supplied only after custody and digest verification; drift prevents dispatch.",
+      "Proposal admission uses freshly fetched remote main consistently across generated records. Fetch failure, unresolved conflicts, an incorrect branch or missing remote ancestry prevents selection issuance.",
+      "Canonical specification encoding matches the reference vector, preserves Unicode deterministically, rejects duplicate keys and invalid number forms, and detects alteration of sealed content.",
+      "The launcher supplies engine and model provenance, implementation digests, execution location, UTC issuance time and input hashes. Behavioral model output cannot replace launcher-generated provenance.",
+      "Executable contracts require an approved specification with a valid seal and matching proposal digest, base, design, scope and selected module set. Runtime entries outside the declared scope are refused.",
+      "Published specification strings reject sensitive credentials, address values and private home locations. Issuance also rejects prohibited textual overlap with private inputs; later verification preserves checks that need no private text.",
+      "Documentation contracts omit specifications and reject attached ones. Focused repair contracts retain complete assertion-based failure reproduction followed by successful execution with unchanged reproduction inputs.",
+      "Release admission rejects executable changes without the required contract and rejects invalid specification state before starting checks. Documentation exceptions remain bounded, and transported native evidence must satisfy exact-source and complete command requirements.",
+      "Both proposal adapters generate a single sealed selection consumed by existing validation and publication flows. Implementation guidance and mirrored instructions consistently describe synchronization, proposal generation, category execution, independent source review and publication.",
+      "An already validated commit is assessed again when its available live receipt fails verification, including observed ignored-file drift. An intact applicable receipt preserves the unchanged-candidate fast path; receipt absence retains the established checkpoint behavior.",
+      "Receipt admission requires the issuing run outcome and, for a genuine native parent, its controller outcome. Adopted legacy attempts complete through their own terminal records without a circular controller dependency. Incomplete terminal admission cannot establish validated readiness.",
+      "Rewriting a newly issued receipt remains rejected by its terminal binding. Historical receipts without terminal metadata retain only their established content-bound verification behavior.",
+      "Git interception preserves standard input for batched path hashing. Synthetic producer repositories exclude foreign selection state, intake fixtures obtain required commands from the producer, and launcher helpers use consistent harness-neutral environments. The complete lifecycle module finishes with every test passing and no skipped, cancelled or pending cases."
     ],
     "tests": [
       {
@@ -200,14 +203,14 @@
           5,
           7
         ],
-        "purpose": "Exercise sealed contract admission, class-specific execution, document exceptions and retained validation bindings."
+        "purpose": "Verify specification admission, class rules, reproduction requirements and validation input bindings."
       },
       {
         "module": "tests/release-tooling.test.mjs",
         "covers": [
           8
         ],
-        "purpose": "Prove early release refusal for invalid specification state and admission of genuine document changes."
+        "purpose": "Exercise early release rejection and bounded documentation admission."
       },
       {
         "module": "tests/validation-transport.test.mjs",
@@ -215,14 +218,18 @@
           8,
           9
         ],
-        "purpose": "Preserve exact-source evidence transport and required-command publication checks."
+        "purpose": "Check native evidence custody and complete publication command coverage."
       },
       {
         "module": "tests/oracle-performance.test.mjs",
         "covers": [
-          9
+          9,
+          10,
+          11,
+          12,
+          13
         ],
-        "purpose": "Protect existing reviewer lifecycle and failure-continuation behavior across proposal adapter changes."
+        "purpose": "Exercise receipt freshness, terminal completion, historical compatibility, concurrent recovery and isolated synthetic harnesses."
       },
       {
         "module": "tests/oracle-spec.test.mjs",
@@ -233,7 +240,7 @@
           6,
           7
         ],
-        "purpose": "Verify canonical seals, provenance shape, privacy rejection and specification-to-selection consistency."
+        "purpose": "Verify canonical encoding, provenance, privacy protections and specification consistency."
       },
       {
         "module": "tests/oracle-engine.test.mjs",
@@ -242,19 +249,17 @@
           1,
           2
         ],
-        "purpose": "Check adapter selection, restricted structured dispatch, external input custody and fetched-base admission."
+        "purpose": "Exercise engine selection, restricted adapters, external input custody and remote-base admission."
       },
       {
         "module": "tests/native-review-settings.test.mjs",
         "covers": [
           0,
-          1,
           2,
           4,
-          9,
-          10
+          9
         ],
-        "purpose": "Exercise proposal generation through synthetic CLIs and verify consistent implementation guidance."
+        "purpose": "Verify end-to-end proposal generation and consistent implementation instructions."
       }
     ],
     "findings": [],
@@ -262,13 +267,13 @@
     "stamp": {
       "engine": "codex",
       "model": "gpt-6.1-sol",
-      "oracle_sha256": "7886e5e0779504013844380b26ab2fb941aafac5bb16cc431ee9282884fe4a30",
+      "oracle_sha256": "c97a0716ba3f44551e359aebbf510e03ca276ee3d6d24f3456c64fd4c4d4958d",
       "host": "aio",
-      "time": "2026-11-11T18:42:39Z",
+      "time": "2026-11-11T21:46:30Z",
       "request_sha256": null,
-      "proposal_sha256": "1e1838f6230f5ccb879671bfd2409ddf02fd539f221f404daa6bec70c990978c"
+      "proposal_sha256": "755663fb399ae4d9a0760fb1ed2a1ee4abdb3dfb807f6899eba72c923dcae520"
     },
-    "seal": "71f08f9ee05634fd35c52981938b6ac0a0dec0191f537a94298a6802f868d262"
+    "seal": "ab44356e6777aa7922eb6355771f0cf0e636eef301e98d95b59a1d6f8250c715"
   },
-  "contract_sha256": "432d3ef166e3dba93c799e1de831b8e11d8c9011d6f964f841393e0c46d62c19"
+  "contract_sha256": "04d24cf3608b60fa6c0812d887bb2b2d85be2c36aab002e43befae177c656cc1"
 }
