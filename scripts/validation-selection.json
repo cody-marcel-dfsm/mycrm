@@ -1,0 +1,148 @@
+{
+  "schema": "my-crm.validation-contract/v1",
+  "selection": {
+    "change_class": "feature",
+    "scope_paths": [
+      "AGENTS.md",
+      "CLAUDE.md",
+      ".agents/skills/my-crm-implementation/SKILL.md",
+      ".claude/skills/my-crm-implementation/SKILL.md",
+      ".claude/skills/ship-it/SKILL.md",
+      "scripts/oracle-review.mjs",
+      "scripts/oracle-engine.mjs",
+      "scripts/oracle-spec.mjs",
+      "scripts/validation-contract.mjs",
+      "scripts/validation-contract.md",
+      "scripts/validation-selection.json",
+      "scripts/release-validation.mjs",
+      "tests/oracle-spec.test.mjs",
+      "tests/oracle-engine.test.mjs",
+      "tests/support/oracle-spec-bos-vector.json",
+      "tests/native-review-settings.test.mjs",
+      "tests/oracle-performance.test.mjs",
+      "tests/validation-contract.test.mjs",
+      "tests/release-tooling.test.mjs",
+      "tests/validation-transport.test.mjs",
+      "Vault/docs/design/oracle-implementation-spec.md",
+      "Vault/docs/design/oracle-implementation-spec.test-plan.json"
+    ],
+    "categories": [
+      {
+        "name": "sanity",
+        "tests": [],
+        "fixtures": []
+      },
+      {
+        "name": "interactions",
+        "tests": [
+          "tests/validation-contract.test.mjs",
+          "tests/release-tooling.test.mjs",
+          "tests/validation-transport.test.mjs",
+          "tests/oracle-performance.test.mjs"
+        ],
+        "fixtures": []
+      },
+      {
+        "name": "acceptance",
+        "tests": [
+          "tests/oracle-spec.test.mjs",
+          "tests/oracle-engine.test.mjs",
+          "tests/native-review-settings.test.mjs"
+        ],
+        "fixtures": [
+          "tests/support/oracle-spec-bos-vector.json"
+        ]
+      }
+    ],
+    "reason": "Feature acceptance covers sealing, privacy, engine dispatch, bound external context and drift rejection; interactions cover category execution, launcher behavior and publication continuity. Execute complete selected categories, preserve the original feature300s clock, use at most medium reasoning and no paid fallback. Claude acceptance uses fake runners and CLIs.",
+    "revision_of": null,
+    "design": "Vault/docs/design/oracle-implementation-spec.md"
+  },
+  "base_commit": "a6f2ec01abb8c8ddb47fc1b85710c99054128e6b",
+  "base_tree": "13f6cb73f693849bc4347164188aa2bdc958c4ac",
+  "catalog_sha256": "c255f4c9b60d77fbd1d2e418973869a11520aec654a90849ad3f3fc01b144c1e",
+  "runtime": {
+    "node": "v26.12.0",
+    "node_sha256": "caa24debe02770c92a70677e2a62ca98890150e7ac1c17bcfe31bcc98cc89943",
+    "platform": "linux",
+    "architecture": "x64",
+    "options_sha256": "abe606b43ec20381d6290b1098ca6fb5ccdf4666008979be2a2c892605ca8eb2"
+  },
+  "proposal_sha256": "f3be894783ff8b6e35db2f2631d8ee99bc3bb2196e01089b02aeec4ead1ad554",
+  "review_sha256": "6da4c029c26007758f91410b43cacf65052b429e3f73a4fa3473c9cac7cc99e9",
+  "commands": [
+    {
+      "category": "sanity",
+      "tests": [],
+      "fixtures": [],
+      "argv": [
+        "node",
+        "scripts/validation-contract.mjs",
+        "sanity"
+      ]
+    },
+    {
+      "category": "interactions",
+      "tests": [
+        "tests/validation-contract.test.mjs",
+        "tests/release-tooling.test.mjs",
+        "tests/validation-transport.test.mjs",
+        "tests/oracle-performance.test.mjs"
+      ],
+      "fixtures": [],
+      "argv": [
+        "node",
+        "--test",
+        "--test-reporter=tap",
+        "tests/validation-contract.test.mjs",
+        "tests/release-tooling.test.mjs",
+        "tests/validation-transport.test.mjs",
+        "tests/oracle-performance.test.mjs"
+      ]
+    },
+    {
+      "category": "acceptance",
+      "tests": [
+        "tests/oracle-spec.test.mjs",
+        "tests/oracle-engine.test.mjs",
+        "tests/native-review-settings.test.mjs"
+      ],
+      "fixtures": [
+        "tests/support/oracle-spec-bos-vector.json"
+      ],
+      "argv": [
+        "node",
+        "--test",
+        "--test-reporter=tap",
+        "tests/oracle-spec.test.mjs",
+        "tests/oracle-engine.test.mjs",
+        "tests/native-review-settings.test.mjs"
+      ]
+    }
+  ],
+  "delivery_policy": {
+    "sla_seconds": 300,
+    "clock_owner": "build_host",
+    "clock_start": "original_insertion",
+    "completion": "verified_remote_git",
+    "retries_reset_clock": false,
+    "reasoning_effort": "medium",
+    "maximum_reasoning_effort": "medium"
+  },
+  "design_binding": {
+    "design": "Vault/docs/design/oracle-implementation-spec.md",
+    "design_sha256": "c1583c864bd9ec6ac697c2e3a076a42d131032d471557cad4efeff5cfe9b24a6",
+    "plan": "Vault/docs/design/oracle-implementation-spec.test-plan.json",
+    "plan_sha256": "a8f6846806fad226ad4924e2f884a1ef940b9c77a908a49b2c3098f15f8e52ea",
+    "tests": [
+      "tests/native-review-settings.test.mjs",
+      "tests/oracle-engine.test.mjs",
+      "tests/oracle-performance.test.mjs",
+      "tests/oracle-spec.test.mjs",
+      "tests/release-tooling.test.mjs",
+      "tests/validation-contract.test.mjs",
+      "tests/validation-transport.test.mjs"
+    ]
+  },
+  "contract_sha256": "84b0cd87d1a562b60432a26ec50255b53a4f02ac9baf56a1691fe01c3a6bd1c4"
+}
