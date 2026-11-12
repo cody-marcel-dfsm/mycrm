@@ -1,7 +1,7 @@
 {
   "schema": "my-crm.validation-contract/v1",
   "selection": {
-    "change_class": "deep_bug_fix",
+    "change_class": "feature",
     "scope_paths": [
       "AGENTS.md",
       "CLAUDE.md",
@@ -20,6 +20,8 @@
       "tests/release-tooling.test.mjs",
       "Vault/docs/design/oracle-implementation-spec.md",
       "Vault/docs/design/oracle-implementation-spec.test-plan.json",
+      "Vault/docs/design/ssh-publication-transport.md",
+      "Vault/docs/design/ssh-publication-transport.test-plan.json",
       "scripts/validation-transport.mjs",
       "scripts/publication-checkpoint.mjs",
       "scripts/release-validation.mjs",
@@ -40,21 +42,21 @@
         "fixtures": []
       },
       {
-        "name": "focused",
+        "name": "interactions",
         "tests": [
-          "tests/publication-ssh-transport.test.mjs"
+          "tests/validation-contract.test.mjs",
+          "tests/release-tooling.test.mjs",
+          "tests/validation-transport.test.mjs",
+          "tests/publication-checkpoint.test.mjs",
+          "tests/oracle-performance.test.mjs",
+          "tests/oracle-policy.test.mjs"
         ],
         "fixtures": []
       },
       {
-        "name": "interactions",
+        "name": "acceptance",
         "tests": [
-          "tests/validation-transport.test.mjs",
-          "tests/publication-checkpoint.test.mjs",
-          "tests/release-tooling.test.mjs",
-          "tests/validation-contract.test.mjs",
-          "tests/oracle-performance.test.mjs",
-          "tests/oracle-policy.test.mjs",
+          "tests/publication-ssh-transport.test.mjs",
           "tests/oracle-spec.test.mjs",
           "tests/oracle-engine.test.mjs",
           "tests/native-review-settings.test.mjs"
@@ -64,9 +66,9 @@
         ]
       }
     ],
-    "reason": "Repair publication credential dependence and concurrent-update handling while covering the full outstanding source range. Preserve earlier specification, engine, policy and lifecycle checks as interactions. Require an unchanged focused reproduction with genuine assertion failure before repair and complete passing categories afterward. Retain historical design evidence, execution outcomes and the original 300-second delivery clock; use no automatic regression expansion or paid fallback.",
-    "revision_of": "dfb998deed569b56271d6bc888d09c6c0cbfd079116f67460bee8bd970c71e40",
-    "design": null
+    "reason": "Introduce Git-based evidence exchange and credential-free public inspection while retaining acceptance for the outstanding specification tooling. Keep every previously selected module and all planned paths. Preserve rejected execution attempts and the original 300-second delivery budget through verified publication. Require complete category outcomes, independent source assessment and existing publication admission; add no automatic regression category or paid fallback.",
+    "revision_of": "072d7ed7c05407de17a73a6206b872af99ae41e4738b5113af9f1ebfbd85fd84",
+    "design": "Vault/docs/design/ssh-publication-transport.md"
   },
   "base_commit": "a6f2ec01abb8c8ddb47fc1b85710c99054128e6b",
   "base_tree": "13f6cb73f693849bc4347164188aa2bdc958c4ac",
@@ -78,8 +80,8 @@
     "architecture": "x64",
     "options_sha256": "abe606b43ec20381d6290b1098ca6fb5ccdf4666008979be2a2c892605ca8eb2"
   },
-  "proposal_sha256": "8cd1c33b430ffe13c5847237fd0f1c29422e5eed017686f50d63a7b1205187aa",
-  "review_sha256": "23022fa80abc849134e95eda950279f2c7fc9756cc85b7a3705196d8efc21b2a",
+  "proposal_sha256": "6830775dd156d817a58b05c13015350c81cd6f5cd7527a830f640d0a8cfc316f",
+  "review_sha256": "6039132db70cee6a944048b1d8c889bbbf4c0c97b6c09f22905e1673b70285b5",
   "commands": [
     {
       "category": "sanity",
@@ -92,27 +94,32 @@
       ]
     },
     {
-      "category": "focused",
+      "category": "interactions",
       "tests": [
-        "tests/publication-ssh-transport.test.mjs"
+        "tests/validation-contract.test.mjs",
+        "tests/release-tooling.test.mjs",
+        "tests/validation-transport.test.mjs",
+        "tests/publication-checkpoint.test.mjs",
+        "tests/oracle-performance.test.mjs",
+        "tests/oracle-policy.test.mjs"
       ],
       "fixtures": [],
       "argv": [
         "node",
         "--test",
         "--test-reporter=tap",
-        "tests/publication-ssh-transport.test.mjs"
+        "tests/validation-contract.test.mjs",
+        "tests/release-tooling.test.mjs",
+        "tests/validation-transport.test.mjs",
+        "tests/publication-checkpoint.test.mjs",
+        "tests/oracle-performance.test.mjs",
+        "tests/oracle-policy.test.mjs"
       ]
     },
     {
-      "category": "interactions",
+      "category": "acceptance",
       "tests": [
-        "tests/validation-transport.test.mjs",
-        "tests/publication-checkpoint.test.mjs",
-        "tests/release-tooling.test.mjs",
-        "tests/validation-contract.test.mjs",
-        "tests/oracle-performance.test.mjs",
-        "tests/oracle-policy.test.mjs",
+        "tests/publication-ssh-transport.test.mjs",
         "tests/oracle-spec.test.mjs",
         "tests/oracle-engine.test.mjs",
         "tests/native-review-settings.test.mjs"
@@ -124,12 +131,7 @@
         "node",
         "--test",
         "--test-reporter=tap",
-        "tests/validation-transport.test.mjs",
-        "tests/publication-checkpoint.test.mjs",
-        "tests/release-tooling.test.mjs",
-        "tests/validation-contract.test.mjs",
-        "tests/oracle-performance.test.mjs",
-        "tests/oracle-policy.test.mjs",
+        "tests/publication-ssh-transport.test.mjs",
         "tests/oracle-spec.test.mjs",
         "tests/oracle-engine.test.mjs",
         "tests/native-review-settings.test.mjs"
@@ -145,10 +147,22 @@
     "reasoning_effort": "medium",
     "maximum_reasoning_effort": "medium"
   },
+  "design_binding": {
+    "design": "Vault/docs/design/ssh-publication-transport.md",
+    "design_sha256": "d7fdfed9ea1375fd7420af6d6f1a86a027ed35c894650297ef38277ccc8aee8d",
+    "plan": "Vault/docs/design/ssh-publication-transport.test-plan.json",
+    "plan_sha256": "63edaa02d38e47a582f1dda40de440c1384ff4fa788dfc61214b7da6af4dab3e",
+    "tests": [
+      "tests/publication-checkpoint.test.mjs",
+      "tests/publication-ssh-transport.test.mjs",
+      "tests/release-tooling.test.mjs",
+      "tests/validation-transport.test.mjs"
+    ]
+  },
   "spec": {
     "kind": "oracle-spec/1",
-    "title": "Credential-independent publication and complete range validation",
-    "design": null,
+    "title": "SSH evidence exchange and guarded publication",
+    "design": "Vault/docs/design/ssh-publication-transport.md",
     "base": "a6f2ec01abb8c8ddb47fc1b85710c99054128e6b",
     "scope": [
       "AGENTS.md",
@@ -168,6 +182,8 @@
       "tests/release-tooling.test.mjs",
       "Vault/docs/design/oracle-implementation-spec.md",
       "Vault/docs/design/oracle-implementation-spec.test-plan.json",
+      "Vault/docs/design/ssh-publication-transport.md",
+      "Vault/docs/design/ssh-publication-transport.test-plan.json",
       "scripts/validation-transport.mjs",
       "scripts/publication-checkpoint.mjs",
       "scripts/release-validation.mjs",
@@ -192,19 +208,71 @@
       "scripts/release-validation.mjs"
     ],
     "acceptance": [
-      "Evidence export succeeds with an unusable authenticated CLI. It first verifies candidate commit and tree identities and independently approved command coverage, then creates a reproducible Git object using constant synthetic author metadata, constant timestamps, one source parent and one regular validation blob. The message authenticates blob bytes by digest; ref replacement uses the observed object as its lease expectation and confirms the resulting remote identity.",
-      "A clean checkout obtains command evidence using Git and a trusted CI owner identifier without an HTTP request. Import independently checks object reproducibility, parent count and identity, source tree, blob mode and name, payload size, digest, repository scope, issuer scope and selected command identities. Missing or invalid evidence supplies zero imported coverage and causes every uncovered required command to execute.",
-      "The public reader permits only bodyless GET requests to the fixed GitHub HTTPS API origin, sends no authentication material, refuses redirects and limits response bytes and elapsed request time. HTTP errors, malformed JSON and oversized responses fail explicitly.",
-      "Preparation admits only a successful uniquely identified required job from the expected repository, workflow, source, event and attempt. Existing qualifying executions are considered before branch creation. Git ref discovery verifies the exact destination, creation expects absence atomically, and an unavailable retry reports the failed run and manual recovery action while retaining its original failed outcome.",
-      "Final publication includes a destination-specific explicit lease using preparation's captured remote identity, with an empty expectation for a missing destination. A concurrent remote advance is rejected even when an ordinary push would fast-forward. Candidate ancestry, sealed preparation identity, current approval admission and hook enforcement continue to apply.",
-      "Transport retains the established envelope format and sanitized original execution provenance. Export refuses damaged execution originals, absent independent approval and incomplete historical qualification. Read-only CI credentials remain sufficient, and required-source CI success remains mandatory regardless of evidence import availability.",
-      "The revised contract admits every planned path in the outstanding publication range and binds all selected tests and supporting fixtures. The committed focused test remains byte-identical between a complete assertion-failing baseline execution and its passing repair execution. Every category requires nonempty completed test results where applicable, without skipped cases, and preserves original timing and attempt history.",
-      "Specification generation retains canonical sealing, strict shape validation, public-text privacy checks, correct base and scope association, exact test membership and rejection of absent or altered seals. The synthetic reference fixture continues to demonstrate compatible canonical digest computation.",
-      "Proposal engine dispatch preserves explicit selection, truthful engine identity, restricted execution, custody-checked external context and refusal of unavailable engines. Proposal generation remains tied to the fetched main baseline and emits a valid sealed contract through each supported adapter.",
-      "Existing review lifecycle behavior, policy producer compatibility, source identity checks and release-range enforcement remain effective across the integrated outstanding work. Process failures retain their original status and cannot become passing approval evidence.",
-      "Both maintained copies of implementation and shipping guidance describe the same evidence exchange, public-read limitations, failed-run recovery and leased push procedure. SSH identity configuration remains machine-local, introduces no packaged credentials or sibling checkout dependency, and preserves separate admission for protected authority changes."
+      "Export must verify approved command coverage and local source identities before constructing a repeatable evidence object. Use constant synthetic commit metadata, exactly one source parent, one regular validation payload, and a payload digest; update its dedicated remote reference with an explicit observed-value lease and verify the advertised result. Authenticated CLI calls and obsolete status writes must be absent.",
+      "Import from a fresh repository must verify reproducible object identity, exact parent and source tree, entry name and mode, bounded payload, digest, repository scope, owner scope and command contract. Missing, redirected, malformed or altered evidence must grant zero coverage and leave required commands executable by CI.",
+      "The default metadata reader must restrict requests to bodyless GET operations at the designated GitHub API origin, omit credentials, reject redirects, and enforce byte and duration limits. Invalid destinations, write methods, HTTP failures and malformed responses must fail explicitly.",
+      "CI admission must retain repository, source, workflow, event, attempt and unique required-job checks. Discover watched references through Git, create them only with an absent-value lease, reject conflicts, and report an unavailable rerun as a retained failure with actionable run identification. Preparation must produce no publication descriptor before qualifying CI succeeds.",
+      "Publication must use the prepared destination and explicit expected remote object, including an empty expectation for a new reference. Concurrent remote movement must fail without updating the destination; ancestry checks, current native decisions, preparation custody and effective hooks must remain enforced.",
+      "Retain the existing envelope schema and sanitized execution provenance. Damaged originals, missing independent approval and unsupported historical qualifications must prevent export; read-only CI access must suffice for import, and unavailable imported evidence must never manufacture a passing command result.",
+      "The revised feature contract must admit the complete planned range and bind its design, plan, modules and fixtures. Category execution must require complete successful results without skipped cases; prior refusals and original timing must remain truthful, and no fail-before success may be inferred from an admission error.",
+      "Specification verification must preserve canonical digest parity, strict structures, public-text privacy, exact base and scope association, and complete acceptance-to-module mapping. Missing, damaged or mismatched seals must stop executable release admission before validation begins.",
+      "Proposal adapters must preserve explicit engine selection, truthful model identity, bounded restricted execution, verified external-input custody and refusal without fallback when unavailable. Both supported adapters must generate the sealed selection against the fetched main baseline.",
+      "Integrated review behavior must retain original execution outcomes, supported policy producer checks, resumable coverage and independent current-source decisions. Process errors and stale evidence must supply no technical approval or deployment authority.",
+      "Maintained implementation and shipping instructions must agree across their mirrors on Git evidence exchange, public-reader limitations, manual failed-run recovery and leased publication. SSH identity configuration must remain local, exclude private key material from artifacts and introduce no sibling source dependency."
     ],
     "tests": [
+      {
+        "module": "tests/validation-contract.test.mjs",
+        "covers": [
+          6,
+          7
+        ],
+        "purpose": "Verify feature selection, scope admission, design bindings and complete category result requirements."
+      },
+      {
+        "module": "tests/release-tooling.test.mjs",
+        "covers": [
+          1,
+          5,
+          7,
+          9,
+          10
+        ],
+        "purpose": "Verify integrated range admission, early seal enforcement, artifact boundaries and uncovered-command execution."
+      },
+      {
+        "module": "tests/validation-transport.test.mjs",
+        "covers": [
+          0,
+          1,
+          2,
+          3,
+          5
+        ],
+        "purpose": "Verify envelope integrity, original execution custody, command qualification and precise CI admission."
+      },
+      {
+        "module": "tests/publication-checkpoint.test.mjs",
+        "covers": [
+          3,
+          4
+        ],
+        "purpose": "Verify preparation ordering, decision custody, destination expectations and publication hooks."
+      },
+      {
+        "module": "tests/oracle-performance.test.mjs",
+        "covers": [
+          9
+        ],
+        "purpose": "Verify native review continuity, evidence applicability and truthful failure handling."
+      },
+      {
+        "module": "tests/oracle-policy.test.mjs",
+        "covers": [
+          9
+        ],
+        "purpose": "Verify accepted producer identities and retained policy rejection behavior."
+      },
       {
         "module": "tests/publication-ssh-transport.test.mjs",
         "covers": [
@@ -216,88 +284,35 @@
           6,
           10
         ],
-        "purpose": "Exercise real repository exchange without CLI authentication, malformed evidence rejection, bounded public requests and concurrent destination updates."
-      },
-      {
-        "module": "tests/validation-transport.test.mjs",
-        "covers": [
-          0,
-          1,
-          2,
-          3,
-          5
-        ],
-        "purpose": "Check execution provenance, envelope integrity, source-specific CI admission and honest command fallback."
-      },
-      {
-        "module": "tests/publication-checkpoint.test.mjs",
-        "covers": [
-          3,
-          4,
-          5,
-          10
-        ],
-        "purpose": "Check preparation custody, current approval decisions, remote expectations and publication hook behavior."
-      },
-      {
-        "module": "tests/release-tooling.test.mjs",
-        "covers": [
-          1,
-          5,
-          7,
-          9,
-          10
-        ],
-        "purpose": "Check release-range admission, specification enforcement, package isolation and execution of uncovered commands."
-      },
-      {
-        "module": "tests/validation-contract.test.mjs",
-        "covers": [
-          6,
-          7
-        ],
-        "purpose": "Check expanded scope, exact category selection, unchanged reproduction inputs and original result retention."
-      },
-      {
-        "module": "tests/oracle-performance.test.mjs",
-        "covers": [
-          9
-        ],
-        "purpose": "Check established proposal and completed-review lifecycle interactions through the existing deterministic harness."
-      },
-      {
-        "module": "tests/oracle-policy.test.mjs",
-        "covers": [
-          9
-        ],
-        "purpose": "Check supported producer identities and preservation of policy rejection boundaries."
+        "purpose": "Exercise real Git evidence exchange, hostile payloads, bounded public requests and concurrent reference updates."
       },
       {
         "module": "tests/oracle-spec.test.mjs",
         "covers": [
           7
         ],
-        "purpose": "Check canonical seals against the synthetic reference, malformed structures, privacy guards and contract association."
+        "purpose": "Verify canonical sealing against the synthetic vector, structural constraints, privacy and contract association."
       },
       {
         "module": "tests/oracle-engine.test.mjs",
         "covers": [
           8
         ],
-        "purpose": "Check adapter selection, restricted commands, reported identities, external evidence custody and baseline requirements."
+        "purpose": "Verify adapter dispatch, restriction settings, external evidence custody and baseline requirements."
       },
       {
         "module": "tests/native-review-settings.test.mjs",
         "covers": [
-          8
+          8,
+          10
         ],
-        "purpose": "Check end-to-end proposal adapter output and valid sealed selection generation."
+        "purpose": "Verify complete proposal generation through both adapters and agreement among maintained implementation instructions."
       }
     ],
     "findings": [
       {
         "severity": "warning",
-        "message": "Repository write access becomes the evidence issuer boundary. Repository and owner digests identify scope without identifying the individual writer. Activation requires exact authority for the permitted writer set; technical review alone grants no such authority."
+        "message": "Evidence acceptance relies on the repository writer set. Deterministic object reconstruction proves content integrity but supplies no individual writer identity. Activation requires independently verified authority covering that credential-trust effect; technical approval grants no additional authority."
       }
     ],
     "verdict": "APPROVED",
@@ -306,11 +321,11 @@
       "model": "gpt-6.1-sol",
       "oracle_sha256": "8bbe1cb821991e781bce06dac315a8256aaaadf05c5c8d5a24e0cb54787b2fc3",
       "host": "aio",
-      "time": "2026-11-12T00:32:26Z",
+      "time": "2026-11-12T00:35:52Z",
       "request_sha256": "30f8e3f2712276475090aafcc5cb98c0c2c823d7885fdf7a84dda29e7419d85d",
-      "proposal_sha256": "8cd1c33b430ffe13c5847237fd0f1c29422e5eed017686f50d63a7b1205187aa"
+      "proposal_sha256": "6830775dd156d817a58b05c13015350c81cd6f5cd7527a830f640d0a8cfc316f"
     },
-    "seal": "20c325b062faf9c81aebf0f69d5b710586edd5ad9800096235bb9c21e20f98c8"
+    "seal": "20794343cf158c93c7a79ffabb1a925f6d2a51181041fd217af9cab397b3596f"
   },
-  "contract_sha256": "072d7ed7c05407de17a73a6206b872af99ae41e4738b5113af9f1ebfbd85fd84"
+  "contract_sha256": "91c621f300a22e45cbbcf3c8caa9a2fe4949499be3765df17812cd18d308ec9c"
 }
