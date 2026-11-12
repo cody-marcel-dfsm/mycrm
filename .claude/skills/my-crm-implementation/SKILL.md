@@ -96,6 +96,16 @@ npm run publication:prepare -- "$(git rev-parse HEAD)" origin refs/heads/main "$
 npm run publication:publish -- --prepared <absolute-record>
 ```
 
+Publication needs no `gh` login. The push URL is SSH
+(`git@github.com:cody-marcel-dfsm/mycrm.git`) with a repository-local
+`core.sshCommand` naming the deploy key; check it with
+`git config --get remote.origin.pushurl` and `git config --get core.sshCommand`.
+Preparation pushes the git-native evidence ref
+`refs/my-crm/native-validation/<sha>` and the watched
+`codex/validation-ready-<sha>` ref with leases, reads Actions state through public
+GET requests, and `publish` pushes with a lease on the prepared baseline. A failed
+CI run cannot be re-run from this host: re-run it on GitHub, then prepare again.
+
 CI (`npm run release:check`) fails immediately when a non-documentation change
 lacks its sealed spec or the seal does not recompute, then runs the spec's tests.
 If publication needs something you cannot do, stop at the last verified step and

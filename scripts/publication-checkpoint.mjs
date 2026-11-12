@@ -350,7 +350,9 @@ export async function publishPrepared(filename, {root = process.cwd(), run = (ar
   const child = spawn("git", args, {cwd, stdio: "inherit"}); child.once("error", reject); child.once("exit", (code, signal) => code === 0 ? resolve() : reject(new Error(`Prepared Git push failed: ${signal ?? code}`)));
 })} = {}) {
   const {record} = await readPreparedPublication(filename, {root});
-  await run(["push", record.remote_name, `${record.source_commit}:${record.target_ref}`], record.repository_root);
+  // The lease binds the prepared baseline: any remote movement after
+  // preparation, including a fast-forward, refuses the push atomically.
+  await run(["push", `--force-with-lease=${record.target_ref}:${record.remote_before === zeros ? "" : record.remote_before}`, record.remote_name, `${record.source_commit}:${record.target_ref}`], record.repository_root);
   return {status: "PUBLISHED", source_commit: record.source_commit, source_tree: record.source_tree, target_ref: record.target_ref};
 }
 

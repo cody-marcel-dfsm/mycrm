@@ -238,21 +238,33 @@ validation. Then prepare the fixed Git publication with
 `npm run publication:prepare -- <sourceSHA> origin refs/heads/main <remoteSHA>`.
 Its immutable private checkpoint records source/tree, remote/destination/baseline,
 completed technical/effect admission and the actual covered changelist hashes.
-The remote is `https://github.com/cody-marcel-dfsm/mycrm.git`.
+The remote fetches over public HTTPS (`https://github.com/cody-marcel-dfsm/mycrm.git`)
+and pushes over SSH (`git@github.com:cody-marcel-dfsm/mycrm.git`). The push URL and
+`core.sshCommand` (repository deploy key, `IdentitiesOnly=yes`) are repository-local
+Git configuration, never versioned. Publication needs no `gh` login: refs move only
+through Git with an explicit `--force-with-lease=<ref>:<expected>` (empty means the
+ref must be absent), ref reads use `git ls-remote`, and GitHub metadata and Actions
+state come from unauthenticated public GET reads.
 For this GitHub remote, preparation verifies original native command proofs and
-exports only an owner-authenticated sanitized immutable command envelope plus
-exact-source status. This completes source/evidence ref and status work during
-validation. Preparation first reuses a compatible exact-source PR, main or
+pushes the sanitized immutable command envelope as a git-native record: a
+reproducible evidence commit (fixed synthetic identity and epoch time, single
+parent = source commit, only `validation.json`, message `sha256:<digest>`) at
+`refs/my-crm/native-validation/<sourceSHA>`. That push also uploads the source; no
+side branch or commit status is written. CI fetches the ref with Git, recomputes
+the evidence commit and verifies parent, tree, entry, size, digest and envelope
+before reusing coverage; anything else imports nothing and CI runs every command.
+Preparation first reuses a compatible exact-source PR, main or
 validation run of the existing `ci.yml` workflow's `test` job, binding repository,
 workflow and run attempt. It observes an existing pending run. When compatible
 CI is absent, preparation creates the watched
-`codex/validation-ready-<sourceSHA>` ref after the attestation exists. Missing,
+`codex/validation-ready-<sourceSHA>` ref (absent-ref lease) after the evidence
+ref exists. Missing,
 pending, failed or mismatched CI emits no publication descriptor. Observe the
 existing run and resume preparation with its completed result; retain original
-clocks and prior command evidence. A recovered failed input permits one controlled
-retry of the exact first failed attempt with
-`--retry-ci <run-id> <attempt> "<recovery reason>"` appended to preparation;
-retain the original failure and reason in its immutable private observation.
+clocks and prior command evidence. This host has no authenticated Actions
+write, so `--retry-ci <run-id> <attempt> "<recovery reason>"` keeps the run
+FAILED and names its URL: re-run the failed jobs there, then prepare again
+without `--retry-ci`; the original failure stays in its immutable private observation.
 CI accepts the truthful original environment and exact command
 coverage; it executes missing/invalidated checks and imposes additional platform
 execution only when an explicit required-check contract calls for it. A native
@@ -273,11 +285,12 @@ immutable provenance, and a new chat reuses unchanged original command evidence.
 
 Execute the returned `publish_argv`, or
 `npm run publication:publish -- --prepared <absolute-record>`. Publication runs
-only the normal fast-forward Git push of that exact SHA. The native hook checks
+only the Git push of that exact SHA over SSH with a lease on the prepared remote
+baseline, so any remote movement after preparation, even a fast-forward, is refused. The native hook checks
 the bounded prepared proof and exact Git tuple; it runs no test, build, review,
 status/history traversal or moving-HEAD check. Concurrent authors may continue.
 The family coordinator dispatches its prepared member pushes in parallel with a
-less-than-ten-second publication target. Complete required CI/status preparation
+less-than-ten-second publication target. Complete required CI/evidence preparation
 before publication; publication never waits for or repeats validation.
 Completed validation seals exact-CL command/source/effect coverage. Same-CL
 preparation consumes that seal; perform one legacy import audit only when no

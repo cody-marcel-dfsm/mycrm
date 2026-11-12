@@ -13,7 +13,6 @@ const hash = value => createHash("sha256").update(value).digest("hex");
 export const gitBlobHash = bytes => createHash("sha1").update(`blob ${bytes.length}\0`).update(bytes).digest("hex");
 const selectedValidation = publishedContract();
 export const requiredCommands = Object.freeze(requiredFor(selectedValidation));
-export const validationContext = "my-crm/native-validation";
 export const requiredCIWorkflow = ".github/workflows/ci.yml";
 export const requiredCIJob = "test";
 const contract = {...(selectedValidation ? {selection_sha256: selectedValidation.contract_sha256} : {bootstrap_epoch:bootstrapEpoch,preselected:false}), required_commands: requiredCommands, execution_contract: "accept-original-supported-native-execution", additional_platform_executions: []};
@@ -99,20 +98,78 @@ export async function nativeCoverageIntake({root, sourceCommit, sourceTree, vali
   return {...result, identity_sha256: hash(canonical(result))};
 }
 
-// gh owns existing credentials. Structured JSON travels on stdin, never shell
-// text or command-line token arguments; no response logs are published.
-export async function githubRequest(method, endpoint, body) {
+// Publication runs without an authenticated GitHub CLI (owner direction,
+// 2026-11-11: "Use ssh"). Refs move only through Git over the configured push
+// URL; GitHub metadata and Actions state come from unauthenticated public reads.
+export const publicApiOrigin = "https://api.github.com";
+const publicReadLimit = 4 * 1024 * 1024;
+export async function publicGithubRequest(method, endpoint, body, {fetch: request = globalThis.fetch, timeoutMs = 15000} = {}) {
+  if (method !== "GET" || body !== undefined) throw Object.assign(new Error(`Public GitHub transport is read-only; ${method} ${endpoint} needs an authenticated write that this host does not use`), {code: "MYCRM_PUBLIC_READ_ONLY", status: null});
+  const url = new URL(String(endpoint), `${publicApiOrigin}/`);
+  if (url.origin !== publicApiOrigin || /^[a-z]+:/i.test(String(endpoint)) || String(endpoint).startsWith("/")) throw new Error(`Public GitHub reads are limited to ${publicApiOrigin} relative endpoints`);
+  const response = await request(url, {method: "GET", credentials: "omit", redirect: "error", signal: AbortSignal.timeout(timeoutMs),
+    headers: {Accept: "application/vnd.github+json", "X-GitHub-Api-Version": "2022-11-28", "User-Agent": "my-crm-publication"}});
+  if (!response.ok) throw Object.assign(new Error(`Public GitHub read failed (${response.status})`), {status: response.status});
+  const chunks = []; let size = 0;
+  if (response.body) for await (const chunk of response.body) {
+    size += chunk.length;
+    if (size > publicReadLimit) throw new Error("Public GitHub read exceeded its bounded response size");
+    chunks.push(Buffer.from(chunk));
+  }
+  try {const value = JSON.parse(Buffer.concat(chunks).toString("utf8")); if (!value || typeof value !== "object") throw new Error(); return value;}
+  catch {throw new Error("Public GitHub read returned a malformed response");}
+}
+
+// Exact remote ref discovery by name; ls-remote patterns also match suffixes.
+export async function remoteRef(root, remote, ref) {
+  const lines = (await git(root, ["ls-remote", "--refs", remote, ref])).split("\n").filter(Boolean).map(line => line.split("\t"));
+  const matches = lines.filter(([, name]) => name === ref);
+  if (matches.length > 1 || matches.some(([value]) => !oid.test(value))) throw new Error(`Remote ref discovery for ${ref} is ambiguous or malformed`);
+  return matches[0]?.[0] ?? null;
+}
+// Every ref write carries an explicit expected old value; empty means absent.
+const leasedPush = (remote, object, ref, expected) => ["push", "--porcelain", `--force-with-lease=${ref}:${expected ?? ""}`, remote, `${object}:${ref}`];
+
+async function gitBytes(root, args, input, env) {
   return new Promise((resolve, reject) => {
-    const child = spawn("gh", ["api", endpoint, "--method", method, "-H", "Accept: application/vnd.github+json", ...(body === undefined ? [] : ["--input", "-"])], {stdio: ["pipe", "pipe", "pipe"]});
-    const output = [], errors = []; let size = 0;
-    child.stdout.on("data", value => {size += value.length; if (size > 4 * 1024 * 1024) child.kill(); else output.push(value);});
-    child.stderr.on("data", value => errors.push(value)); child.once("error", reject); child.stdin.on("error", reject);
-    child.once("close", code => {
-      if (code !== 0 || size > 4 * 1024 * 1024) {const status = Buffer.concat(errors).toString().match(/\b(?:4\d\d|5\d\d)\b/)?.[0]; const error = new Error(`GitHub validation transport request failed (${status ?? code})`); error.status = status ? Number(status) : null; reject(error);}
-      else try {const bytes = Buffer.concat(output).toString(); resolve(bytes.trim() ? JSON.parse(bytes) : null);} catch (error) {reject(error);}
-    });
-    child.stdin.end(body === undefined ? undefined : JSON.stringify(body));
+    const child = spawn("git", args, {cwd: root, env: env ?? process.env, stdio: ["pipe", "pipe", "pipe"]}), output = [], errors = [];
+    child.stdout.on("data", value => output.push(value)); child.stderr.on("data", value => errors.push(value));
+    child.once("error", reject); child.stdin.on("error", reject);
+    child.once("close", code => code === 0 ? resolve(Buffer.concat(output)) : reject(new Error(`git ${args[0]} failed: ${Buffer.concat(errors).toString().trim().split("\n").pop()}`)));
+    child.stdin.end(input);
   });
+}
+
+// The evidence commit is fully determined by source commit and envelope bytes:
+// fixed synthetic identity, epoch time, one parent, one validation.json blob.
+export const validationRefPrefix = "refs/my-crm/native-validation/";
+export const validationRef = sourceCommit => `${validationRefPrefix}${sourceCommit}`;
+export const validationEnvelopeLimit = 1024 * 1024;
+export const evidenceEnvironment = Object.freeze({GIT_AUTHOR_NAME: "My CRM native validation", GIT_AUTHOR_EMAIL: "native-validation@example.invalid", GIT_AUTHOR_DATE: "@0 +0000",
+  GIT_COMMITTER_NAME: "My CRM native validation", GIT_COMMITTER_EMAIL: "native-validation@example.invalid", GIT_COMMITTER_DATE: "@0 +0000"});
+const evidenceMessage = (sourceCommit, bytes) => `Native command coverage for ${sourceCommit}\n\nsha256:${hash(bytes)}`;
+export async function evidenceCommit(root, sourceCommit, bytes) {
+  const blob = (await gitBytes(root, ["hash-object", "-w", "--stdin"], bytes)).toString().trim();
+  const tree = (await gitBytes(root, ["mktree"], `100644 blob ${blob}\tvalidation.json\n`)).toString().trim();
+  const commit = (await gitBytes(root, ["-c", "commit.gpgSign=false", "-c", "i18n.commitEncoding=UTF-8", "commit-tree", tree, "-p", sourceCommit, "-F", "-"],
+    evidenceMessage(sourceCommit, bytes), {...process.env, ...evidenceEnvironment})).toString().trim();
+  if (![blob, tree, commit].every(value => oid.test(value))) throw new Error("Local Git produced malformed evidence object identities");
+  return {blob, tree, commit};
+}
+
+async function repositoryOwner({repository, ownerId, api}) {
+  if (ownerId !== undefined && ownerId !== null && ownerId !== "") {
+    if (!/^[1-9][0-9]{0,15}$/.test(String(ownerId)) || !Number.isSafeInteger(Number(ownerId))) throw new Error("Repository owner identifier is malformed");
+    return {id: Number(ownerId)};
+  }
+  const metadata = await api("GET", `repos/${repository}`);
+  if (!Number.isSafeInteger(metadata?.owner?.id) || metadata.owner.id < 1) throw new Error("Public repository metadata lacks its owner identity");
+  return {id: metadata.owner.id};
+}
+
+async function sourceIdentity(root, sourceCommit, sourceTree) {
+  let tree; try {tree = await git(root, ["rev-parse", "--verify", "--end-of-options", `${sourceCommit}^{tree}`]);} catch {throw new Error("Exact source commit is unavailable locally");}
+  if (tree !== sourceTree) throw new Error("Local source commit tree differs from the exact candidate tree");
 }
 
 function verifyEnvelope(envelope, {repository, owner, sourceCommit, sourceTree}) {
@@ -217,41 +274,32 @@ export async function collectNativeChecks({root, sourceCommit, sourceTree, admis
   return checks;
 }
 
-export async function exportNativeValidation({root = process.cwd(), repository, sourceCommit, sourceTree, admission, remote = "origin", api = githubRequest, collect = collectNativeChecks, pushSource = async args => git(root, args)} = {}) {
+export async function exportNativeValidation({root = process.cwd(), repository, sourceCommit, sourceTree, admission, remote = "origin", api = publicGithubRequest, ownerId, collect = collectNativeChecks,
+  lsRemote = ref => remoteRef(root, remote, ref), pushRef = async args => git(root, args)} = {}) {
   if (!/^[A-Za-z0-9_.-]+\/[A-Za-z0-9_.-]+$/.test(repository ?? "") || !oid.test(sourceCommit ?? "") || !oid.test(sourceTree ?? "")) throw new Error("Validation export requires exact GitHub repository/source identities");
-  const metadata = await api("GET", `repos/${repository}`), actor = await api("GET", "user");
-  if (actor.id !== metadata.owner.id) throw new Error("Only the authenticated repository owner can issue native validation attestations");
+  await sourceIdentity(root, sourceCommit, sourceTree);
+  const owner = await repositoryOwner({repository, ownerId, api});
   const checks = await collect({root, sourceCommit, sourceTree, admission});
   const envelope = verifyEnvelope({schema: "my-crm.public-command-validation/v1", repository, source_commit: sourceCommit, source_tree: sourceTree,
-    contract_sha256: validationContractHash, issuer_sha256: issuerHash(repository, metadata.owner), checks}, {repository, owner: metadata.owner, sourceCommit, sourceTree});
-  let source;
-  try {source = await api("GET", `repos/${repository}/git/commits/${sourceCommit}`);} catch (error) {
-    if (error.status !== 404) throw error;
-    await pushSource(["push", remote, `${sourceCommit}:refs/heads/codex/validation-source-${sourceCommit}`]);
-    source = await api("GET", `repos/${repository}/git/commits/${sourceCommit}`);
+    contract_sha256: validationContractHash, issuer_sha256: issuerHash(repository, owner), checks}, {repository, owner, sourceCommit, sourceTree});
+  const bytes = Buffer.from(`${JSON.stringify(envelope)}\n`);
+  if (bytes.length > validationEnvelopeLimit) throw new Error("Native validation envelope exceeds its bounded size");
+  const evidence = await evidenceCommit(root, sourceCommit, bytes), ref = validationRef(sourceCommit);
+  // The evidence commit's parent is the source, so this one leased push also
+  // uploads the exact source objects. No branch, status or product ref moves.
+  const observed = await lsRemote(ref);
+  if (observed !== evidence.commit) {
+    await pushRef(leasedPush(remote, evidence.commit, ref, observed));
+    if (await lsRemote(ref) !== evidence.commit) throw new Error("Remote validation evidence ref differs from the exact pushed evidence commit");
   }
-  if (source.sha !== sourceCommit || source.tree?.sha !== sourceTree) throw new Error("GitHub source object differs from the exact native candidate");
-  const bytes = Buffer.from(`${JSON.stringify(envelope)}\n`), blob = await api("POST", `repos/${repository}/git/blobs`, {content: bytes.toString("base64"), encoding: "base64"});
-  if (blob.sha !== gitBlobHash(bytes)) throw new Error("GitHub stored a different native validation blob");
-  // Keep the immutable blob reachable through an evidence-only ref. No product
-  // branch, source, package or public runtime contract changes here.
-  const tree = await api("POST", `repos/${repository}/git/trees`, {tree: [{path: "validation.json", mode: "100644", type: "blob", sha: blob.sha}]});
-  const commit = await api("POST", `repos/${repository}/git/commits`, {message: `Native command coverage for ${sourceCommit}`, tree: tree.sha, parents: [sourceCommit]});
-  const ref = `refs/heads/codex/validation-evidence-${sourceCommit}-${blob.sha}`;
-  try {await api("POST", `repos/${repository}/git/refs`, {ref, sha: commit.sha});}
-  catch (error) {const existing = await api("GET", `repos/${repository}/git/ref/${ref.slice(5)}`), retained = await api("GET", `repos/${repository}/git/commits/${existing.object?.sha}`);
-    if (retained.tree?.sha !== tree.sha || !retained.parents?.some(parent => parent.sha === sourceCommit)) throw error;}
-  const description = `sha256:${hash(bytes)}`, target_url = `https://api.github.com/repos/${repository}/git/blobs/${blob.sha}`;
-  const status = await api("POST", `repos/${repository}/statuses/${sourceCommit}`, {state: "success", context: validationContext, description, target_url});
-  if (status.creator?.id !== metadata.owner.id || status.state !== "success") throw new Error("GitHub status issuer differs from the validated owner");
-  return {source_commit: sourceCommit, source_tree: sourceTree, envelope_sha256: hash(bytes), blob_sha: blob.sha, status_context: validationContext};
+  return {source_commit: sourceCommit, source_tree: sourceTree, envelope_sha256: hash(bytes), blob_sha: evidence.blob, evidence_commit: evidence.commit, evidence_ref: ref};
 }
 
-// The source upload above is deliberately unwatched. Only after the trusted
-// exact-source command attestation exists may preparation trigger the existing
-// repository workflow. Its required job completes validation before main push.
-export async function admitRequiredCI({root = process.cwd(), repository, sourceCommit, sourceTree, remote = "origin", api = githubRequest,
-  pushSource = async args => git(root, args), retryFailed} = {}) {
+// The evidence ref above is deliberately unwatched. Only after the exact-source
+// command evidence exists may preparation trigger the existing repository
+// workflow. Its required job completes validation before main push.
+export async function admitRequiredCI({root = process.cwd(), repository, sourceCommit, sourceTree, remote = "origin", api = publicGithubRequest,
+  lsRemote = ref => remoteRef(root, remote, ref), pushSource = async args => git(root, args), retryFailed} = {}) {
   if (!/^[A-Za-z0-9_.-]+\/[A-Za-z0-9_.-]+$/.test(repository ?? "") || !oid.test(sourceCommit ?? "") || !oid.test(sourceTree ?? "")) throw new Error("Required CI admission needs the exact repository/source/tree");
   const workflow = await api("GET", `repos/${repository}/actions/workflows/ci.yml`);
   if (!Number.isSafeInteger(workflow.id) || workflow.id < 1 || workflow.path !== requiredCIWorkflow || workflow.state !== "active") throw new Error("Required CI workflow identity or enabled state differs");
@@ -294,41 +342,53 @@ export async function admitRequiredCI({root = process.cwd(), repository, sourceC
   // Identical source and workflow inputs already establish the required job.
   let result = await lookup();
   if (!result) {
-    let existing;
-    try {existing = await api("GET", `repos/${repository}/git/ref/heads/${branch}`);} catch (error) {if (error.status !== 404) throw error;}
+    const existing = await lsRemote(ref);
     if (existing) {
-      if (existing.ref !== ref || existing.object?.type !== "commit" || existing.object.sha !== sourceCommit) throw new Error("Required CI validation ref differs from the fixed source");
-    } else await pushSource(["push", remote, `${sourceCommit}:${ref}`]);
+      if (existing !== sourceCommit) throw new Error("Required CI validation ref differs from the fixed source");
+    } else {
+      await pushSource(leasedPush(remote, sourceCommit, ref, null));
+      if (await lsRemote(ref) !== sourceCommit) throw new Error("Required CI validation ref differs from the fixed source after creation");
+    }
     result = await lookup() ?? {...identity, validation_ref: ref, status: "MISSING", reason: "Exact-source required workflow has not appeared"};
   }
   if (retryFailed !== undefined) {
     if (result.status !== "FAILED" || result.run_id !== retryFailed.run_id || result.run_attempt !== retryFailed.run_attempt || result.run_attempt !== 1
         || typeof retryFailed.reason !== "string" || !retryFailed.reason.trim() || retryFailed.reason.length > 2048) throw new Error("Required CI retry needs the exact first failed attempt and a recorded recovery reason");
-    await api("POST", `repos/${repository}/actions/runs/${result.run_id}/rerun-failed-jobs`);
+    try {await api("POST", `repos/${repository}/actions/runs/${result.run_id}/rerun-failed-jobs`);}
+    catch (error) {
+      if (error.code !== "MYCRM_PUBLIC_READ_ONLY") throw error;
+      // No authenticated Actions write exists on this host. Keep the original
+      // failure; a maintainer reruns it on GitHub and preparation resumes.
+      return {...result, retry_requested: false, recovery_reason: retryFailed.reason, prior_failed_runs: [result],
+        reason: `${result.reason}; authenticated rerun unavailable: re-run failed jobs at https://github.com/${repository}/actions/runs/${result.run_id}, then prepare again without --retry-ci`};
+    }
     return {...result, status: "PENDING", reason: "Controlled failed-job retry requested", retry_requested: true, recovery_reason: retryFailed.reason, prior_failed_runs: [result]};
   }
   return result;
 }
 
-export async function importNativeValidation({repository, sourceCommit, sourceTree, api = githubRequest} = {}) {
+// CI imports evidence with Git only; the owner id comes from the Actions
+// environment. Any mismatch imports nothing, so CI executes every command.
+export async function importNativeValidation({root = process.cwd(), repository, sourceCommit, sourceTree, remote = "origin", ownerId = process.env.GITHUB_REPOSITORY_OWNER_ID, api = publicGithubRequest} = {}) {
   const result = {covered: [], invalidated: [], provenance: "ORIGINAL_NATIVE_EXECUTION"};
   try {
     if (!/^[A-Za-z0-9_.-]+\/[A-Za-z0-9_.-]+$/.test(repository ?? "") || !oid.test(sourceCommit ?? "") || !oid.test(sourceTree ?? "")) throw new Error("CI source identity is missing");
-    const metadata = await api("GET", `repos/${repository}`);
-    let status;
-    for (let page = 1; page <= 10 && !status; page++) {
-      const rows = await api("GET", `repos/${repository}/commits/${sourceCommit}/statuses?per_page=100&page=${page}`);
-      status = rows.find(item => item.context === validationContext && item.creator?.id === metadata.owner.id);
-      if (rows.length < 100) break;
-    }
-    if (!status || status.state !== "success") throw new Error("Passing repository-owner native validation status is absent");
-    const prefix = `https://api.github.com/repos/${repository}/git/blobs/`, blobSha = status.target_url?.startsWith(prefix) ? status.target_url.slice(prefix.length) : "";
-    if (!oid.test(blobSha) || !/^sha256:[a-f0-9]{64}$/.test(status.description ?? "")) throw new Error("Native status target or digest is invalid");
-    const blob = await api("GET", `repos/${repository}/git/blobs/${blobSha}`);
-    if (blob.encoding !== "base64" || typeof blob.content !== "string" || blob.content.length > 1024 * 1024) throw new Error("Native validation blob encoding/size is invalid");
-    const bytes = Buffer.from(blob.content, "base64");
-    if (gitBlobHash(bytes) !== blobSha || hash(bytes) !== status.description.slice(7)) throw new Error("Native validation blob/output digest changed");
-    const envelope = verifyEnvelope(JSON.parse(bytes), {repository, owner: metadata.owner, sourceCommit, sourceTree});
+    const owner = await repositoryOwner({repository, ownerId, api});
+    const ref = validationRef(sourceCommit), local = `refs/my-crm/imported-validation/${sourceCommit}`;
+    try {await git(root, ["fetch", "--quiet", "--no-tags", "--no-write-fetch-head", remote, `+${ref}:${local}`]);}
+    catch {throw new Error("Native validation evidence ref is absent or unreadable");}
+    await sourceIdentity(root, sourceCommit, sourceTree);
+    const commit = await git(root, ["rev-parse", "--verify", `${local}^{commit}`]);
+    const parents = (await git(root, ["rev-list", "--parents", "-n", "1", commit])).split(" ").slice(1);
+    if (parents.length !== 1 || parents[0] !== sourceCommit) throw new Error("Native validation evidence is not bound to the exact source parent");
+    const entries = (await git(root, ["ls-tree", "-z", `${commit}^{tree}`])).split("\0").filter(Boolean);
+    const entry = entries.length === 1 ? entries[0].match(/^100644 blob ([a-f0-9]{40})\tvalidation\.json$/) : null;
+    if (!entry) throw new Error("Native validation evidence tree must hold only validation.json");
+    if (Number(await git(root, ["cat-file", "-s", entry[1]])) > validationEnvelopeLimit) throw new Error("Native validation envelope exceeds its bounded size");
+    const bytes = await gitBytes(root, ["cat-file", "blob", entry[1]], "");
+    if (gitBlobHash(bytes) !== entry[1]) throw new Error("Native validation blob digest changed");
+    if ((await evidenceCommit(root, sourceCommit, bytes)).commit !== commit) throw new Error("Native validation evidence commit is not the reproducible record for its envelope");
+    const envelope = verifyEnvelope(JSON.parse(bytes), {repository, owner, sourceCommit, sourceTree});
     result.covered = envelope.checks.map(check => ({command: check.command, coverage: check.coverage, original_executions: check.executions}));
   } catch (error) {result.invalidated.push({reason: error.message});}
   return result;

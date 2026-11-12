@@ -137,7 +137,13 @@ Unknown closures cannot be qualified. Preserve originals and the original SLA
 clock; never copy a prior approval or relabel an old run as a current execution.
 Implementation and `release:check` use those same category commands. CI imports
 only the existing independently approved, exact-source native command evidence or
-executes those same commands; it cannot invent a partial green result. Category
+executes those same commands. That evidence travels as a git-native record pushed
+over SSH to `refs/my-crm/native-validation/<source-sha>`: a reproducible commit
+whose only parent is the source commit and whose tree holds only `validation.json`.
+CI fetches it with Git, recomputes the commit from the fetched envelope bytes and
+checks parent, tree, entry, size and digest before the strict envelope check; the
+owner id comes from `GITHUB_REPOSITORY_OWNER_ID`. Repository write access over SSH
+is the issuer boundary and the CI token stays read-only; it cannot invent a partial green result. Category
 qualification alone is not a launcher-owned native command proof. Publication
 still requires the existing exact-source native execution or independently
 qualified required-command manifest, including every actual changed dependency

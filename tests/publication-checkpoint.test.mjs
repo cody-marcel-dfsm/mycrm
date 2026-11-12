@@ -9,7 +9,7 @@ import test from "node:test";
 import {admitPreparedPush, preparePublication, publishPrepared, readPreparedPublication, recordPublicationDecision} from "../scripts/publication-checkpoint.mjs";
 import {validateRelease} from "../scripts/release-validation.mjs";
 import {bindingHash} from "../scripts/oracle-inputs.mjs";
-import {admitRequiredCI, exportNativeValidation, requiredCommands, gitBlobHash} from "../scripts/validation-transport.mjs";
+import {admitRequiredCI, exportNativeValidation, requiredCommands, validationRef} from "../scripts/validation-transport.mjs";
 
 const execute = promisify(execFile), zeros = "0".repeat(40);
 const successfulCI = f => ({status: "SUCCEEDED", source_commit: f.source, source_tree: f.tree, workflow_path: ".github/workflows/ci.yml", workflow_id: 7,
@@ -41,7 +41,7 @@ test("prepared publication admits once, binds changelist hashes and permits conc
   assert.ok(performance.now() - started < 1000, "Bounded native publication admission exceeds one second");
   const calls = [];
   await publishPrepared(prepared.prepared_record, {root: f.root, run: async (args, cwd) => calls.push({args, cwd})});
-  assert.deepEqual(calls, [{args: ["push", "origin", `${f.source}:refs/heads/main`], cwd: f.root}]);
+  assert.deepEqual(calls, [{args: ["push", `--force-with-lease=refs/heads/main:${f.before}`, "origin", `${f.source}:refs/heads/main`], cwd: f.root}]);
   assert.equal(f.admissions(), 1, "Publishing reran validation/effect admission");
 });
 
@@ -113,52 +113,48 @@ test("legacy complete approval imports its validation seal once and repeated Git
   await recordPublicationDecision({root: f.root, sourceCommit: f.source, sourceTree: f.tree, status: "APPROVED", receipt: "a".repeat(64)});
   await f.git("remote", "set-url", "--push", "origin", "https://github.com/synthetic-owner/synthetic-repository.git");
   let exports = 0;
-  const attest = async () => {exports++; return {source_commit: f.source, source_tree: f.tree, envelope_sha256: "c".repeat(64), blob_sha: "d".repeat(40), status_context: "my-crm/native-validation"};};
+  const attest = async () => {exports++; return {source_commit: f.source, source_tree: f.tree, envelope_sha256: "c".repeat(64), blob_sha: "d".repeat(40), evidence_commit: "e".repeat(40), evidence_ref: validationRef(f.source)};};
   const first = await preparePublication({root: f.root, admit: f.admit, attest, requiredCI: async () => successfulCI(f)});
   const repeated = await preparePublication({root: f.root, admit: async () => {throw new Error("Legacy proof was audited twice");}, attest: async () => {throw new Error("Completed attestation was exported twice");}, requiredCI: async () => successfulCI(f)});
   assert.equal(repeated.prepared_record, first.prepared_record); assert.equal(f.admissions(), 1); assert.equal(exports, 1);
 });
 
-test("production preparation orders original attestation before watched source and requires exact existing CI before any descriptor", async t => {
+test("production preparation orders git-native evidence before the watched source and requires exact existing CI before any descriptor", async t => {
   const f = await fixture(t), repository = "synthetic-owner/synthetic-repository", events = [], branch = `codex/validation-ready-${f.source}`;
-  await f.git("remote", "set-url", "--push", "origin", `https://github.com/${repository}.git`);
-  const state = {source: false, ready: false, blob: null, statuses: [], run: {id: 11, run_attempt: 1, workflow_id: 7, path: ".github/workflows/ci.yml", event: "push", head_branch: branch, head_sha: f.source,
+  await f.git("remote", "set-url", "--push", "origin", `git@github.com:${repository}.git`);
+  const state = {run: {id: 11, run_attempt: 1, workflow_id: 7, path: ".github/workflows/ci.yml", event: "push", head_branch: branch, head_sha: f.source,
     repository: {full_name: repository}, head_repository: {full_name: repository}, status: "queued", conclusion: null}};
-  const api = async (method, endpoint, body) => {
-    if (endpoint === `repos/${repository}`) return {owner: {id: 17}, protected: false};
-    if (endpoint === "user") return {id: 17};
-    if (endpoint === `repos/${repository}/git/commits/${f.source}`) {
-      if (!state.source) throw Object.assign(Error("Synthetic unpublished object"), {status: 404});
-      return {sha: f.source, tree: {sha: f.tree}};
-    }
-    if (endpoint.endsWith("/git/blobs")) {state.blob = Buffer.from(body.content, "base64");return {sha: gitBlobHash(state.blob)};}
-    if (endpoint.endsWith("/git/trees")) return {sha: "d".repeat(40)};
-    if (endpoint.endsWith("/git/commits")) return {sha: "e".repeat(40)};
-    if (endpoint.endsWith("/git/refs")) return {ref: body.ref, object: {sha: body.sha}};
-    if (endpoint.endsWith(`/statuses/${f.source}`)) {events.push("attestation");const result={...body,creator:{id:17}};state.statuses.push(result);return result;}
+  const ready = async () => (await execute("git", ["for-each-ref", `refs/heads/${branch}`], {cwd: f.remote})).stdout.trim() !== "";
+  // Public unauthenticated GETs only; every ref moves through Git.
+  const api = async (method, endpoint) => {
+    assert.equal(method, "GET", `Authenticated GitHub write attempted: ${endpoint}`);
+    if (endpoint === `repos/${repository}`) return {owner: {id: 17}};
     if (endpoint.endsWith("/actions/workflows/ci.yml")) return {id: 7, name: "ci", path: ".github/workflows/ci.yml", state: "active"};
-    if (endpoint.endsWith(`/git/ref/heads/${branch}`)) {if (!state.ready) throw Object.assign(Error("Synthetic ref absent"), {status:404});return {ref:`refs/heads/${branch}`,object:{type:"commit",sha:f.source}};}
-    if (endpoint.includes("/actions/workflows/7/runs?")) return {total_count: state.ready ? 1 : 0, workflow_runs: state.ready ? [state.run] : []};
+    if (endpoint.includes("/actions/workflows/7/runs?")) {const visible = await ready(); return {total_count: visible ? 1 : 0, workflow_runs: visible ? [state.run] : []};}
     if (endpoint.includes("/actions/runs/11/jobs?")) return {total_count: 1, jobs: [{id:13,run_id:11,run_attempt:1,head_sha:f.source,head_branch:branch,name:"test",status:"completed",conclusion:"success"}]};
     throw Error(`Unexpected synthetic GitHub shape: ${method} ${endpoint}`);
   };
+  // The fixture routes the configured SSH push URL to its local bare remote.
+  const viaFixture = name => async args => {events.push(name); await f.git("-c", `url.${f.remote}.insteadOf=git@github.com:${repository}.git`, ...args);};
+  const lsRemote = async ref => (await execute("git", ["for-each-ref", "--format=%(objectname)", ref], {cwd: f.remote})).stdout.trim() || null;
   const checks = requiredCommands.map(command => ({command, coverage: "EXACT_INPUT_EXECUTION", executions: [{record_sha256:"a".repeat(64),command_sha256:bindingHash(command),input_sha256:"b".repeat(64),executable_sha256:"c".repeat(64),environment_sha256:"d".repeat(64),output_sha256:"e".repeat(64),original_environment:{node:"v22.11.0",platform:"darwin",architecture:"arm64"}}]}));
-  const attest = options => exportNativeValidation({...options, api, collect: async () => checks, pushSource: async args => {
-    assert.deepEqual(args,["push","origin",`${f.source}:refs/heads/codex/validation-source-${f.source}`]);events.push("unwatched");await f.git("push",f.remote,args[2]);state.source=true;
-  }});
-  const requiredCI = options => admitRequiredCI({...options, api, pushSource: async args => {
-    assert.equal(state.statuses.length,1);assert.equal(JSON.parse(state.blob).checks.length,3);events.push("watched");await f.git("push",f.remote,args[2]);state.ready=true;
+  const attest = options => exportNativeValidation({...options, api, collect: async () => checks, lsRemote, pushRef: viaFixture("evidence")});
+  const requiredCI = options => admitRequiredCI({...options, api, lsRemote, pushSource: async args => {
+    assert.ok(await lsRemote(validationRef(f.source)), "Watched ref appeared before the native evidence ref");
+    await viaFixture("watched")(args);
   }});
   await assert.rejects(preparePublication({root:f.root,admit:f.admit,attest,requiredCI}), error => error.code === "MYCRM_CI_PENDING");
-  assert.deepEqual(events,["unwatched","attestation","watched"]);
+  assert.deepEqual(events,["evidence","watched"]);
+  assert.equal(await f.git("rev-parse", `${await lsRemote(validationRef(f.source))}^@`), f.source);
   const directory=path.join(f.root,".git/oracle/publication-prepared");
   const files=await readdir(directory);
   assert.equal(files.filter(name=>/^[a-f0-9]{64}-[a-f0-9]{64}\.json$/.test(name)).length,0);
   state.run.status="completed";state.run.conclusion="success";
   const prepared=await preparePublication({root:f.root,admit:f.admit,attest:async()=>{throw Error("Attestation repeated");},requiredCI});
   const record=(await readPreparedPublication(prepared.prepared_record,{root:f.root})).record;assert.equal(record.required_ci.status,"SUCCEEDED");assert.equal(record.required_ci.source_commit,f.source);
-  assert.deepEqual(events,["unwatched","attestation","watched"]);assert.equal(await f.git("ls-remote",f.remote,"refs/heads/main"),`${f.before}\trefs/heads/main`);
-  const calls=[];await publishPrepared(prepared.prepared_record,{root:f.root,run:async args=>calls.push(args)});assert.deepEqual(calls,[["push","origin",`${f.source}:refs/heads/main`]]);
+  assert.equal(record.validation_transport.evidence_ref, validationRef(f.source));
+  assert.deepEqual(events,["evidence","watched"]);assert.equal(await f.git("ls-remote",f.remote,"refs/heads/main"),`${f.before}\trefs/heads/main`);
+  const calls=[];await publishPrepared(prepared.prepared_record,{root:f.root,run:async args=>calls.push(args)});assert.deepEqual(calls,[["push",`--force-with-lease=refs/heads/main:${f.before}`,"origin",`${f.source}:refs/heads/main`]]);
   const legacy={...record};delete legacy.required_ci;delete legacy.record_sha256;legacy.record_sha256=bindingHash(legacy);
   const oldFile=path.join(directory,`${path.basename(prepared.prepared_record).slice(0,64)}-${legacy.record_sha256}.json`);await writeFile(oldFile,JSON.stringify(legacy));
   await assert.rejects(readPreparedPublication(oldFile,{root:f.root}),/required CI admission/);
@@ -273,10 +269,10 @@ test("real Git publication uses the effective native hook and no heavy validator
   for (const name of ["oracle-deployment.mjs", "oracle-review.mjs", "oracle-validation.mjs", "shipment-state.mjs", "release-validation.mjs", "validation-transport.mjs"]) await writeFile(path.join(f.root, "scripts", name), "throw new Error('Heavy validation is forbidden during prepared Git publication');\n");
   await f.git("config", "core.hooksPath", ".githooks");
   assert.equal(await f.git("config", "--get", "core.hooksPath"), ".githooks");
-  const github = "https://github.com/synthetic-owner/synthetic-repository.git";
+  const github = "git@github.com:synthetic-owner/synthetic-repository.git";
   await f.git("remote", "set-url", "--push", "origin", github);
   const prepared = await preparePublication({root: f.root, admit: f.admit,
-    attest: async () => ({source_commit: f.source, source_tree: f.tree, envelope_sha256: "c".repeat(64), blob_sha: "d".repeat(40), status_context: "my-crm/native-validation"}),
+    attest: async () => ({source_commit: f.source, source_tree: f.tree, envelope_sha256: "c".repeat(64), blob_sha: "d".repeat(40), evidence_commit: "e".repeat(40), evidence_ref: validationRef(f.source)}),
     requiredCI: async () => successfulCI(f)});
   assert.equal((await readPreparedPublication(prepared.prepared_record, {root: f.root})).record.required_ci.status, "SUCCEEDED");
   // Route the fixture transport into its bare repository while forwarding the
@@ -289,7 +285,7 @@ test("real Git publication uses the effective native hook and no heavy validator
   await writeFile(path.join(f.root, "source.txt"), "synthetic concurrent source arrival\n"); await f.git("add", "."); await f.git("commit", "-m", "Synthetic concurrent author commit");
   await writeFile(path.join(f.root, "unfinished.txt"), "synthetic unfinished arrival\n");
   const started = performance.now(); await publishPrepared(prepared.prepared_record, {root: f.root, run: async args => {
-    assert.deepEqual(args, ["push", "origin", `${f.source}:refs/heads/main`]);
+    assert.deepEqual(args, ["push", `--force-with-lease=refs/heads/main:${f.before}`, "origin", `${f.source}:refs/heads/main`]);
     await execute("git", ["-c", `url.${f.remote}.insteadOf=${github}`, "-c", `core.hooksPath=${route}`, ...args],
       {cwd: f.root, env: {...process.env, PATH: `${bin}${path.delimiter}${process.env.PATH}`}});
   }});

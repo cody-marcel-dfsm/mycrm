@@ -180,12 +180,14 @@ test("publication pushes with an expected-old-value lease and refuses a remote t
   await f.git("push", "--force", "origin", `${f.before}:refs/heads/main`);
   await publishPrepared(prepared.prepared_record, {root: f.root});
   assert.equal(await f.bare("rev-parse", "refs/heads/main"), f.source);
-  // An absent destination uses the empty expectation.
-  const g = await fixture(t);
-  await g.git("push", "origin", ":refs/heads/main");
-  const admitG = async () => ({status: "ADMITTED", source_commit: g.source, target_tree: g.tree, technical_receipt_sha256: "a".repeat(64), plan_sha256: "b".repeat(64), protected_effects: []});
-  const absent = await preparePublication({root: g.root, remoteBefore: zeros, admit: admitG}), absentCalls = [];
-  await publishPrepared(absent.prepared_record, {root: g.root, run: async args => absentCalls.push(args)});
-  assert.deepEqual(absentCalls, [["push", "--force-with-lease=refs/heads/main:", "origin", `${g.source}:refs/heads/main`]]);
+  // An absent destination uses the empty expectation, and a concurrent
+  // creation of that destination is refused.
+  const release = "refs/heads/codex/release-v0.1.0";
+  const absent = await preparePublication({root: f.root, target: release, remoteBefore: zeros, admit}), absentCalls = [];
+  await publishPrepared(absent.prepared_record, {root: f.root, run: async args => absentCalls.push(args)});
+  assert.deepEqual(absentCalls, [["push", `--force-with-lease=${release}:`, "origin", `${f.source}:${release}`]]);
+  await f.git("push", "origin", `${f.before}:${release}`);
+  await assert.rejects(publishPrepared(absent.prepared_record, {root: f.root}), /push failed/i);
+  assert.equal(await f.bare("rev-parse", release), f.before, "Concurrently created destination was overwritten");
   assert.equal(await f.ghInvoked(), false, "gh CLI was invoked");
 });

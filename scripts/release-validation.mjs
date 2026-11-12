@@ -57,7 +57,7 @@ export async function validateRelease({execute = run, nativeEvidence, priorCover
     const sourceTree = (await call("git", ["rev-parse", "HEAD^{tree}"], {cwd: root})).stdout.trim();
     priorCoverage = process.env.MYCRM_VALIDATION_SOURCE_SHA && process.env.MYCRM_VALIDATION_SOURCE_SHA !== sourceCommit
       ? {covered: [], invalidated: [{reason: "CI checkout differs from its exact event source commit"}]}
-      : await (await import("./validation-transport.mjs")).importNativeValidation({repository: process.env.GITHUB_REPOSITORY, sourceCommit, sourceTree});
+      : await (await import("./validation-transport.mjs")).importNativeValidation({root, repository: process.env.GITHUB_REPOSITORY, sourceCommit, sourceTree});
   }
   for (const invalidation of priorCoverage?.invalidated ?? []) console.log(`MYCRM_VALIDATION_INVALIDATED=${JSON.stringify(invalidation)}`);
   for (const command of requiredFor(contract)) {

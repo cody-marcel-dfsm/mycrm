@@ -8,65 +8,67 @@ import process from "node:process";
 import {fileURLToPath} from "node:url";
 import {promisify} from "node:util";
 import test from "node:test";
-import {collectNativeChecks, exportNativeValidation, importNativeValidation, gitBlobHash, historicalInputComparisons, nativeCoverageIntake, requiredCommands, validationContext, admitRequiredCI} from "../scripts/validation-transport.mjs";
+import {collectNativeChecks, exportNativeValidation, importNativeValidation, gitBlobHash, historicalInputComparisons, nativeCoverageIntake, requiredCommands, admitRequiredCI, publicGithubRequest, validationRef} from "../scripts/validation-transport.mjs";
 import {bindingHash, evidenceBinding} from "../scripts/oracle-inputs.mjs";
 import {validateRelease} from "../scripts/release-validation.mjs";
 import {readValidationProofs, validationDigest} from "../scripts/oracle-validation.mjs";
 
 const source = "a".repeat(40), tree = "b".repeat(40), repository = "synthetic-owner/my-crm";
 const hash = value => createHash("sha256").update(value).digest("hex");
+const execute = promisify(execFile);
 const checks = () => requiredCommands.map(command => ({command, coverage: "EXACT_INPUT_EXECUTION", executions: [{record_sha256: "c".repeat(64), command_sha256: hash(JSON.stringify(command)),
   input_sha256: "d".repeat(64), executable_sha256: "e".repeat(64), environment_sha256: "f".repeat(64), output_sha256: "1".repeat(64), original_environment: {node: "v22.11.0", platform: "darwin", architecture: "arm64"}}]}));
-function service({unpublished = false, actor = 17} = {}) {
+// Public unauthenticated Actions reads. The watched ref is observed through an
+// injected Git ref reader; only an explicitly authenticated writer may POST.
+function service({writer = false} = {}) {
   const branch = `codex/validation-ready-${source}`;
-  const state = {calls: [], owner: {id: 17}, actor: {id: actor}, statuses: [], blob: null, exists: !unpublished, ready: false,
+  const state = {calls: [], ready: false,
     workflow: {id: 7, name: "ci", path: ".github/workflows/ci.yml", state: "active"},
     runs: [{id: 11, workflow_id: 7, path: ".github/workflows/ci.yml", head_sha: source, head_branch: branch, event: "push", run_attempt: 1, status: "completed", conclusion: "success", repository: {full_name: repository}, head_repository: {full_name: repository}}],
     jobs: [{id: 13, run_id: 11, run_attempt: 1, head_sha: source, head_branch: branch, name: "test", status: "completed", conclusion: "success"}]};
   const api = async (method, endpoint, body) => {
     state.calls.push({method, endpoint, body});
-    if (endpoint === `repos/${repository}`) return {owner: state.owner};
-    if (endpoint === "user") return state.actor;
+    if (method !== "GET") {
+      if (writer && endpoint.endsWith("/rerun-failed-jobs") && method === "POST") {state.runs[0].run_attempt++; state.runs[0].status = "queued"; state.runs[0].conclusion = null; return null;}
+      return publicGithubRequest(method, endpoint, body);
+    }
+    if (endpoint === `repos/${repository}`) return {owner: {id: 17}};
     if (endpoint === `repos/${repository}/actions/workflows/ci.yml`) return state.workflow;
-    if (endpoint === `repos/${repository}/git/ref/heads/${branch}`) {
-      if (!state.ready) throw Object.assign(new Error("Synthetic validation ref absent"), {status: 404});
-      return {ref: `refs/heads/${branch}`, object: {type: "commit", sha: source}};
-    }
     if (endpoint.includes(`/actions/workflows/${state.workflow.id}/runs?`)) return {total_count: state.runs.length, workflow_runs: state.runs};
-    if (endpoint.endsWith("/rerun-failed-jobs") && method === "POST") {state.runs[0].run_attempt++; state.runs[0].status = "queued"; state.runs[0].conclusion = null; return null;}
     if (endpoint.includes("/actions/runs/") && endpoint.includes("/jobs?")) return {total_count: state.jobs.length, jobs: state.jobs};
-    if (endpoint === `repos/${repository}/git/commits/${source}` && method === "GET") {
-      if (!state.exists) throw Object.assign(new Error("Synthetic source object absent"), {status: 404});
-      return {sha: source, tree: {sha: tree}};
-    }
-    if (endpoint.endsWith("/git/blobs") && method === "POST") {state.blob = {encoding: body.encoding, content: body.content, sha: gitBlobHash(Buffer.from(body.content, "base64"))}; return {sha: state.blob.sha};}
-    if (endpoint.includes("/git/blobs/") && method === "GET") return state.blob;
-    if (endpoint.endsWith("/git/trees")) return {sha: "2".repeat(40)};
-    if (endpoint.endsWith("/git/commits")) return {sha: "3".repeat(40)};
-    if (endpoint.endsWith("/git/refs")) return {ref: body.ref, object: {sha: body.sha}};
-    if (endpoint.includes("/statuses?")) return endpoint.includes(`/commits/${source}/`) ? state.statuses : [];
-    if (endpoint.endsWith(`/statuses/${source}`)) {const status = {...body, creator: state.actor}; state.statuses.unshift(status); return status;}
     throw new Error(`Unexpected synthetic API call: ${method} ${endpoint}`);
   };
-  return {state, api};
+  const lsRemote = async ref => {state.calls.push({method: "GIT_LS_REMOTE", endpoint: ref}); return state.ready && ref === `refs/heads/${branch}` ? source : null;};
+  return {state, api, lsRemote};
 }
-async function exported(options = {}) {
-  const f = service(options);
-  f.result = await exportNativeValidation({repository, sourceCommit: source, sourceTree: tree, api: f.api, collect: async () => checks(), pushSource: async args => {
-    assert.deepEqual(args, ["push", "origin", `${source}:refs/heads/codex/validation-source-${source}`]); f.state.calls.push({method: "GIT_SOURCE_PREPARATION"}); f.state.exists = true;
-  }});
-  return f;
+// A real repository and local bare remote stand in for the SSH remote.
+async function repositoryFixture(t) {
+  const parent = await realpath(await mkdtemp(path.join(os.tmpdir(), "my-crm-transport-git-")));
+  t.after(() => rm(parent, {recursive: true, force: true}));
+  const root = path.join(parent, "repo"), remote = path.join(parent, "remote.git"), clone = path.join(parent, "clone");
+  await execute("git", ["init", "--bare", "-b", "main", remote]); await execute("git", ["init", "-b", "main", root]);
+  const git = async (...args) => (await execute("git", args, {cwd: root})).stdout.trim(), bare = async (...args) => (await execute("git", args, {cwd: remote})).stdout.trim();
+  await git("config", "user.name", "Synthetic Maintainer"); await git("config", "user.email", "synthetic@example.invalid"); await git("remote", "add", "origin", remote);
+  await writeFile(path.join(root, "source.txt"), "synthetic unpublished source\n"); await git("add", "."); await git("commit", "-m", "Synthetic source");
+  const commit = await git("rev-parse", "HEAD"), commitTree = await git("rev-parse", "HEAD^{tree}");
+  const api = async (method, endpoint) => {assert.equal(method, "GET"); if (endpoint === `repos/${repository}`) return {owner: {id: 17}}; throw new Error(`Unexpected synthetic API call: ${method} ${endpoint}`);};
+  const exported = (collect = async () => checks()) => exportNativeValidation({root, repository, sourceCommit: commit, sourceTree: commitTree, admission: {}, remote: "origin", api, collect});
+  const imported = async (options = {}) => {
+    try {await execute("git", ["clone", "--quiet", remote, clone]);} catch {}
+    return importNativeValidation({root: clone, repository, sourceCommit: commit, sourceTree: commitTree, remote: "origin", ownerId: "17", api: async () => assert.fail("Import used REST"), ...options});
+  };
+  return {root, remote, git, bare, source: commit, tree: commitTree, exported, imported};
 }
 
-test("first CI consumes owner-authenticated native original checks and repeats zero validations", async () => {
-  const f = await exported(), prior = await importNativeValidation({repository, sourceCommit: source, sourceTree: tree, api: f.api}), executed = [];
+test("first CI consumes git-native original checks and repeats zero validations", async t => {
+  const f = await repositoryFixture(t); await f.exported();
+  const prior = await f.imported(), executed = [];
   assert.equal(prior.covered.length, 3); assert.deepEqual(prior.invalidated, []);
   await validateRelease({nativeEvidence: false, priorCoverage: prior, execute: async args => executed.push(args)});
   assert.deepEqual(executed, []);
   assert.equal(prior.provenance, "ORIGINAL_NATIVE_EXECUTION");
   assert.equal(prior.covered[1].original_executions[0].original_environment.platform, "darwin");
-  assert.equal(f.state.statuses[0].context, validationContext);
-  const publicBytes = Buffer.from(f.state.blob.content, "base64").toString();
+  const publicBytes = (await execute("git", ["cat-file", "blob", `${validationRef(f.source)}:validation.json`], {cwd: f.remote})).stdout;
   const publicRecord = JSON.parse(publicBytes);
   assert.deepEqual(publicRecord.checks.map(check => check.command), requiredCommands);
   // Exact public command names may contain "review"; private review evidence may not.
@@ -74,26 +76,30 @@ test("first CI consumes owner-authenticated native original checks and repeats z
   assert.doesNotMatch(JSON.stringify(withoutCommands), /Vault|\/Users\/|\/home\/|token|stderr|review|CODEX_|PATH|execution_cwd/i);
 });
 
-test("unpublished source is uploaded during validation preparation before status issuance", async () => {
-  const f = await exported({unpublished: true});
-  const prepared = f.state.calls.findIndex(item => item.method === "GIT_SOURCE_PREPARATION"), status = f.state.calls.findIndex(item => item.endpoint?.endsWith(`/statuses/${source}`));
-  assert.ok(prepared >= 0 && status > prepared);
-  assert.ok(f.state.calls.some(item => item.body?.ref?.startsWith("refs/heads/codex/validation-evidence-")), "Immutable blob has no durable reachable evidence ref");
+test("unpublished source travels with the leased evidence push and no side branch or status is created", async t => {
+  const f = await repositoryFixture(t);
+  await assert.rejects(execute("git", ["cat-file", "-e", `${f.source}^{commit}`], {cwd: f.remote}));
+  const result = await f.exported();
+  await execute("git", ["cat-file", "-e", `${f.source}^{commit}`], {cwd: f.remote});
+  assert.equal(result.evidence_ref, validationRef(f.source)); assert.equal(await f.bare("rev-parse", validationRef(f.source)), result.evidence_commit);
+  assert.equal(await f.bare("for-each-ref", "refs/heads"), "", "Evidence export created a branch");
+  // A changed envelope for the same source replaces the evidence under a lease.
+  const replaced = await f.exported(async () => checks().map((check, index) => index ? check : {...check, executions: [{...check.executions[0], output_sha256: "2".repeat(64)}]}));
+  assert.notEqual(replaced.evidence_commit, result.evidence_commit);
+  assert.equal(await f.bare("rev-parse", validationRef(f.source)), replaced.evidence_commit);
 });
 
-test("required CI watches the exact source after native attestation and reuses the existing test job without command replay", async () => {
-  const f = await exported({unpublished: true}), pushes = [], completed = f.state.runs; f.state.runs = [];
-  const admit = () => admitRequiredCI({repository, sourceCommit: source, sourceTree: tree, api: f.api, pushSource: async args => {
-    assert.equal(f.state.statuses[0].state, "success", "Watched ref appeared before original validation attestation");
-    assert.deepEqual(args, ["push", "origin", `${source}:refs/heads/codex/validation-ready-${source}`]);
-    pushes.push(args); f.state.calls.push({method: "GIT_WATCHED_PREPARATION"}); f.state.ready = true; f.state.runs = completed;
+test("required CI watches the exact source after native evidence and reuses the existing test job without command replay", async t => {
+  const g = await repositoryFixture(t); await g.exported();
+  const f = service(), pushes = [], completed = f.state.runs; f.state.runs = [];
+  const admit = () => admitRequiredCI({repository, sourceCommit: source, sourceTree: tree, api: f.api, lsRemote: f.lsRemote, pushSource: async args => {
+    assert.ok(await g.bare("rev-parse", validationRef(g.source)), "Watched ref appeared before native evidence");
+    assert.deepEqual(args, ["push", "--porcelain", `--force-with-lease=refs/heads/codex/validation-ready-${source}:`, "origin", `${source}:refs/heads/codex/validation-ready-${source}`]);
+    pushes.push(args); f.state.ready = true; f.state.runs = completed;
   }});
   const admitted = await admit(); assert.equal(admitted.status, "SUCCEEDED"); assert.equal(admitted.source_commit, source); assert.equal(admitted.required_job, "test");
   assert.deepEqual(await admit(), admitted); assert.equal(pushes.length, 1);
-  const firstUpload = f.state.calls.findIndex(item => item.method === "GIT_SOURCE_PREPARATION"), status = f.state.calls.findIndex(item => item.endpoint?.endsWith(`/statuses/${source}`)), watched = f.state.calls.findIndex(item => item.method === "GIT_WATCHED_PREPARATION");
-  assert.ok(firstUpload < status && status < watched);
-  const prior = await importNativeValidation({repository, sourceCommit: source, sourceTree: tree, api: f.api}), executed = [];
-  await validateRelease({nativeEvidence: false, priorCoverage: prior, execute: async args => executed.push(args)}); assert.deepEqual(executed, []);
+  assert.ok(f.state.calls.every(item => item.method === "GET" || item.method === "GIT_LS_REMOTE"), "Required CI admission attempted a GitHub write");
 });
 
 test("required CI reuses prior PR and main successes and pending runs before ref lookup or mutation", async () => {
@@ -101,22 +107,28 @@ test("required CI reuses prior PR and main successes and pending runs before ref
     const f = service(), branch = event === "push" ? "main" : "synthetic-feature";
     Object.assign(f.state.runs[0], {event, head_branch: branch, ...(status === "pending" ? {status: "queued", conclusion: null} : {})});
     f.state.jobs[0].head_branch = branch;
-    const invoke = () => admitRequiredCI({repository, sourceCommit: source, sourceTree: tree, api: f.api, pushSource: async () => {throw Error("Compatible CI triggered duplicate work");}});
+    const invoke = () => admitRequiredCI({repository, sourceCommit: source, sourceTree: tree, api: f.api, lsRemote: f.lsRemote, pushSource: async () => {throw Error("Compatible CI triggered duplicate work");}});
     assert.equal((await invoke()).status, status === "success" ? "SUCCEEDED" : "PENDING");
     assert.equal((await invoke()).status, status === "success" ? "SUCCEEDED" : "PENDING");
-    assert.ok(!f.state.calls.some(item => item.endpoint.includes("/git/ref/")), "Existing CI admission looked up a new watched ref");
+    assert.ok(!f.state.calls.some(item => item.method === "GIT_LS_REMOTE"), "Existing CI admission looked up a new watched ref");
   }
   const f = service(); f.state.runs.unshift({...f.state.runs[0], id: 12, status: "completed", conclusion: "failure"});
-  const admitted = await admitRequiredCI({repository, sourceCommit: source, sourceTree: tree, api: f.api});
+  const admitted = await admitRequiredCI({repository, sourceCommit: source, sourceTree: tree, api: f.api, lsRemote: f.lsRemote});
   assert.equal(admitted.status, "SUCCEEDED"); assert.equal(admitted.run_id, 11); assert.equal(admitted.prior_failed_runs[0].run_id, 12);
 });
 
 test("failed CI preserves its original observation and permits one exact reason-bound recovery retry", async () => {
-  const f = service(); f.state.runs[0].conclusion = "failure";
-  const options = {repository, sourceCommit: source, sourceTree: tree, api: f.api, pushSource: async () => {throw Error("Failed CI created another watched ref");}};
+  const f = service({writer: true}); f.state.runs[0].conclusion = "failure";
+  const options = {repository, sourceCommit: source, sourceTree: tree, api: f.api, lsRemote: f.lsRemote, pushSource: async () => {throw Error("Failed CI created another watched ref");}};
   const failed = await admitRequiredCI(options); assert.equal(failed.status, "FAILED");
   assert.ok(!f.state.calls.some(item => item.method === "POST"));
   for (const retryFailed of [{run_id: 12, run_attempt: 1, reason: "Synthetic recovered input"}, {run_id: 11, run_attempt: 1, reason: ""}]) await assert.rejects(admitRequiredCI({...options, retryFailed}), /exact first failed attempt/);
+  // Without an authenticated writer the retry stays FAILED with manual recovery.
+  const publicOnly = service(); publicOnly.state.runs[0].conclusion = "failure";
+  const unavailable = await admitRequiredCI({...options, api: publicOnly.api, retryFailed: {run_id: 11, run_attempt: 1, reason: "Synthetic external input recovered"}});
+  assert.equal(unavailable.status, "FAILED"); assert.equal(unavailable.retry_requested, false);
+  assert.match(unavailable.reason, new RegExp(`github\\.com/${repository}/actions/runs/11`)); assert.equal(unavailable.prior_failed_runs[0].reason, "failure");
+  assert.equal(publicOnly.state.runs[0].run_attempt, 1);
   const retried = await admitRequiredCI({...options, retryFailed: {run_id: 11, run_attempt: 1, reason: "Synthetic external input recovered"}});
   assert.equal(retried.status, "PENDING"); assert.equal(retried.prior_failed_runs[0].status, "FAILED"); assert.equal(retried.prior_failed_runs[0].reason, "failure");
   assert.equal((await admitRequiredCI(options)).run_attempt, 2); assert.equal(f.state.calls.filter(item => item.method === "POST").length, 1);
@@ -125,7 +137,7 @@ test("failed CI preserves its original observation and permits one exact reason-
 });
 
 test("required exact-source CI preserves missing pending and failure states and rejects wrong native GitHub identities", async () => {
-  for (const mutation of ["missing", "pending", "failure", "missing-job", "duplicate-job", "pending-job", "failed-job", "wrong-head", "wrong-repository", "wrong-head-repository", "wrong-workflow", "wrong-workflow-path", "disabled-workflow", "wrong-job-head", "wrong-job-run", "wrong-job-attempt", "wrong-job-branch", "malformed-job-state"]) {
+  for (const mutation of ["missing", "pending", "failure", "missing-job", "duplicate-job", "pending-job", "failed-job", "wrong-head", "wrong-repository", "wrong-head-repository", "wrong-workflow", "wrong-workflow-path", "disabled-workflow", "wrong-job-head", "wrong-job-run", "wrong-job-attempt", "wrong-job-branch", "malformed-job-state", "wrong-watched-ref"]) {
     const f = service(); f.state.ready = true;
     if (mutation === "missing") f.state.runs = [];
     if (mutation === "pending") Object.assign(f.state.runs[0], {status: "in_progress", conclusion: null});
@@ -145,42 +157,36 @@ test("required exact-source CI preserves missing pending and failure states and 
     if (mutation === "wrong-job-attempt") f.state.jobs[0].run_attempt = 2;
     if (mutation === "wrong-job-branch") f.state.jobs[0].head_branch = "main";
     if (mutation === "malformed-job-state") Object.assign(f.state.jobs[0], {status: "unexpected", conclusion: null});
-    const invoke = () => admitRequiredCI({repository, sourceCommit: source, sourceTree: tree, api: f.api, pushSource: async () => {throw Error("Existing fixed validation ref was pushed again");}});
+    if (mutation === "wrong-watched-ref") {f.state.runs = []; f.lsRemote = async () => "9".repeat(40);}
+    const invoke = () => admitRequiredCI({repository, sourceCommit: source, sourceTree: tree, api: f.api, lsRemote: f.lsRemote, pushSource: async () => {throw Error("Existing fixed validation ref was pushed again");}});
     const expected = {missing: "MISSING", pending: "PENDING", failure: "FAILED", "missing-job": "MISSING", "duplicate-job": "MISSING", "pending-job": "PENDING", "failed-job": "FAILED"}[mutation];
     if (expected) assert.equal((await invoke()).status, expected, mutation);
     else await assert.rejects(invoke(), /identity|different|differs|malformed/, mutation);
   }
 });
 
-test("wrong actor, altered blob, changed source/tree/command contract and failed status invalidate coverage", async () => {
-  await assert.rejects(exported({actor: 18}), /repository owner/);
-  for (const mutation of ["actor", "bytes", "tree", "contract", "failure"]) {
-    const f = await exported();
-    if (mutation === "actor") f.state.statuses[0].creator = {id: 18};
-    if (mutation === "bytes") f.state.blob.content = Buffer.from("synthetic altered envelope").toString("base64");
-    if (mutation === "failure") f.state.statuses[0].state = "failure";
-    if (mutation === "contract") {
-      const envelope = JSON.parse(Buffer.from(f.state.blob.content, "base64")); envelope.contract_sha256 = "9".repeat(64);
-      const bytes = Buffer.from(JSON.stringify(envelope)); f.state.blob.content = bytes.toString("base64"); f.state.blob.sha = gitBlobHash(bytes);
-      f.state.statuses[0].target_url = `https://api.github.com/repos/${repository}/git/blobs/${f.state.blob.sha}`; f.state.statuses[0].description = `sha256:${hash(bytes)}`;
-    }
-    const prior = await importNativeValidation({repository, sourceCommit: source, sourceTree: mutation === "tree" ? "4".repeat(40) : tree, api: f.api});
-    assert.deepEqual(prior.covered, [], mutation); assert.equal(prior.invalidated.length, 1, mutation);
+test("different owner, tree, source and absent evidence invalidate coverage", async t => {
+  const f = await repositoryFixture(t); await f.exported();
+  for (const [name, options] of Object.entries({owner: {ownerId: "18"}, tree: {sourceTree: "4".repeat(40)}, source: {sourceCommit: "5".repeat(40)}, "malformed owner": {ownerId: "not-a-number"}})) {
+    const prior = await f.imported(options);
+    assert.deepEqual(prior.covered, [], name); assert.equal(prior.invalidated.length, 1, name);
   }
+  assert.equal((await f.imported()).covered.length, 3);
 });
 
-test("PR source head coverage is accepted and a different synthetic merge SHA is explicitly uncovered", async () => {
-  const f = await exported();
-  assert.equal((await importNativeValidation({repository, sourceCommit: source, sourceTree: tree, api: f.api})).covered.length, 3);
-  assert.equal((await importNativeValidation({repository, sourceCommit: "5".repeat(40), sourceTree: tree, api: f.api})).covered.length, 0);
+test("PR source head coverage is accepted and a different synthetic merge SHA is explicitly uncovered", async t => {
+  const f = await repositoryFixture(t); await f.exported();
+  assert.equal((await f.imported()).covered.length, 3);
+  assert.equal((await f.imported({sourceCommit: "5".repeat(40)})).covered.length, 0);
   const workflow = await readFile(new URL("../.github/workflows/ci.yml", import.meta.url), "utf8");
   assert.match(workflow, /ref: \$\{\{ github\.event\.pull_request\.head\.sha \|\| github\.sha \}\}/);
+  assert.match(workflow, /permissions:\n  contents: read/);
 });
 
-test("strict public schema rejects private metadata and missing checks execute only their required commands", async () => {
-  const f = service(), unsafe = checks(); unsafe[0].executions[0].original_environment.token = "synthetic-forbidden-secret";
-  await assert.rejects(exportNativeValidation({repository, sourceCommit: source, sourceTree: tree, api: f.api, collect: async () => unsafe}), /metadata/);
-  assert.equal(f.state.calls.some(item => item.method === "POST"), false);
+test("strict public schema rejects private metadata and missing checks execute only their required commands", async t => {
+  const f = await repositoryFixture(t), unsafe = checks(); unsafe[0].executions[0].original_environment.token = "synthetic-forbidden-secret";
+  await assert.rejects(f.exported(async () => unsafe), /metadata/);
+  assert.equal(await f.bare("for-each-ref"), "", "Rejected envelope reached the remote");
   const executed = [];
   await validateRelease({nativeEvidence: false, priorCoverage: {covered: [{command: requiredCommands[1], coverage: "EXACT_INPUT_EXECUTION"}], invalidated: []}, execute: async args => executed.push(args)});
   assert.deepEqual(executed, [requiredCommands[0], requiredCommands[2]]);
