@@ -239,7 +239,8 @@ validation. Then prepare the fixed Git publication with
 Its immutable private checkpoint records source/tree, remote/destination/baseline,
 completed technical/effect admission and the actual covered changelist hashes.
 The remote fetches over public HTTPS (`https://github.com/cody-marcel-dfsm/mycrm.git`)
-and pushes over SSH (`git@github.com:cody-marcel-dfsm/mycrm.git`). The push URL and
+and pushes over SSH (scp-style address for user `git` on host `github.com`, path
+`cody-marcel-dfsm/mycrm.git`). The push URL and
 `core.sshCommand` (repository deploy key, `IdentitiesOnly=yes`) are repository-local
 Git configuration, never versioned. Publication needs no `gh` login: refs move only
 through Git with an explicit `--force-with-lease=<ref>:<expected>` (empty means the

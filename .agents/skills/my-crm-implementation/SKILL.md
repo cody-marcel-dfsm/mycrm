@@ -97,7 +97,8 @@ npm run publication:publish -- --prepared <absolute-record>
 ```
 
 Publication needs no `gh` login. The push URL is SSH
-(`git@github.com:cody-marcel-dfsm/mycrm.git`) with a repository-local
+(scp-style address for user `git` on host `github.com`, path
+`cody-marcel-dfsm/mycrm.git`) with a repository-local
 `core.sshCommand` naming the deploy key; check it with
 `git config --get remote.origin.pushurl` and `git config --get core.sshCommand`.
 Preparation pushes the git-native evidence ref

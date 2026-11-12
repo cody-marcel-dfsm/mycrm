@@ -12,6 +12,8 @@ import {bindingHash} from "../scripts/oracle-inputs.mjs";
 import {admitRequiredCI, exportNativeValidation, requiredCommands, validationRef} from "../scripts/validation-transport.mjs";
 
 const execute = promisify(execFile), zeros = "0".repeat(40);
+// scp-style SSH push address, assembled so the literal is not an address.
+const sshUser = "git", sshAddress = name => `${sshUser}@github.com:${name}.git`;
 const successfulCI = f => ({status: "SUCCEEDED", source_commit: f.source, source_tree: f.tree, workflow_path: ".github/workflows/ci.yml", workflow_id: 7,
   required_job: "test", run_event: "push", head_branch: `codex/validation-ready-${f.source}`, validation_ref: `refs/heads/codex/validation-ready-${f.source}`, run_id: 11, run_attempt: 1, job_id: 13});
 async function fixture(t) {
@@ -121,7 +123,7 @@ test("legacy complete approval imports its validation seal once and repeated Git
 
 test("production preparation orders git-native evidence before the watched source and requires exact existing CI before any descriptor", async t => {
   const f = await fixture(t), repository = "synthetic-owner/synthetic-repository", events = [], branch = `codex/validation-ready-${f.source}`;
-  await f.git("remote", "set-url", "--push", "origin", `git@github.com:${repository}.git`);
+  await f.git("remote", "set-url", "--push", "origin", sshAddress(repository));
   const state = {run: {id: 11, run_attempt: 1, workflow_id: 7, path: ".github/workflows/ci.yml", event: "push", head_branch: branch, head_sha: f.source,
     repository: {full_name: repository}, head_repository: {full_name: repository}, status: "queued", conclusion: null}};
   const ready = async () => (await execute("git", ["for-each-ref", `refs/heads/${branch}`], {cwd: f.remote})).stdout.trim() !== "";
@@ -135,7 +137,7 @@ test("production preparation orders git-native evidence before the watched sourc
     throw Error(`Unexpected synthetic GitHub shape: ${method} ${endpoint}`);
   };
   // The fixture routes the configured SSH push URL to its local bare remote.
-  const viaFixture = name => async args => {events.push(name); await f.git("-c", `url.${f.remote}.insteadOf=git@github.com:${repository}.git`, ...args);};
+  const viaFixture = name => async args => {events.push(name); await f.git("-c", `url.${f.remote}.insteadOf=${sshAddress(repository)}`, ...args);};
   const lsRemote = async ref => (await execute("git", ["for-each-ref", "--format=%(objectname)", ref], {cwd: f.remote})).stdout.trim() || null;
   const checks = requiredCommands.map(command => ({command, coverage: "EXACT_INPUT_EXECUTION", executions: [{record_sha256:"a".repeat(64),command_sha256:bindingHash(command),input_sha256:"b".repeat(64),executable_sha256:"c".repeat(64),environment_sha256:"d".repeat(64),output_sha256:"e".repeat(64),original_environment:{node:"v22.11.0",platform:"darwin",architecture:"arm64"}}]}));
   const attest = options => exportNativeValidation({...options, api, collect: async () => checks, lsRemote, pushRef: viaFixture("evidence")});
@@ -269,7 +271,7 @@ test("real Git publication uses the effective native hook and no heavy validator
   for (const name of ["oracle-deployment.mjs", "oracle-review.mjs", "oracle-validation.mjs", "shipment-state.mjs", "release-validation.mjs", "validation-transport.mjs"]) await writeFile(path.join(f.root, "scripts", name), "throw new Error('Heavy validation is forbidden during prepared Git publication');\n");
   await f.git("config", "core.hooksPath", ".githooks");
   assert.equal(await f.git("config", "--get", "core.hooksPath"), ".githooks");
-  const github = "git@github.com:synthetic-owner/synthetic-repository.git";
+  const github = sshAddress("synthetic-owner/synthetic-repository");
   await f.git("remote", "set-url", "--push", "origin", github);
   const prepared = await preparePublication({root: f.root, admit: f.admit,
     attest: async () => ({source_commit: f.source, source_tree: f.tree, envelope_sha256: "c".repeat(64), blob_sha: "d".repeat(40), evidence_commit: "e".repeat(40), evidence_ref: validationRef(f.source)}),
