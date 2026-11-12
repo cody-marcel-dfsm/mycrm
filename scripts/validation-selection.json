@@ -3,6 +3,23 @@
   "selection": {
     "change_class": "deep_bug_fix",
     "scope_paths": [
+      "AGENTS.md",
+      "CLAUDE.md",
+      "scripts/oracle-review.mjs",
+      "scripts/oracle-engine.mjs",
+      "scripts/oracle-spec.mjs",
+      "scripts/oracle-policy.mjs",
+      "scripts/validation-contract.mjs",
+      "tests/oracle-spec.test.mjs",
+      "tests/oracle-engine.test.mjs",
+      "tests/oracle-policy.test.mjs",
+      "tests/support/oracle-spec-bos-vector.json",
+      "tests/native-review-settings.test.mjs",
+      "tests/oracle-performance.test.mjs",
+      "tests/validation-contract.test.mjs",
+      "tests/release-tooling.test.mjs",
+      "Vault/docs/design/oracle-implementation-spec.md",
+      "Vault/docs/design/oracle-implementation-spec.test-plan.json",
       "scripts/validation-transport.mjs",
       "scripts/publication-checkpoint.mjs",
       "scripts/release-validation.mjs",
@@ -35,13 +52,20 @@
           "tests/validation-transport.test.mjs",
           "tests/publication-checkpoint.test.mjs",
           "tests/release-tooling.test.mjs",
-          "tests/validation-contract.test.mjs"
+          "tests/validation-contract.test.mjs",
+          "tests/oracle-performance.test.mjs",
+          "tests/oracle-policy.test.mjs",
+          "tests/oracle-spec.test.mjs",
+          "tests/oracle-engine.test.mjs",
+          "tests/native-review-settings.test.mjs"
         ],
-        "fixtures": []
+        "fixtures": [
+          "tests/support/oracle-spec-bos-vector.json"
+        ]
       }
     ],
-    "reason": "Exercise credential-independent publication, evidence authenticity, CI admission and concurrent remote updates through generated synthetic repositories. Capture genuine assertion failure before implementation and complete passing categories afterward. Preserve original execution history and delivery clocks; retain independently applicable unchanged observations. No automatic recurrence expansion or paid fallback.",
-    "revision_of": "920a8058448fabe8d5a4ddfe779ed5b561f70fb88c2942900f591f17598301b5",
+    "reason": "Repair publication credential dependence and concurrent-update handling while covering the full outstanding source range. Preserve earlier specification, engine, policy and lifecycle checks as interactions. Require an unchanged focused reproduction with genuine assertion failure before repair and complete passing categories afterward. Retain historical design evidence, execution outcomes and the original 300-second delivery clock; use no automatic regression expansion or paid fallback.",
+    "revision_of": "dfb998deed569b56271d6bc888d09c6c0cbfd079116f67460bee8bd970c71e40",
     "design": null
   },
   "base_commit": "a6f2ec01abb8c8ddb47fc1b85710c99054128e6b",
@@ -54,8 +78,8 @@
     "architecture": "x64",
     "options_sha256": "abe606b43ec20381d6290b1098ca6fb5ccdf4666008979be2a2c892605ca8eb2"
   },
-  "proposal_sha256": "af5023b3e3e44e188edba0af0ff3d792fab6260ab7062d648f87a68382202625",
-  "review_sha256": "795d8d2a1d14bde8e1667034638e21208c47402234e073a90790ee493a783269",
+  "proposal_sha256": "8cd1c33b430ffe13c5847237fd0f1c29422e5eed017686f50d63a7b1205187aa",
+  "review_sha256": "23022fa80abc849134e95eda950279f2c7fc9756cc85b7a3705196d8efc21b2a",
   "commands": [
     {
       "category": "sanity",
@@ -86,9 +110,16 @@
         "tests/validation-transport.test.mjs",
         "tests/publication-checkpoint.test.mjs",
         "tests/release-tooling.test.mjs",
-        "tests/validation-contract.test.mjs"
+        "tests/validation-contract.test.mjs",
+        "tests/oracle-performance.test.mjs",
+        "tests/oracle-policy.test.mjs",
+        "tests/oracle-spec.test.mjs",
+        "tests/oracle-engine.test.mjs",
+        "tests/native-review-settings.test.mjs"
       ],
-      "fixtures": [],
+      "fixtures": [
+        "tests/support/oracle-spec-bos-vector.json"
+      ],
       "argv": [
         "node",
         "--test",
@@ -96,7 +127,12 @@
         "tests/validation-transport.test.mjs",
         "tests/publication-checkpoint.test.mjs",
         "tests/release-tooling.test.mjs",
-        "tests/validation-contract.test.mjs"
+        "tests/validation-contract.test.mjs",
+        "tests/oracle-performance.test.mjs",
+        "tests/oracle-policy.test.mjs",
+        "tests/oracle-spec.test.mjs",
+        "tests/oracle-engine.test.mjs",
+        "tests/native-review-settings.test.mjs"
       ]
     }
   ],
@@ -111,10 +147,27 @@
   },
   "spec": {
     "kind": "oracle-spec/1",
-    "title": "SSH publication with verifiable native validation",
+    "title": "Credential-independent publication and complete range validation",
     "design": null,
     "base": "a6f2ec01abb8c8ddb47fc1b85710c99054128e6b",
     "scope": [
+      "AGENTS.md",
+      "CLAUDE.md",
+      "scripts/oracle-review.mjs",
+      "scripts/oracle-engine.mjs",
+      "scripts/oracle-spec.mjs",
+      "scripts/oracle-policy.mjs",
+      "scripts/validation-contract.mjs",
+      "tests/oracle-spec.test.mjs",
+      "tests/oracle-engine.test.mjs",
+      "tests/oracle-policy.test.mjs",
+      "tests/support/oracle-spec-bos-vector.json",
+      "tests/native-review-settings.test.mjs",
+      "tests/oracle-performance.test.mjs",
+      "tests/validation-contract.test.mjs",
+      "tests/release-tooling.test.mjs",
+      "Vault/docs/design/oracle-implementation-spec.md",
+      "Vault/docs/design/oracle-implementation-spec.test-plan.json",
       "scripts/validation-transport.mjs",
       "scripts/publication-checkpoint.mjs",
       "scripts/release-validation.mjs",
@@ -129,19 +182,27 @@
       ".claude/skills/my-crm-implementation/SKILL.md"
     ],
     "runtime_paths": [
+      "scripts/oracle-review.mjs",
+      "scripts/oracle-engine.mjs",
+      "scripts/oracle-spec.mjs",
+      "scripts/oracle-policy.mjs",
+      "scripts/validation-contract.mjs",
       "scripts/validation-transport.mjs",
       "scripts/publication-checkpoint.mjs",
       "scripts/release-validation.mjs"
     ],
     "acceptance": [
-      "A generated repository can export evidence without invoking an authenticated CLI. Export verifies the local source commit and tree, constructs a reproducible evidence object using fixed synthetic metadata, includes exactly one regular validation.json blob and exactly one source parent, and binds the envelope bytes through the commit message digest. The dedicated evidence ref is updated with an explicit observed-value lease and its resulting object identity is checked remotely.",
-      "A fresh checkout imports evidence through Git without REST access when the repository owner identifier is available from the CI environment. Import checks the source parent and tree, sole blob entry, envelope size, digest and reproducible commit identity before applying the existing strict repository, issuer and command-contract checks. Missing, malformed, oversized, redirected or altered evidence contributes no imported coverage, and release validation executes all uncovered commands.",
-      "Public HTTP reads use an HTTPS GitHub API destination, accept GET only, attach no credentials, bound response size and request duration, and reject unsuccessful or malformed responses. CI admission retains repository, source, workflow, event, attempt and unique required-job verification; incomplete or unsuccessful observations cannot produce a prepared publication.",
-      "CI admission examines compatible existing runs before creating a watched branch. Branch inspection uses exact Git ref discovery, creation requires an absent-ref lease, and a conflicting concurrent update is refused. An unavailable authenticated retry reports the affected run and manual recovery action while preserving the original failure and issuing no publication descriptor.",
-      "Publication uses the prepared source and destination with an explicit lease against the captured remote object, using an empty expectation for an absent destination. Tests advance the remote between preparation and publication, including an update that ordinary fast-forward checks would allow, and prove refusal without changing the remote. Existing preparation ancestry checks, immutable tuple verification, approval decisions and native hook admission remain effective.",
-      "Transport preserves the existing envelope schema, sanitized execution metadata, complete command identities and original provenance. Export still requires independently approved source coverage; corrupted originals and unsupported historical qualification remain rejected. Required CI success remains bound to the exact source even when imported command coverage is unavailable.",
-      "The revised sealed contract binds the planned runtime paths and exact selected modules. The focused module records a complete assertion failure on the unchanged implementation and passes afterward with identical reproduction inputs; all selected categories finish without skipped or incomplete cases, and prior execution outcomes remain intact.",
-      "Maintained workflow instructions agree across both client copies and describe Git evidence transport, unauthenticated reads, failed-run recovery and leased publication. SSH credential selection remains local configuration, introduces no versioned secret or sibling-project dependency, and preserves the read-only CI credential boundary and separate protected-effect admission."
+      "Evidence export succeeds with an unusable authenticated CLI. It first verifies candidate commit and tree identities and independently approved command coverage, then creates a reproducible Git object using constant synthetic author metadata, constant timestamps, one source parent and one regular validation blob. The message authenticates blob bytes by digest; ref replacement uses the observed object as its lease expectation and confirms the resulting remote identity.",
+      "A clean checkout obtains command evidence using Git and a trusted CI owner identifier without an HTTP request. Import independently checks object reproducibility, parent count and identity, source tree, blob mode and name, payload size, digest, repository scope, issuer scope and selected command identities. Missing or invalid evidence supplies zero imported coverage and causes every uncovered required command to execute.",
+      "The public reader permits only bodyless GET requests to the fixed GitHub HTTPS API origin, sends no authentication material, refuses redirects and limits response bytes and elapsed request time. HTTP errors, malformed JSON and oversized responses fail explicitly.",
+      "Preparation admits only a successful uniquely identified required job from the expected repository, workflow, source, event and attempt. Existing qualifying executions are considered before branch creation. Git ref discovery verifies the exact destination, creation expects absence atomically, and an unavailable retry reports the failed run and manual recovery action while retaining its original failed outcome.",
+      "Final publication includes a destination-specific explicit lease using preparation's captured remote identity, with an empty expectation for a missing destination. A concurrent remote advance is rejected even when an ordinary push would fast-forward. Candidate ancestry, sealed preparation identity, current approval admission and hook enforcement continue to apply.",
+      "Transport retains the established envelope format and sanitized original execution provenance. Export refuses damaged execution originals, absent independent approval and incomplete historical qualification. Read-only CI credentials remain sufficient, and required-source CI success remains mandatory regardless of evidence import availability.",
+      "The revised contract admits every planned path in the outstanding publication range and binds all selected tests and supporting fixtures. The committed focused test remains byte-identical between a complete assertion-failing baseline execution and its passing repair execution. Every category requires nonempty completed test results where applicable, without skipped cases, and preserves original timing and attempt history.",
+      "Specification generation retains canonical sealing, strict shape validation, public-text privacy checks, correct base and scope association, exact test membership and rejection of absent or altered seals. The synthetic reference fixture continues to demonstrate compatible canonical digest computation.",
+      "Proposal engine dispatch preserves explicit selection, truthful engine identity, restricted execution, custody-checked external context and refusal of unavailable engines. Proposal generation remains tied to the fetched main baseline and emits a valid sealed contract through each supported adapter.",
+      "Existing review lifecycle behavior, policy producer compatibility, source identity checks and release-range enforcement remain effective across the integrated outstanding work. Process failures retain their original status and cannot become passing approval evidence.",
+      "Both maintained copies of implementation and shipping guidance describe the same evidence exchange, public-read limitations, failed-run recovery and leased push procedure. SSH identity configuration remains machine-local, introduces no packaged credentials or sibling checkout dependency, and preserves separate admission for protected authority changes."
     ],
     "tests": [
       {
@@ -153,9 +214,9 @@
           3,
           4,
           6,
-          7
+          10
         ],
-        "purpose": "Reproduce credential-dependent transport and missing lease behavior, then verify real Git evidence exchange, tamper rejection, public reads and concurrent-update refusal."
+        "purpose": "Exercise real repository exchange without CLI authentication, malformed evidence rejection, bounded public requests and concurrent destination updates."
       },
       {
         "module": "tests/validation-transport.test.mjs",
@@ -166,40 +227,77 @@
           3,
           5
         ],
-        "purpose": "Verify strict envelope custody, native execution provenance, complete fallback coverage and CI identity and recovery checks."
+        "purpose": "Check execution provenance, envelope integrity, source-specific CI admission and honest command fallback."
       },
       {
         "module": "tests/publication-checkpoint.test.mjs",
         "covers": [
-          2,
           3,
           4,
           5,
-          7
+          10
         ],
-        "purpose": "Verify prepared publication identity, approval admission, transport ordering, remote leases and unchanged bounded hook behavior."
+        "purpose": "Check preparation custody, current approval decisions, remote expectations and publication hook behavior."
       },
       {
         "module": "tests/release-tooling.test.mjs",
         "covers": [
           1,
           5,
-          7
+          7,
+          9,
+          10
         ],
-        "purpose": "Verify release admission, package boundaries and execution of commands lacking valid imported evidence."
+        "purpose": "Check release-range admission, specification enforcement, package isolation and execution of uncovered commands."
       },
       {
         "module": "tests/validation-contract.test.mjs",
         "covers": [
-          6
+          6,
+          7
         ],
-        "purpose": "Verify revised contract binding, genuine reproduction, selected-category completeness and retained original execution records."
+        "purpose": "Check expanded scope, exact category selection, unchanged reproduction inputs and original result retention."
+      },
+      {
+        "module": "tests/oracle-performance.test.mjs",
+        "covers": [
+          9
+        ],
+        "purpose": "Check established proposal and completed-review lifecycle interactions through the existing deterministic harness."
+      },
+      {
+        "module": "tests/oracle-policy.test.mjs",
+        "covers": [
+          9
+        ],
+        "purpose": "Check supported producer identities and preservation of policy rejection boundaries."
+      },
+      {
+        "module": "tests/oracle-spec.test.mjs",
+        "covers": [
+          7
+        ],
+        "purpose": "Check canonical seals against the synthetic reference, malformed structures, privacy guards and contract association."
+      },
+      {
+        "module": "tests/oracle-engine.test.mjs",
+        "covers": [
+          8
+        ],
+        "purpose": "Check adapter selection, restricted commands, reported identities, external evidence custody and baseline requirements."
+      },
+      {
+        "module": "tests/native-review-settings.test.mjs",
+        "covers": [
+          8
+        ],
+        "purpose": "Check end-to-end proposal adapter output and valid sealed selection generation."
       }
     ],
     "findings": [
       {
         "severity": "warning",
-        "message": "Accepting validation attestations from repository writers changes issuer authority. Activation requires exact owner authority for that writer set; technical approval supplies none. Repository and owner hashes identify scope and do not authenticate the individual writer."
+        "message": "Repository write access becomes the evidence issuer boundary. Repository and owner digests identify scope without identifying the individual writer. Activation requires exact authority for the permitted writer set; technical review alone grants no such authority."
       }
     ],
     "verdict": "APPROVED",
@@ -208,11 +306,11 @@
       "model": "gpt-6.1-sol",
       "oracle_sha256": "8bbe1cb821991e781bce06dac315a8256aaaadf05c5c8d5a24e0cb54787b2fc3",
       "host": "aio",
-      "time": "2026-11-12T00:27:10Z",
+      "time": "2026-11-12T00:32:26Z",
       "request_sha256": "30f8e3f2712276475090aafcc5cb98c0c2c823d7885fdf7a84dda29e7419d85d",
-      "proposal_sha256": "af5023b3e3e44e188edba0af0ff3d792fab6260ab7062d648f87a68382202625"
+      "proposal_sha256": "8cd1c33b430ffe13c5847237fd0f1c29422e5eed017686f50d63a7b1205187aa"
     },
-    "seal": "243d8f1cdc15ad49554e926dbde7c62e8eb1f23c8136cb7d53cea24adf26220f"
+    "seal": "20c325b062faf9c81aebf0f69d5b710586edd5ad9800096235bb9c21e20f98c8"
   },
-  "contract_sha256": "dfb998deed569b56271d6bc888d09c6c0cbfd079116f67460bee8bd970c71e40"
+  "contract_sha256": "072d7ed7c05407de17a73a6206b872af99ae41e4738b5113af9f1ebfbd85fd84"
 }
