@@ -1,0 +1,178 @@
+{
+ "kind": "build-project/1",
+ "project": "mycrm",
+ "needs": [
+  "node"
+ ],
+ "categories": {
+  "sanity": {
+   "label": "Privacy and boundary",
+   "runner": "npm_script",
+   "selection": [
+    "check:privacy",
+    "check:boundary"
+   ]
+  },
+  "contracts": {
+   "label": "BOS contracts",
+   "runner": "npm_script",
+   "selection": [
+    "check:contracts"
+   ]
+  },
+  "clients": {
+   "label": "Generated client parity",
+   "runner": "npm_script",
+   "selection": [
+    "check:clients"
+   ]
+  },
+  "release": {
+   "label": "Native release check",
+   "runner": "release_check",
+   "selection": [
+    "release:check"
+   ]
+  },
+  "changelist_tests": {
+   "label": "Changed node tests",
+   "runner": "node_tests",
+   "selection": [
+    "changelist-node-tests"
+   ],
+   "dynamic": "changelist"
+  }
+ },
+ "rules": [
+  {
+   "paths": [
+    "src/*",
+    "contracts/*",
+    "config/*",
+    "scripts/*"
+   ],
+   "checks": [
+    "contracts",
+    "clients"
+   ]
+  },
+  {
+   "paths": [
+    "clients/*",
+    "plugins/*",
+    "openai/*",
+    "examples/*",
+    "dist/*",
+    ".agents/*",
+    ".claude/*",
+    ".claude-plugin/*"
+   ],
+   "checks": [
+    "contracts",
+    "clients"
+   ]
+  },
+  {
+   "paths": [
+    ".gitignore"
+   ],
+   "checks": [
+    "sanity"
+   ]
+  },
+  {
+   "paths": [
+    "tests/*"
+   ],
+   "checks": [
+    "contracts"
+   ]
+  },
+  {
+   "paths": [
+    "package.json",
+    "package-lock.json",
+    ".github/*",
+    ".githooks/*"
+   ],
+   "checks": [
+    "release",
+    "contracts",
+    "clients"
+   ]
+  },
+  {
+   "paths": [
+    "*.md",
+    "Vault/*",
+    "LICENSE",
+    "NOTICE",
+    "build-project.json"
+   ],
+   "checks": [
+    "sanity"
+   ]
+  }
+ ],
+ "classification": {
+  "always": [
+   "sanity"
+  ],
+  "non_code": [
+   "sanity"
+  ],
+  "docs_category": "sanity",
+  "non_runtime": [
+   "*.md",
+   "Vault/*",
+   "LICENSE",
+   "NOTICE",
+   "build-project.json"
+  ],
+  "test_roots": [
+   "tests/"
+  ],
+  "unit_tests": "tests/",
+  "test_plan_paths": [
+   "Vault/docs/design/*.test-plan.json"
+  ],
+  "selection": {
+   "docs_only": {
+    "path_rules": true,
+    "changelist": false,
+    "feature_plan": false,
+    "add": []
+   },
+   "bug_fix": {
+    "path_rules": true,
+    "changelist": true,
+    "feature_plan": false,
+    "add": []
+   },
+   "deep_bug_fix": {
+    "path_rules": true,
+    "changelist": true,
+    "feature_plan": false,
+    "add": [
+     "release"
+    ]
+   },
+   "feature": {
+    "path_rules": true,
+    "changelist": true,
+    "feature_plan": false,
+    "add": [
+     "release"
+    ]
+   }
+  }
+ },
+ "impact": {
+  "categories": [],
+  "rules": [],
+  "criteria": [],
+  "deployment": [],
+  "affected_reason": "The change touches plugin source the selected categories exercise.",
+  "unaffected_reason": "The change touches no plugin runtime path."
+ }
+}

@@ -3,37 +3,11 @@
   "selection": {
     "change_class": "feature",
     "scope_paths": [
-      "AGENTS.md",
-      "CLAUDE.md",
-      "scripts/oracle-review.mjs",
-      "scripts/oracle-engine.mjs",
-      "scripts/oracle-spec.mjs",
-      "scripts/oracle-policy.mjs",
-      "scripts/validation-contract.mjs",
-      "tests/oracle-spec.test.mjs",
-      "tests/oracle-engine.test.mjs",
-      "tests/oracle-policy.test.mjs",
-      "tests/support/oracle-spec-bos-vector.json",
-      "tests/native-review-settings.test.mjs",
-      "tests/oracle-performance.test.mjs",
-      "tests/validation-contract.test.mjs",
-      "tests/release-tooling.test.mjs",
-      "Vault/docs/design/oracle-implementation-spec.md",
-      "Vault/docs/design/oracle-implementation-spec.test-plan.json",
-      "Vault/docs/design/ssh-publication-transport.md",
-      "Vault/docs/design/ssh-publication-transport.test-plan.json",
-      "scripts/validation-transport.mjs",
-      "scripts/publication-checkpoint.mjs",
-      "scripts/release-validation.mjs",
-      "scripts/validation-contract.md",
+      "build-project.json",
+      "tests/build-project.test.mjs",
       "scripts/validation-selection.json",
-      "tests/publication-ssh-transport.test.mjs",
-      "tests/validation-transport.test.mjs",
-      "tests/publication-checkpoint.test.mjs",
-      ".agents/skills/ship-it/SKILL.md",
-      ".claude/skills/ship-it/SKILL.md",
-      ".agents/skills/my-crm-implementation/SKILL.md",
-      ".claude/skills/my-crm-implementation/SKILL.md"
+      "Vault/docs/design/project-build-integration.md",
+      "Vault/docs/design/project-build-integration.test-plan.json"
     ],
     "categories": [
       {
@@ -44,34 +18,24 @@
       {
         "name": "interactions",
         "tests": [
-          "tests/validation-contract.test.mjs",
-          "tests/release-tooling.test.mjs",
-          "tests/validation-transport.test.mjs",
-          "tests/publication-checkpoint.test.mjs",
-          "tests/oracle-performance.test.mjs",
-          "tests/oracle-policy.test.mjs"
+          "tests/release-tooling.test.mjs"
         ],
         "fixtures": []
       },
       {
         "name": "acceptance",
         "tests": [
-          "tests/publication-ssh-transport.test.mjs",
-          "tests/oracle-spec.test.mjs",
-          "tests/oracle-engine.test.mjs",
-          "tests/native-review-settings.test.mjs"
+          "tests/build-project.test.mjs"
         ],
-        "fixtures": [
-          "tests/support/oracle-spec-bos-vector.json"
-        ]
+        "fixtures": []
       }
     ],
-    "reason": "Rebind the corrected design and its matching plan while retaining the complete feature range and all selected modules. Git evidence exchange adds a publication capability warranting interaction and acceptance coverage. Admission refusals establish no reproduction. Keep original failures, the original 300-second delivery clock, complete category execution and independent publication checks. Add no automatic regression category or paid fallback.",
-    "revision_of": "91c621f300a22e45cbbcf3c8caa9a2fe4949499be3765df17812cd18d308ec9c",
-    "design": "Vault/docs/design/ssh-publication-transport.md"
+    "reason": "Add project-owned build routing. Check release admission interactions and exhaustive definition acceptance; preserve native security and publication gates. Retain the original 300-second delivery clock and execute every selected category completely.",
+    "revision_of": "d844b85641b86eb39a7f2c9bb9199cd7b1b34291ab357ba3790cec09f5ab3789",
+    "design": "Vault/docs/design/project-build-integration.md"
   },
-  "base_commit": "a6f2ec01abb8c8ddb47fc1b85710c99054128e6b",
-  "base_tree": "13f6cb73f693849bc4347164188aa2bdc958c4ac",
+  "base_commit": "081d3c0aeeccf62e4d9c9caae0f9c6941c36d057",
+  "base_tree": "08cb6c753800af1b16e9a8d2f934a1db90bd5819",
   "catalog_sha256": "c255f4c9b60d77fbd1d2e418973869a11520aec654a90849ad3f3fc01b144c1e",
   "runtime": {
     "node": "v26.12.0",
@@ -80,8 +44,8 @@
     "architecture": "x64",
     "options_sha256": "abe606b43ec20381d6290b1098ca6fb5ccdf4666008979be2a2c892605ca8eb2"
   },
-  "proposal_sha256": "7113d40c2859a15876aee9fb0adad23082be47c7bf20755f94366b80dc4a4222",
-  "review_sha256": "cb0bcbe5ecc941c0878a3b3d02941674e2696932fa9700a07cc1f6e4a2f90f3d",
+  "proposal_sha256": "d18e6b977513f55a91ebd4a26d000b7511e550a8942cf62e52aaeb598d0e7953",
+  "review_sha256": "eb1c8ced82fd7e70ed972191b59622419e5fb48eec36b97108d1fd3d226f8fdb",
   "commands": [
     {
       "category": "sanity",
@@ -96,45 +60,27 @@
     {
       "category": "interactions",
       "tests": [
-        "tests/validation-contract.test.mjs",
-        "tests/release-tooling.test.mjs",
-        "tests/validation-transport.test.mjs",
-        "tests/publication-checkpoint.test.mjs",
-        "tests/oracle-performance.test.mjs",
-        "tests/oracle-policy.test.mjs"
+        "tests/release-tooling.test.mjs"
       ],
       "fixtures": [],
       "argv": [
         "node",
         "--test",
         "--test-reporter=tap",
-        "tests/validation-contract.test.mjs",
-        "tests/release-tooling.test.mjs",
-        "tests/validation-transport.test.mjs",
-        "tests/publication-checkpoint.test.mjs",
-        "tests/oracle-performance.test.mjs",
-        "tests/oracle-policy.test.mjs"
+        "tests/release-tooling.test.mjs"
       ]
     },
     {
       "category": "acceptance",
       "tests": [
-        "tests/publication-ssh-transport.test.mjs",
-        "tests/oracle-spec.test.mjs",
-        "tests/oracle-engine.test.mjs",
-        "tests/native-review-settings.test.mjs"
+        "tests/build-project.test.mjs"
       ],
-      "fixtures": [
-        "tests/support/oracle-spec-bos-vector.json"
-      ],
+      "fixtures": [],
       "argv": [
         "node",
         "--test",
         "--test-reporter=tap",
-        "tests/publication-ssh-transport.test.mjs",
-        "tests/oracle-spec.test.mjs",
-        "tests/oracle-engine.test.mjs",
-        "tests/native-review-settings.test.mjs"
+        "tests/build-project.test.mjs"
       ]
     }
   ],
@@ -148,180 +94,68 @@
     "maximum_reasoning_effort": "medium"
   },
   "design_binding": {
-    "design": "Vault/docs/design/ssh-publication-transport.md",
-    "design_sha256": "452ca46584212343a62d68c6d6735863a3a853af7f0d8858d700356e882b50e4",
-    "plan": "Vault/docs/design/ssh-publication-transport.test-plan.json",
-    "plan_sha256": "ba4c460a2d3adc0ab4d8b5d40b4aae75cf2a095c1e0e2db67adb40caffd8f2fe",
+    "design": "Vault/docs/design/project-build-integration.md",
+    "design_sha256": "6846f00d45c09ffa1506a6456ab08f2e01524e89e902c9f72cf4ab5af26590ff",
+    "plan": "Vault/docs/design/project-build-integration.test-plan.json",
+    "plan_sha256": "16490110de7c49682cfe6ebb2bda426e96f51dd5ad463f810383880dc999076e",
     "tests": [
-      "tests/publication-checkpoint.test.mjs",
-      "tests/publication-ssh-transport.test.mjs",
-      "tests/release-tooling.test.mjs",
-      "tests/validation-transport.test.mjs"
+      "tests/build-project.test.mjs",
+      "tests/release-tooling.test.mjs"
     ]
   },
   "spec": {
     "kind": "oracle-spec/1",
-    "title": "SSH publication and sealed proposal continuity",
-    "design": "Vault/docs/design/ssh-publication-transport.md",
-    "base": "a6f2ec01abb8c8ddb47fc1b85710c99054128e6b",
+    "title": "My CRM build routing definition",
+    "design": "Vault/docs/design/project-build-integration.md",
+    "base": "081d3c0aeeccf62e4d9c9caae0f9c6941c36d057",
     "scope": [
-      "AGENTS.md",
-      "CLAUDE.md",
-      "scripts/oracle-review.mjs",
-      "scripts/oracle-engine.mjs",
-      "scripts/oracle-spec.mjs",
-      "scripts/oracle-policy.mjs",
-      "scripts/validation-contract.mjs",
-      "tests/oracle-spec.test.mjs",
-      "tests/oracle-engine.test.mjs",
-      "tests/oracle-policy.test.mjs",
-      "tests/support/oracle-spec-bos-vector.json",
-      "tests/native-review-settings.test.mjs",
-      "tests/oracle-performance.test.mjs",
-      "tests/validation-contract.test.mjs",
-      "tests/release-tooling.test.mjs",
-      "Vault/docs/design/oracle-implementation-spec.md",
-      "Vault/docs/design/oracle-implementation-spec.test-plan.json",
-      "Vault/docs/design/ssh-publication-transport.md",
-      "Vault/docs/design/ssh-publication-transport.test-plan.json",
-      "scripts/validation-transport.mjs",
-      "scripts/publication-checkpoint.mjs",
-      "scripts/release-validation.mjs",
-      "scripts/validation-contract.md",
+      "build-project.json",
+      "tests/build-project.test.mjs",
       "scripts/validation-selection.json",
-      "tests/publication-ssh-transport.test.mjs",
-      "tests/validation-transport.test.mjs",
-      "tests/publication-checkpoint.test.mjs",
-      ".agents/skills/ship-it/SKILL.md",
-      ".claude/skills/ship-it/SKILL.md",
-      ".agents/skills/my-crm-implementation/SKILL.md",
-      ".claude/skills/my-crm-implementation/SKILL.md"
+      "Vault/docs/design/project-build-integration.md",
+      "Vault/docs/design/project-build-integration.test-plan.json"
     ],
     "runtime_paths": [
-      "scripts/oracle-review.mjs",
-      "scripts/oracle-engine.mjs",
-      "scripts/oracle-spec.mjs",
-      "scripts/oracle-policy.mjs",
-      "scripts/validation-contract.mjs",
-      "scripts/validation-transport.mjs",
-      "scripts/publication-checkpoint.mjs",
-      "scripts/release-validation.mjs"
+      "build-project.json"
     ],
     "acceptance": [
-      "Export accepts only independently qualified command results for the specified source identity. Its evidence object uses constant synthetic metadata, one source parent, one regular payload entry and a digest-bearing message; updating the dedicated reference requires the observed object lease and subsequent advertisement confirmation.",
-      "A clean clone can recover coverage using Git and the Actions owner identifier without a logged-in CLI. Import checks reconstructed commit identity, source ancestry and tree, payload mode and name, byte limits, repository association, issuer association and command schema; any invalid record leaves every required command uncovered.",
-      "Public metadata access permits only credential-free bodyless GET requests to the fixed API origin. Redirects, foreign destinations, excessive bodies, expired requests, unsuccessful responses and malformed JSON fail explicitly.",
-      "Required CI admission verifies repository and source association together with workflow, event, attempt and unique job identities. Watched-reference creation uses an absence lease; conflicts fail, unavailable retries retain the failed observation and identify its recovery destination, and unsuccessful admission produces no prepared publication.",
-      "Final publication uses the prepared source, destination and explicit predecessor lease, including an absent destination. A concurrent reference update prevents publication while existing ancestry, decision, descriptor and hook checks remain effective.",
-      "The existing evidence envelope continues to carry sanitized original execution provenance. Damaged records and absent independent qualification prevent export, and release validation actually executes commands lacking acceptable imported coverage.",
-      "The feature selection covers the integrated planned range and binds the current design, plan, modules and fixture. Executed categories require complete positive test totals without skipped cases; admission errors supply no reproduction result and revisions preserve historical failures and delivery clocks.",
-      "Sealed specifications enforce canonical digest parity, structural constraints, publishable text, matching baseline and scope, and exhaustive criterion mappings. Missing or altered specifications stop executable release admission before test dispatch.",
-      "Both proposal adapters honor explicit engine selection, report their actual model, enforce execution restrictions and verify consumed external evidence. Unavailable engines fail without substitution, and proposal generation requires the fetched main baseline.",
-      "Review integration preserves original outcomes, recognized policy producers, continuation evidence and independent decisions for current source. Stale inputs and process failures confer neither technical approval nor deployment authority.",
-      "Mirrored maintainer instructions consistently describe evidence exchange, public-read restrictions, manual retry recovery and publication leases. SSH settings remain repository-local, private key material stays outside artifacts, and no sibling implementation dependency is introduced."
+      "The build descriptor identifies mycrm with schema kind build-project/1 and restricts category execution to the three supported runner identifiers without executable command fields.",
+      "Script selections resolve to existing package scripts within the permitted privacy, boundary, contract and client checks; release execution selects only release:check.",
+      "Every category reference resolves, all four native change classes have explicit selections, and every tracked file has a matching routing or non-runtime classification.",
+      "Every change receives sanity checks; executable classes select changelist tests; deep repairs and features additionally select release validation, as do package and workflow changes.",
+      "Release admission rejects absent or damaged sealed specifications before dispatch and executes the admitted contract's required commands."
     ],
     "tests": [
       {
-        "module": "tests/validation-contract.test.mjs",
-        "covers": [
-          6,
-          7
-        ],
-        "purpose": "Check integrated scope admission, feature bindings and complete category outcomes."
-      },
-      {
         "module": "tests/release-tooling.test.mjs",
         "covers": [
-          5,
-          7
-        ],
-        "purpose": "Check early specification enforcement and execution of commands without qualified coverage."
-      },
-      {
-        "module": "tests/validation-transport.test.mjs",
-        "covers": [
-          0,
-          1,
-          3,
-          5
-        ],
-        "purpose": "Check evidence qualification, original-result custody, CI identity and failure recovery."
-      },
-      {
-        "module": "tests/publication-checkpoint.test.mjs",
-        "covers": [
-          3,
           4
         ],
-        "purpose": "Check preparation ordering, current decisions, descriptor integrity and push admission."
+        "purpose": "Verify sealed specification admission and selected release execution remain effective."
       },
       {
-        "module": "tests/oracle-performance.test.mjs",
-        "covers": [
-          9
-        ],
-        "purpose": "Check proposal and review lifecycle continuity across launcher changes."
-      },
-      {
-        "module": "tests/oracle-policy.test.mjs",
-        "covers": [
-          9
-        ],
-        "purpose": "Check recognized policy provenance and rejection of unsupported authority claims."
-      },
-      {
-        "module": "tests/publication-ssh-transport.test.mjs",
+        "module": "tests/build-project.test.mjs",
         "covers": [
           0,
           1,
           2,
-          3,
-          4,
-          6,
-          10
+          3
         ],
-        "purpose": "Exercise real Git exchange, hostile evidence, restricted public reads and concurrent reference movement."
-      },
-      {
-        "module": "tests/oracle-spec.test.mjs",
-        "covers": [
-          7
-        ],
-        "purpose": "Check canonical seals, synthetic reference parity, schema constraints and text privacy."
-      },
-      {
-        "module": "tests/oracle-engine.test.mjs",
-        "covers": [
-          8
-        ],
-        "purpose": "Check adapter selection, restrictions, model reporting and external evidence custody."
-      },
-      {
-        "module": "tests/native-review-settings.test.mjs",
-        "covers": [
-          8,
-          10
-        ],
-        "purpose": "Check complete proposal generation for both adapters and consistent maintained guidance."
+        "purpose": "Check descriptor structure, permitted selections, category references, class routing and tracked-file coverage."
       }
     ],
-    "findings": [
-      {
-        "severity": "warning",
-        "message": "Evidence trust expands to repository writers. Reproducible Git objects establish content integrity without individual issuer attribution. The owning activation workflow must verify exact authority for that trust change; this technical verdict supplies none."
-      }
-    ],
+    "findings": [],
     "verdict": "APPROVED",
     "stamp": {
       "engine": "codex",
       "model": "gpt-6.1-sol",
       "oracle_sha256": "8bbe1cb821991e781bce06dac315a8256aaaadf05c5c8d5a24e0cb54787b2fc3",
       "host": "aio",
-      "time": "2026-11-12T00:42:37Z",
-      "request_sha256": "30f8e3f2712276475090aafcc5cb98c0c2c823d7885fdf7a84dda29e7419d85d",
-      "proposal_sha256": "7113d40c2859a15876aee9fb0adad23082be47c7bf20755f94366b80dc4a4222"
+      "time": "2026-11-22T21:00:05Z",
+      "request_sha256": null,
+      "proposal_sha256": "d18e6b977513f55a91ebd4a26d000b7511e550a8942cf62e52aaeb598d0e7953"
     },
-    "seal": "0b0e3b28d118a05144debb2185efb403de6563ddc03026ba3e511b8ca55f0e80"
+    "seal": "b45a547fa5141ea3b30c7898a1ef148e52cb72ddbfc9108f54bf73d0fcd72ed2"
   },
-  "contract_sha256": "d844b85641b86eb39a7f2c9bb9199cd7b1b34291ab357ba3790cec09f5ab3789"
+  "contract_sha256": "9b9cf9d5b1d35fd76bef5e2d2cf6ddbd1ff15668478d0d281270a8be92239d15"
 }
