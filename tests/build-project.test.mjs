@@ -1,7 +1,10 @@
 import assert from "node:assert/strict";
 import {execFile} from "node:child_process";
-import {readFile} from "node:fs/promises";
+import {access, mkdir, mkdtemp, readFile, readdir, rm} from "node:fs/promises";
+import os from "node:os";
+import path from "node:path";
 import test from "node:test";
+import {fileURLToPath} from "node:url";
 import {promisify} from "node:util";
 
 const root = new URL("../", import.meta.url);
@@ -65,4 +68,48 @@ test("sanity always runs, executable classes take changelist tests and release c
     const checks = definition.rules.filter((rule) => matches(rule.paths, name)).flatMap((rule) => rule.checks);
     assert.ok(checks.includes("release"), `${name} selects release`);
   }
+});
+
+// The host's arrangement on the one checkout: authored source on a read-only mount, Vault
+// masked, an empty home, /tmp and environment, no network, and only the native evidence
+// (.git/oracle) and build (dist) folders writable, each an empty scratch as in a fresh CI clone.
+const NESTED = "MYCRM_HOST_ARRANGEMENT", BWRAP = "/usr/bin/bwrap";
+
+async function hostRelease(writable) {
+  const line = fileURLToPath(root).replace(/\/$/, ""), scratch = await mkdtemp(path.join(os.tmpdir(), "mycrm-host-"));
+  try {
+    const binds = [];
+    for (const name of writable) {
+      const own = path.join(scratch, name.replace(/\//g, "_"));
+      await mkdir(own);
+      binds.push("--bind", own, path.join(line, name));
+    }
+    // The enrolled runtime stays visible under the masked home, as the host binds it.
+    const runtime = path.dirname(path.dirname(process.execPath));
+    const sandbox = [
+      "--ro-bind", "/", "/", "--dev", "/dev", "--proc", "/proc", "--tmpfs", "/tmp", "--tmpfs", os.homedir(),
+      "--ro-bind", runtime, runtime, "--ro-bind", line, line, "--tmpfs", path.join(line, "Vault"), ...binds,
+      "--unshare-all", "--die-with-parent", "--new-session", "--clearenv",
+      "--setenv", "PATH", process.env.PATH, "--setenv", "HOME", "/tmp/home", "--setenv", NESTED, "1",
+      "--chdir", line, "--", process.execPath, "scripts/release-validation.mjs"
+    ];
+    const result = await promisify(execFile)(BWRAP, sandbox, {maxBuffer: 16 * 1024 * 1024}).catch((error) => error);
+    const records = await readdir(path.join(scratch, ".git_oracle"), {recursive: true}).catch(() => []);
+    return {code: result.code ?? 0, output: `${result.stdout ?? ""}${result.stderr ?? ""}`, records};
+  } finally {
+    await rm(scratch, {recursive: true, force: true});
+  }
+}
+
+test("release:check completes with authored source read-only and only .git/oracle and dist writable", {timeout: 240_000}, async () => {
+  // The nested release check runs this module again inside the arrangement; that run checks the rest.
+  if (process.env[NESTED] === "1") return;
+  await access(BWRAP).catch(() => assert.fail("The host arrangement needs bubblewrap at " + BWRAP));
+  const {code, output, records} = await hostRelease([".git/oracle", "dist"]);
+  assert.equal(code, 0, output.slice(-4000));
+  assert.doesNotMatch(output, /EROFS|EACCES|MYCRM_RELEASE_CHECK=FAILED/);
+  for (const category of ["sanity", "interactions", "acceptance"])
+    assert.ok(records.some((name) => path.basename(name).startsWith(`${category}-after-`)), `${category} recorded its own evidence`);
+  // The arrangement is what makes it pass: without a writable dist the release tooling cannot build.
+  assert.notEqual((await hostRelease([".git/oracle"])).code, 0);
 });

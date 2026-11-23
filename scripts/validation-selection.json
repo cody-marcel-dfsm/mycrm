@@ -30,8 +30,8 @@
         "fixtures": []
       }
     ],
-    "reason": "Add project-owned build routing. Check release admission interactions and exhaustive definition acceptance; preserve native security and publication gates. Retain the original 300-second delivery clock and execute every selected category completely.",
-    "revision_of": "d844b85641b86eb39a7f2c9bb9199cd7b1b34291ab357ba3790cec09f5ab3789",
+    "reason": "Revise build integration acceptance to verify isolated writable outputs, complete selected execution and the packaging failure control. Retain descriptor coverage, native gates and the original host delivery clock; the feature budget remains 300 seconds.",
+    "revision_of": "9b9cf9d5b1d35fd76bef5e2d2cf6ddbd1ff15668478d0d281270a8be92239d15",
     "design": "Vault/docs/design/project-build-integration.md"
   },
   "base_commit": "081d3c0aeeccf62e4d9c9caae0f9c6941c36d057",
@@ -44,8 +44,8 @@
     "architecture": "x64",
     "options_sha256": "abe606b43ec20381d6290b1098ca6fb5ccdf4666008979be2a2c892605ca8eb2"
   },
-  "proposal_sha256": "d18e6b977513f55a91ebd4a26d000b7511e550a8942cf62e52aaeb598d0e7953",
-  "review_sha256": "eb1c8ced82fd7e70ed972191b59622419e5fb48eec36b97108d1fd3d226f8fdb",
+  "proposal_sha256": "a048957ff08b06d07198ace981f1824415322c7e2b8d68512381d9f94ed1f141",
+  "review_sha256": "e1842da69b2d0e3db0cb63aee560d08f06e856ff0cfa8f5d7640f8cc674b5a93",
   "commands": [
     {
       "category": "sanity",
@@ -95,9 +95,9 @@
   },
   "design_binding": {
     "design": "Vault/docs/design/project-build-integration.md",
-    "design_sha256": "6846f00d45c09ffa1506a6456ab08f2e01524e89e902c9f72cf4ab5af26590ff",
+    "design_sha256": "840a0a0fb4689965dfbe443b95bd93ab86645ffa77cd92258f3765e4180a3852",
     "plan": "Vault/docs/design/project-build-integration.test-plan.json",
-    "plan_sha256": "16490110de7c49682cfe6ebb2bda426e96f51dd5ad463f810383880dc999076e",
+    "plan_sha256": "b4f95ebaf16b35eb36f3392c125d311c390e8ce5471ccf9350fb0d5df3bff45d",
     "tests": [
       "tests/build-project.test.mjs",
       "tests/release-tooling.test.mjs"
@@ -105,7 +105,7 @@
   },
   "spec": {
     "kind": "oracle-spec/1",
-    "title": "My CRM build routing definition",
+    "title": "Build output mount acceptance",
     "design": "Vault/docs/design/project-build-integration.md",
     "base": "081d3c0aeeccf62e4d9c9caae0f9c6941c36d057",
     "scope": [
@@ -115,23 +115,22 @@
       "Vault/docs/design/project-build-integration.md",
       "Vault/docs/design/project-build-integration.test-plan.json"
     ],
-    "runtime_paths": [
-      "build-project.json"
-    ],
+    "runtime_paths": [],
     "acceptance": [
-      "The build descriptor identifies mycrm with schema kind build-project/1 and restricts category execution to the three supported runner identifiers without executable command fields.",
-      "Script selections resolve to existing package scripts within the permitted privacy, boundary, contract and client checks; release execution selects only release:check.",
-      "Every category reference resolves, all four native change classes have explicit selections, and every tracked file has a matching routing or non-runtime classification.",
-      "Every change receives sanity checks; executable classes select changelist tests; deep repairs and features additionally select release validation, as do package and workflow changes.",
-      "Release admission rejects absent or damaged sealed specifications before dispatch and executes the admitted contract's required commands."
+      "Descriptor validation continues to check supported runners, permitted scripts, category references, change classes and complete tracked-path routing.",
+      "A clean committed candidate completes its release validation inside bubblewrap with immutable authored files, hidden private documentation, isolated temporary storage and home, a minimal explicit environment and disabled networking; writable checkout locations are limited to fresh evidence and distribution mounts.",
+      "The successful isolated execution produces a distinct valid passing result for each selected category, reports no filesystem permission errors and preserves authored content; required output mount targets also work when initially absent.",
+      "Repeating the isolated execution with distribution output read-only fails because packaging cannot write there, while evidence output remains writable.",
+      "Nested acceptance execution terminates without launching another sandbox, while the remaining assertions execute normally and complete without skipped cases.",
+      "Release admission continues to reject missing or altered specification seals and dispatches the exact commands selected by an admitted contract."
     ],
     "tests": [
       {
         "module": "tests/release-tooling.test.mjs",
         "covers": [
-          4
+          5
         ],
-        "purpose": "Verify sealed specification admission and selected release execution remain effective."
+        "purpose": "Preserve package validation and sealed-contract release admission."
       },
       {
         "module": "tests/build-project.test.mjs",
@@ -139,9 +138,10 @@
           0,
           1,
           2,
-          3
+          3,
+          4
         ],
-        "purpose": "Check descriptor structure, permitted selections, category references, class routing and tracked-file coverage."
+        "purpose": "Verify build routing and isolated release execution with positive output mounts and a targeted write-denial control."
       }
     ],
     "findings": [],
@@ -151,11 +151,11 @@
       "model": "gpt-6.1-sol",
       "oracle_sha256": "8bbe1cb821991e781bce06dac315a8256aaaadf05c5c8d5a24e0cb54787b2fc3",
       "host": "aio",
-      "time": "2026-11-22T21:00:05Z",
+      "time": "2026-11-23T00:18:00Z",
       "request_sha256": null,
-      "proposal_sha256": "d18e6b977513f55a91ebd4a26d000b7511e550a8942cf62e52aaeb598d0e7953"
+      "proposal_sha256": "a048957ff08b06d07198ace981f1824415322c7e2b8d68512381d9f94ed1f141"
     },
-    "seal": "b45a547fa5141ea3b30c7898a1ef148e52cb72ddbfc9108f54bf73d0fcd72ed2"
+    "seal": "b4ffd565777524c3d5af191b4c5396db82f455fc6f53bc22b8d58bab72859428"
   },
-  "contract_sha256": "9b9cf9d5b1d35fd76bef5e2d2cf6ddbd1ff15668478d0d281270a8be92239d15"
+  "contract_sha256": "2c6b8ce9da7d096de2351f859d77e3994bf9f6dc4b72c9d7557875445ae2d731"
 }
